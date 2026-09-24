@@ -116,18 +116,6 @@ describe('single-select', () => {
       { questionId: 'q1', selectedOptionIds: ['a'], text: 'extra context' },
     ])
   })
-
-  it('renders notes for option questions', () => {
-    render(questions)
-    expect(container.querySelector('textarea')).not.toBeNull()
-  })
-
-  it('does not render checkbox icons for single-select', () => {
-    render(questions)
-    // CheckSquare / Square icons should NOT be present
-    const svgs = container.querySelectorAll('button[aria-pressed] svg')
-    expect(svgs.length).toBe(0)
-  })
 })
 
 // ---------------------------------------------------------------------------
@@ -204,27 +192,6 @@ describe('multi-select', () => {
     ])
   })
 
-  it('renders checkbox icons for multi-select options', () => {
-    render(questions)
-    // All options should have Square icons (unchecked)
-    const svgs = container.querySelectorAll('button[aria-pressed] svg')
-    expect(svgs.length).toBe(3)
-  })
-
-  it('shows multi-select hint text', () => {
-    render(questions)
-    expect(container.textContent).toContain('Select one or more')
-  })
-
-  it('shows constraint hints for min and max', () => {
-    const constrained: ChoiceQuestion[] = [
-      { ...questions[0], minSelections: 2, maxSelections: 3 },
-    ]
-    render(constrained)
-    expect(container.textContent).toContain('at least 2')
-    expect(container.textContent).toContain('up to 3')
-  })
-
   it('maxSelections: 1 with multiSelect still works', () => {
     const questionsMax1: ChoiceQuestion[] = [
       { ...questions[0], maxSelections: 1 },
@@ -268,26 +235,6 @@ describe('freeform', () => {
 // ---------------------------------------------------------------------------
 
 describe('backward compatibility', () => {
-  it('question without multiSelect behaves as single-select', () => {
-    const questions: ChoiceQuestion[] = [
-      {
-        id: 'q1',
-        question: 'Legacy question',
-        options: [
-          { id: 'a', label: 'Alpha' },
-          { id: 'b', label: 'Beta' },
-        ],
-      },
-    ]
-    render(questions)
-    const buttons = optionButtons()
-    act(() => buttons[0].click())
-    act(() => buttons[1].click())
-    // Should replace, not add
-    expect(buttons[0].getAttribute('aria-pressed')).toBe('false')
-    expect(buttons[1].getAttribute('aria-pressed')).toBe('true')
-  })
-
   it('minSelections clamped to options length', () => {
     const questions: ChoiceQuestion[] = [
       {

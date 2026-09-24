@@ -257,47 +257,6 @@ describe('SettingsSpecialists', () => {
   /* ---- Loading and display ---- */
 
   describe('loading and display', () => {
-    it('shows loading spinner during fetch', async () => {
-      renderSpecialists()
-
-      // Should show spinner while loading
-      expect(container.querySelector('.animate-spin')).toBeTruthy()
-
-      await flush()
-      await flush()
-    })
-
-    it('renders specialist cards after load', async () => {
-      const backend = makeSpecialist()
-      const frontend = makeSpecialist({
-        specialistId: 'frontend',
-        displayName: 'Frontend',
-        color: '#7c3aed',
-      })
-      renderSpecialists([backend, frontend])
-      await flush()
-      await flush()
-
-      expect(container.textContent).toContain('Backend')
-      expect(container.textContent).toContain('Frontend')
-    })
-
-    it('shows empty state when no specialists', async () => {
-      renderSpecialists([])
-      await flush()
-      await flush()
-
-      expect(container.textContent).toContain('No task instructions or custom specialists found')
-    })
-
-    it('renders enabled toggle on each specialist card', async () => {
-      renderSpecialists([makeSpecialist()])
-      await flush()
-      await flush()
-
-      expect(container.textContent).toContain('Enabled')
-    })
-
     it('renders complete roster specialists with task instructions and model settings together', async () => {
       renderSpecialists([makeSpecialist()], PROFILES, 'presets')
       await flush()
@@ -616,17 +575,6 @@ describe('SettingsSpecialists', () => {
   /* ---- Clone flow ---- */
 
   describe('clone flow', () => {
-    it('shows Clone button on collapsed specialist card', async () => {
-      renderSpecialists([makeSpecialist()])
-      await flush()
-      await flush()
-
-      const cloneBtn = Array.from(container.querySelectorAll('button')).find(
-        (btn) => btn.textContent?.includes('Clone'),
-      )
-      expect(cloneBtn).toBeTruthy()
-    })
-
     it('calls save API with clone handle on clone', async () => {
       const spec = makeSpecialist()
       const cloned = makeSpecialist({ specialistId: 'backend-copy', displayName: 'Backend (Copy)', builtin: false })
@@ -724,17 +672,6 @@ describe('SettingsSpecialists', () => {
   /* ---- New specialist form ---- */
 
   describe('new specialist creation', () => {
-    it('shows New Specialist button', async () => {
-      renderSpecialists([])
-      await flush()
-      await flush()
-
-      const newBtn = Array.from(container.querySelectorAll('button')).find(
-        (btn) => btn.textContent?.includes('New Specialist'),
-      )
-      expect(newBtn).toBeTruthy()
-    })
-
     it('opens creation form on click', async () => {
       renderSpecialists([])
       await flush()

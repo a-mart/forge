@@ -45,21 +45,6 @@ describe('trusted browser recording bridge', () => {
     expect(ipcRenderer.removeListener).toHaveBeenCalledWith(BROWSER_IPC.stateChanged, expect.any(Function))
   })
 
-  it('routes ordinary operations through the execute channel', async () => {
-    const requestValue = request('navigate-1', 'navigate' as never)
-    const ipcRenderer = {
-      on: vi.fn(), removeListener: vi.fn(),
-      invoke: vi.fn(async (channel: string, value: unknown) => channel === BROWSER_IPC.execute ? ok(success(value as BrowserAutomationRequest)) : ok(undefined)),
-    }
-    const bridge = createTrustedBrowserBridge(ipcRenderer as never)
-    await expect(bridge.invoke(requestValue)).resolves.toMatchObject({ requestId: 'navigate-1', ok: true })
-    expect(ipcRenderer.invoke).toHaveBeenCalledWith(BROWSER_IPC.execute, requestValue)
-    await bridge.takeControl('session-1', 'profile-1', 'ext.instance.7')
-    expect(ipcRenderer.invoke).toHaveBeenCalledWith(BROWSER_IPC.takeControl, {
-      sessionAgentId: 'session-1', profileId: 'profile-1', tabId: 'ext.instance.7',
-    })
-  })
-
   it('rejects a concurrent stop with its own retryable envelope while the first stop completes with its own routing', async () => {
     let releaseCapture!: () => void
     const captureGate = new Promise<void>((resolve) => { releaseCapture = resolve })

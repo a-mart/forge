@@ -7,7 +7,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   PackagedRemoteUiServer,
   PackagedRemoteUiStartupError,
-  resolvePackagedRemoteUiHost,
   startOptionalPackagedRemoteUi,
 } from '../packaged-remote-ui-server.js'
 
@@ -109,20 +108,6 @@ describe('startOptionalPackagedRemoteUi', () => {
     expect(reportUnavailable.mock.calls[0]?.[0]).toMatchObject({
       message: 'Packaged remote browser access is unavailable: listen EADDRINUSE: address already in use',
     })
-  })
-
-  it('does not report when the optional remote-UI listener starts', async () => {
-    const reportUnavailable = vi.fn()
-
-    await expect(startOptionalPackagedRemoteUi(async () => undefined, reportUnavailable)).resolves.toBe(true)
-    expect(reportUnavailable).not.toHaveBeenCalled()
-  })
-})
-
-describe('resolvePackagedRemoteUiHost', () => {
-  it('uses the Electron backend bind host and keeps the trusted-network default', () => {
-    expect(resolvePackagedRemoteUiHost({ FORGE_HOST: '127.0.0.1' })).toBe('127.0.0.1')
-    expect(resolvePackagedRemoteUiHost({})).toBe('0.0.0.0')
   })
 })
 

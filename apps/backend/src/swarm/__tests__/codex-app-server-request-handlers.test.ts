@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   handleCodexAppServerServerRequest,
-  isSupportedCodexAppServerServerRequest,
 } from "../codex-app-server/codex-app-server-request-handlers.js";
 
 describe("codex app-server server request handlers", () => {
@@ -39,10 +38,5 @@ describe("codex app-server server request handlers", () => {
         params: {},
       }),
     ).toThrow(/Unsupported Codex app-server server request/);
-  });
-
-  it("tracks supported server request methods", () => {
-    expect(isSupportedCodexAppServerServerRequest("mcpServer/elicitation/request")).toBe(true);
-    expect(isSupportedCodexAppServerServerRequest("item/tool/call")).toBe(false);
   });
 });

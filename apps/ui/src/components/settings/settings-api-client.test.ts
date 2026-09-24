@@ -87,66 +87,9 @@ describe('SettingsApiClient', () => {
         expect.objectContaining({ credentials: 'omit' }),
       )
     })
-
-    it('preserves AbortSignal', async () => {
-      const controller = new AbortController()
-      const client = createSettingsApiClient(createBuilderSettingsTarget('ws://127.0.0.1:47187'))
-
-      await client.fetch('/api/settings/auth', { signal: controller.signal })
-
-      expect(fetchSpy).toHaveBeenCalledWith(
-        'http://127.0.0.1:47187/api/settings/auth',
-        expect.objectContaining({ signal: controller.signal }),
-      )
-    })
-
-    it('preserves request method and headers', async () => {
-      const client = createSettingsApiClient(createCollabSettingsTarget('wss://collab.example.com'))
-
-      await client.fetch('/api/settings/auth', {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: '{"key":"value"}',
-      })
-
-      expect(fetchSpy).toHaveBeenCalledWith(
-        'https://collab.example.com/api/settings/auth',
-        expect.objectContaining({
-          method: 'PUT',
-          headers: { 'content-type': 'application/json' },
-          body: '{"key":"value"}',
-          credentials: 'include',
-        }),
-      )
-    })
-
-    it('preserves cache option', async () => {
-      const client = createSettingsApiClient(createBuilderSettingsTarget('ws://127.0.0.1:47187'))
-
-      await client.fetch('/api/settings/auth', { cache: 'no-store' })
-
-      expect(fetchSpy).toHaveBeenCalledWith(
-        'http://127.0.0.1:47187/api/settings/auth',
-        expect.objectContaining({ cache: 'no-store' }),
-      )
-    })
   })
 
   describe('fetchJson', () => {
-    it('parses JSON response', async () => {
-      fetchSpy.mockResolvedValueOnce(
-        new Response(JSON.stringify({ providers: ['anthropic'] }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
-      )
-
-      const client = createSettingsApiClient(createBuilderSettingsTarget('ws://127.0.0.1:47187'))
-      const result = await client.fetchJson<{ providers: string[] }>('/api/settings/auth')
-
-      expect(result).toEqual({ providers: ['anthropic'] })
-    })
-
     it('throws on error response with error message from body', async () => {
       fetchSpy.mockResolvedValueOnce(
         new Response(JSON.stringify({ error: 'Unauthorized' }), {

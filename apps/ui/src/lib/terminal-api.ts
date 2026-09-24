@@ -6,8 +6,6 @@ import type {
   TerminalIssueTicketResponse,
   TerminalRenameRequest,
   TerminalRenameResponse,
-  TerminalResizeRequest,
-  TerminalResizeResponse,
 } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
@@ -72,28 +70,6 @@ export async function renameTerminal(
   }
 
   return payload as TerminalRenameResponse
-}
-
-export async function resizeTerminal(
-  wsUrl: string,
-  terminalId: string,
-  request: TerminalResizeRequest,
-): Promise<TerminalResizeResponse> {
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/terminals/${encodeURIComponent(terminalId)}/resize`)
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(request),
-  })
-  if (!response.ok) throw new Error(await readApiError(response))
-
-  const payload = (await response.json()) as Partial<TerminalResizeResponse>
-  if (!payload.terminal) {
-    throw new Error('Invalid terminal resize response from backend.')
-  }
-
-  return payload as TerminalResizeResponse
 }
 
 export async function closeTerminal(

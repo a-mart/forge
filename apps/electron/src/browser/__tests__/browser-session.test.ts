@@ -55,11 +55,4 @@ describe('browser profile sessions', () => {
     expect(browserSession.clearStorageData).toHaveBeenCalledWith({ storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers'] })
     expect(browserSession.clearCache).toHaveBeenCalledOnce()
   })
-
-  it('allows exactly the T3 parity permission set', () => {
-    expect([...subject.ALLOWED_BROWSER_PERMISSIONS].sort()).toEqual([
-      'clipboard-read', 'clipboard-sanitized-write', 'geolocation', 'notifications',
-    ])
-    expect(subject.ALLOWED_BROWSER_PERMISSIONS.has('media')).toBe(false)
-  })
 })

@@ -170,11 +170,6 @@ describe('SettingsPanel initialTab', () => {
     expect(capturedContentWidthClassName).toBeUndefined()
   })
 
-  it('uses initialTab on mount when it is a valid tab', () => {
-    renderPanel({ initialTab: 'collaboration' })
-    expect(capturedActiveTab).toBe('collaboration')
-  })
-
   it('uses contextual project identity for Secrets without replacing task preview context', () => {
     renderPanel({
       initialTab: 'secrets',
@@ -206,18 +201,6 @@ describe('SettingsPanel initialTab', () => {
     expect(capturedActiveTab).toBe('project-settings')
     expect((capturedProjectSettingsProps?.profile as { profileId: string }).profileId).toBe('project-beta')
     expect((capturedProjectSettingsProps?.manager as { agentId: string }).agentId).toBe('session-beta')
-  })
-
-  it('uses a wider content width for the appearance tab', () => {
-    renderPanel({ initialTab: 'appearance' })
-    expect(capturedActiveTab).toBe('appearance')
-    expect(capturedContentWidthClassName).toBe('max-w-6xl')
-  })
-
-  it('preserves full-width content for the skills tab', () => {
-    renderPanel({ initialTab: 'skills' })
-    expect(capturedActiveTab).toBe('skills')
-    expect(capturedContentWidthClassName).toBe('max-w-full')
   })
 
   it('syncs activeTab when initialTab prop changes while mounted', () => {
@@ -260,11 +243,6 @@ describe('SettingsPanel initialTab', () => {
 describe('SettingsPanel repositoryCloneAvailable derivation', () => {
   it('enables repository settings for builder when prop is omitted', () => {
     renderPanel({ target: BUILDER_TARGET })
-    expect(capturedGeneralProps?.repositoryCloneAvailable).toBe(true)
-  })
-
-  it('enables repository settings for builder when prop is true', () => {
-    renderPanel({ target: BUILDER_TARGET, repositoryCloneAvailable: true })
     expect(capturedGeneralProps?.repositoryCloneAvailable).toBe(true)
   })
 

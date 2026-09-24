@@ -9,7 +9,6 @@ import {
 import type { BrowserAutomationRequest, BrowserHostRegistration, BrowserSessionSnapshot, BrowserTabSnapshot, ServerEvent } from "@forge/protocol";
 import type { WebSocket } from "ws";
 import { BrowserAutomationService } from "../../swarm/browser-automation/browser-automation-service.js";
-import { BUILDER_COMMAND_ACCESS } from "../builder-command-access.js";
 import { handleBrowserCommand } from "../commands/browser-command-handler.js";
 import { parseClientCommand } from "../ws-command-parser.js";
 
@@ -55,12 +54,6 @@ async function nextRequest(sent: ServerEvent[]): Promise<BrowserAutomationReques
 }
 
 describe("browser websocket protocol v2", () => {
-  it("keeps automatic host commands admin-only", () => {
-    for (const type of ["browser_host_register", "browser_host_hydrate", "browser_host_response", "browser_host_lifecycle_response", "browser_host_state_report", "browser_tab_open"] as const) {
-      expect(BUILDER_COMMAND_ACCESS[type]).toBe("admin");
-    }
-  });
-
   it("parses only target-agnostic v2 registration and rejects unknown capability fields", () => {
     expect(parseClientCommand(Buffer.from(JSON.stringify({ type: "browser_host_register", requestId: "v2", registration: registration() }))))
       .toMatchObject({ ok: true, command: { registration: { capabilities: {

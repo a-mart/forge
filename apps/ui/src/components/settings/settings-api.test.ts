@@ -4,7 +4,6 @@ import {
   fetchSkillsList,
   pausePooledCredential,
   resumePooledCredential,
-  SETTINGS_AUTH_PROVIDER_META,
   removePooledCredential,
   resetPooledCredentialCooldown,
   SETTINGS_AUTH_CHANGED_EVENT,
@@ -85,12 +84,6 @@ describe('settings-api auth changed events', () => {
     }, new AbortController().signal)
 
     expect(listener).toHaveBeenCalledTimes(1)
-  })
-
-  it('describes xAI credentials as available for manager, specialist, and spawn Grok usage', () => {
-    expect(SETTINGS_AUTH_PROVIDER_META.xai.description).toBe(
-      'Native xAI credentials enable Grok for manager, specialist, and spawn usage.'
-    )
   })
 
   it('accepts xAI as a direct OAuth completion provider', async () => {

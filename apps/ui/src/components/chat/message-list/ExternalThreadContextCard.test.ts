@@ -66,15 +66,6 @@ function getStopButton(): HTMLButtonElement | null {
 }
 
 describe('ExternalThreadContextCard', () => {
-  it('renders codex status card with previews', () => {
-    renderCard('completed')
-
-    expect(container.textContent).toContain('Codex')
-    expect(container.textContent).toContain('Completed')
-    expect(container.textContent).toContain('You have two meetings today.')
-    expect(container.querySelector('[data-external-thread-status="completed"]')).toBeTruthy()
-  })
-
   it('shows disabled stop control while running when stop is not wired', () => {
     renderCard('running', { showStop: true })
 

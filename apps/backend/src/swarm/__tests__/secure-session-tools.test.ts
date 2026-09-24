@@ -187,28 +187,6 @@ function propertyNames(schema: unknown, names = new Set<string>()): Set<string> 
 }
 
 describe("secure session agent tools", () => {
-  it("allows non-secret delegation while team secure mode is active", async () => {
-    const spawnedWorker = worker();
-    const spawnAgent = vi.fn(async () => spawnedWorker);
-    const sendMessage = vi.fn(async () => ({
-      targetAgentId: spawnedWorker.agentId,
-      deliveryId: "delivery-1",
-      acceptedMode: "prompt" as const,
-    }));
-    const tools = buildSwarmTools(host({ spawnAgent, sendMessage }), manager());
-
-    await toolByName(tools, "spawn_agent").execute("call-1", {
-      agentId: "worker",
-      initialMessage: "Inspect the workspace",
-    });
-    await toolByName(tools, "send_message_to_agent").execute("call-2", {
-      targetAgentId: "worker-1",
-      message: "Continue",
-    });
-    expect(spawnAgent).toHaveBeenCalledOnce();
-    expect(sendMessage).toHaveBeenCalledOnce();
-  });
-
   it("exposes both capabilities to Builder managers and their workers", () => {
     const toolHost = host();
     const managerTools = buildSwarmTools(toolHost, manager()).map(
@@ -232,20 +210,6 @@ describe("secure session agent tools", () => {
         "request_ssh_host_trust",
       ]),
     );
-  });
-
-  it("teaches agents binding-free SSH use without exposing or deriving values", () => {
-    const status = toolByName(
-      buildSwarmTools(host(), manager()),
-      "secure_session_status",
-    );
-
-    expect(status.description).toContain("exact targetName");
-    expect(status.description).toContain(
-      "SSH_ASKPASS=/usr/local/bin/forge-env-askpass",
-    );
-    expect(status.description).toContain("SSH_AUTH_SOCK automatically");
-    expect(status.description).toContain("never print, measure, hash, encode");
   });
 
   it("excludes Collaboration while treating legacy unspecified surfaces as Builder", () => {

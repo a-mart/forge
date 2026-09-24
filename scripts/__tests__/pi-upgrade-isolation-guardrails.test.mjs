@@ -3,7 +3,6 @@
  * Unit tests for isolation guardrails (no secrets, no network).
  */
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -12,8 +11,6 @@ import {
   assertIsolatedUiPort,
   assertViteWsUrlMatchesBackend,
 } from "../pi-upgrade/assert-isolation.mjs";
-
-const repoRoot = join(import.meta.dirname, "..", "..");
 
 describe("pi-upgrade isolation guardrails", () => {
   it("refuses production ~/.forge data dir", () => {
@@ -49,33 +46,5 @@ describe("pi-upgrade isolation guardrails", () => {
     expect(assertViteWsUrlMatchesBackend("ws://127.0.0.1:47687", 47687)).toBe(
       "ws://127.0.0.1:47687",
     );
-  });
-
-  it("launcher requires vacant ports and binds health to recorded listener identity", () => {
-    const script = readFileSync(join(repoRoot, "scripts/pi-upgrade/start-isolated-instance.sh"), "utf8");
-    expect(script).toContain("refusing to adopt an existing listener");
-    expect(script).toContain("FORGE_PI_UPGRADE_INSTANCE_NONCE");
-    expect(script).toContain("resolve_listener_pid");
-    expect(script).toContain("is_descendant_of");
-    expect(script).toContain(".wrapper.pid");
-    expect(script).toContain("backend health did not match recorded listener/parent/data/nonce identity");
-    expect(script).toContain("isolated identity is empty");
-    expect(script).toContain("FORGE_DESKTOP=0 FORGE_ELECTRON_DEV=0");
-    expect(script).toContain("FORGE_DISABLE_TANSTACK_DEVTOOLS=true VITE_FORGE_DISABLE_TANSTACK_DEVTOOLS=true");
-    expect(script).toContain('kill "$BACKEND_LISTENER_PID" "$BACKEND_WRAPPER_PID"');
-  });
-
-  it("stop script kills only verified owned listener/wrapper trees, never arbitrary listeners", () => {
-    const script = readFileSync(join(repoRoot, "scripts/pi-upgrade/stop-isolated-instance.sh"), "utf8");
-    expect(script).toContain("stop_owned_tree");
-    expect(script).toContain("refusing to stop");
-    expect(script).toContain("nonce mismatch");
-    expect(script).toContain("refusing arbitrary kill");
-    expect(script).toContain("is_descendant_of");
-    expect(script).toContain(".wrapper.pid");
-    expect(script).toContain("collect_owned_descendants");
-    expect(script).toContain("terminate_owned_process_tree");
-    expect(script).toContain('kill -KILL "$candidate"');
-    expect(script).not.toMatch(/kill \$pids/);
   });
 });

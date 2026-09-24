@@ -42,12 +42,12 @@ function fakeWindow() {
     contentView: { addChildView: vi.fn((view: FakeView) => children.add(view)), removeChildView: vi.fn((view: FakeView) => children.delete(view)) },
   }
 }
-function makeHost(onGuestBeforeInput?: ConstructorParameters<typeof ManagedBrowserViewHost>[0]['onGuestBeforeInput']) {
+function makeHost() {
   const manager = {
     registerTabWebContents: vi.fn(({ tab: value }) => value), unregisterTabWebContents: vi.fn(), setTabPresentation: vi.fn((request) => ({ applied: true, tab: { ...tab(request.tabId), physicalVisible: request.visible }, hostGeneration: request.hostGeneration, sessionRevision: request.sessionRevision, sequence: request.sequence })),
     captureScreenshot: vi.fn(), markGuestCrashed: vi.fn(), synchronizeSessions: vi.fn(), destroy: vi.fn(async () => undefined),
   }
-  const host = new ManagedBrowserViewHost({ manager: manager as never, sessions: { getSession: vi.fn(() => ({})) } as never, guestPreloadPath: '/guest.js', onGuestBeforeInput })
+  const host = new ManagedBrowserViewHost({ manager: manager as never, sessions: { getSession: vi.fn(() => ({})) } as never, guestPreloadPath: '/guest.js' })
   return { host, manager }
 }
 
@@ -143,17 +143,6 @@ describe('ManagedBrowserViewHost', () => {
     await host.transferOwner('popout', 2)
     expect(createdViews).toEqual([view])
     expect(view.setBackgroundColor).toHaveBeenCalledTimes(1)
-  })
-
-  it('routes guest input through the main-owned lifecycle callback', async () => {
-    const onGuestBeforeInput = vi.fn()
-    const { host } = makeHost(onGuestBeforeInput)
-    await host.reconcile({ controllerInstanceId: 'c', hostGeneration: 1, updateSequence: 1, workspaceEpoch: 2, sessions: [session([tab('one')])] })
-    const input = { type: 'keyDown', key: 'w', control: true }
-    const event = { preventDefault: vi.fn() }
-    const listener = (createdViews[0]?.webContents as { listeners: Map<string, (...args: unknown[]) => void> }).listeners.get('before-input-event')
-    listener?.(event, input)
-    expect(onGuestBeforeInput).toHaveBeenCalledWith(event, input)
   })
 
   it('makes canonical removal win over queued presentation and teardown repeats', async () => {

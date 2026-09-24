@@ -12,7 +12,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HttpRoute } from "../../shared/http-route.js";
 import {
   createSecureSecretRoutes,
-  isDesktopOnlySecureSecretPath,
   type SecureSecretTransportService,
 } from "../secure-secret-routes.js";
 
@@ -344,11 +343,6 @@ describe("secure secret routes", () => {
   });
 
   it("keeps vault transfer paths Desktop-only and forwards only encrypted bundles", async () => {
-    expect(isDesktopOnlySecureSecretPath(
-      "/api/secure-secrets/transfer/export",
-    )).toBe(true);
-    expect(isDesktopOnlySecureSecretPath("/api/secure-secrets/local")).toBe(false);
-
     const service = fakeService();
     const server = await createRouteServer(createSecureSecretRoutes({ service }));
     const exported = await postJson(

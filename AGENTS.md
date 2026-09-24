@@ -120,15 +120,26 @@ variable catalogs, or release runbooks back into this file. Link to their mainta
 Validation must match the changed surface and its downstream consumers. Follow `docs/QUALITY.md` for
 the current command definitions.
 
-- Start with explicit targeted Vitest files for changed behavior. Avoid loose filters that accidentally
+### Writing tests
+
+- Never write unit tests after you write code.
+- Highly prefer E2E tests as the sole testing mechanism. Use them to verify complex features work. At
+  the end of E2E tests, produce a verifiable and repeatable artifact.
+- If you must test a system in isolation, first write down all the ways it could fail, then write the
+  code.
+
+### Running checks
+
+- Run the explicit Vitest files for changed behavior. Avoid loose filters that accidentally
   launch broad suites.
 - Use `pnpm quality:quick` for small focused changes, `pnpm quality:changed` for normal pre-merge
   validation, and `pnpm quality:full` for broad, structural, release, or cross-package work.
-- Protocol/API changes require targeted protocol, backend handler, and UI client/consumer tests.
-- Persistence changes require write/read/restart or migration coverage, not only unit checks of the
-  serializer.
-- UI event changes require both live-event and replay/bootstrap coverage when both paths consume the
-  behavior.
+- Protocol/API changes must be verified end to end through the backend handler and the UI
+  client/consumer.
+- Persistence changes must be verified by a write/read/restart or migration run, not only a check of
+  the serializer.
+- UI event changes must be verified on both the live-event and replay/bootstrap paths when both
+  consume the behavior.
 - Platform-specific changes require validation of the affected platform path; state any platform that
   could not be exercised.
 - In-app help changes require `pnpm help:validate` plus the routed UI quality check described by the

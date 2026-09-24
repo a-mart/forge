@@ -36,10 +36,4 @@ describe('pinned offline identity and narrowed MV3 ledger', () => {
     expect(manifest).not.toHaveProperty('content_scripts')
     expect(manifest).not.toHaveProperty('externally_connectable')
   })
-
-  it('contains only automatic operation runtime assets', async () => {
-    const runtime = await readFile(path.join(root, 'src/payload/service-worker/index.ts'), 'utf8')
-    expect(runtime).not.toMatch(/picker\.(?:claim|create|list)/u)
-    expect(runtime).not.toMatch(/tabGroups|\.group\(/u)
-  })
 })

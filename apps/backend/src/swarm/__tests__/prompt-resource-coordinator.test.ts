@@ -32,7 +32,7 @@ function setup() {
     now: () => "2026-07-13T00:00:00.000Z",
     logDebug: vi.fn(),
   });
-  return { coordinator, resolveEntry, applySpecialistAvailability };
+  return { coordinator, resolveEntry };
 }
 
 describe("PromptResourceCoordinator", () => {
@@ -73,19 +73,5 @@ describe("PromptResourceCoordinator", () => {
     )).resolves.toBe("reviewer");
     await expect(coordinator.resolveSpawnWorkerArchetypeId({}, "merger-2", "profile-1"))
       .resolves.toBe("merger");
-  });
-
-  it("applies contextual specialist availability after resolving a builder roster", async () => {
-    const { coordinator, applySpecialistAvailability } = setup();
-    const roster = [{ specialistId: "architect" }];
-    vi.spyOn(coordinator, "resolveProjectWorkspaceForManager").mockResolvedValue(undefined);
-    vi.spyOn(coordinator, "resolveSpecialistRosterForProfile").mockResolvedValue(
-      roster as Awaited<ReturnType<PromptResourceCoordinator["resolveSpecialistRosterForProfile"]>>,
-    );
-    const manager = descriptor("manager");
-
-    await coordinator.resolveSpecialistRosterForManager(manager, "builder");
-
-    expect(applySpecialistAvailability).toHaveBeenCalledWith(roster, "builder", manager.agentId);
   });
 });

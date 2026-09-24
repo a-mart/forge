@@ -132,14 +132,6 @@ function render() {
 }
 
 describe('usePendingResponse', () => {
-  describe('initial state', () => {
-    it('starts with no pending response', () => {
-      render()
-      expect(capturedRef.current!.result.pendingResponseStart).toBeNull()
-      expect(capturedRef.current!.result.isAwaitingResponseStart).toBe(false)
-    })
-  })
-
   describe('markPendingResponse', () => {
     it('marks a pending response for the active agent', () => {
       render()

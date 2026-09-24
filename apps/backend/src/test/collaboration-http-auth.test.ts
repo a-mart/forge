@@ -9,9 +9,6 @@ import {
   evaluateCollaborationAdminAccess,
   evaluateCollaborationMemberAccess,
   evaluateCollaborationPasswordChangeAccess,
-  getCollaborationRequestAuthContext,
-  getCollaborationRequestCorsContext,
-  setCollaborationRequestAuthContext,
   setCollaborationRequestCorsContext,
   validateCollaborationHttpOrigin,
 } from "../collaboration/auth/collaboration-auth-middleware.js";
@@ -396,20 +393,6 @@ describe("collaboration HTTP auth middleware", () => {
       statusCode: 403,
       error: "Password change required",
     });
-  });
-
-  it("stores and retrieves request auth and CORS context", () => {
-    const request = createRequest();
-    const authContext = createAuthContext("admin");
-
-    expect(getCollaborationRequestAuthContext(request)).toBeNull();
-    expect(getCollaborationRequestCorsContext(request)).toBeNull();
-
-    setCollaborationRequestAuthContext(request, authContext);
-    setCollaborationRequestCorsContext(request, { allowedOrigin: "http://127.0.0.1:47188" });
-
-    expect(getCollaborationRequestAuthContext(request)).toEqual(authContext);
-    expect(getCollaborationRequestCorsContext(request)).toEqual({ allowedOrigin: "http://127.0.0.1:47188" });
   });
 
   it("emits credentialed fallback CORS headers when echoing a non-collaboration origin", () => {

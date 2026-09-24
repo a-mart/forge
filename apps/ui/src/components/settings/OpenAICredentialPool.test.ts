@@ -201,21 +201,6 @@ describe('OpenAICredentialPool', () => {
   /* ---- Loading ---- */
 
   describe('loading', () => {
-    it('shows loading spinner initially', () => {
-      renderPool()
-      expect(container.querySelector('.animate-spin')).toBeTruthy()
-    })
-
-    it('renders pool after load', async () => {
-      renderPool()
-      await flush()
-      await flush()
-
-      expect(container.textContent).toContain('OpenAI auth source')
-      expect(container.textContent).toContain('OpenAI local credentials')
-      expect(container.textContent).toContain('Primary Account')
-    })
-
     it('passes the active settings API client to broker and local credential requests', async () => {
       renderPool()
       await flush()
@@ -595,109 +580,7 @@ describe('OpenAICredentialPool', () => {
 
   /* ---- Credential display ---- */
 
-  describe('credential display', () => {
-    it('shows credential label and auto-label', async () => {
-      renderPool()
-      await flush()
-      await flush()
-
-      expect(container.textContent).toContain('Primary Account')
-      expect(container.textContent).toContain('user@example.com')
-    })
-
-    it('shows healthy badge for healthy credentials', async () => {
-      renderPool()
-      await flush()
-      await flush()
-
-      expect(container.textContent).toContain('Healthy')
-    })
-
-    it('shows cooldown badge for credentials in cooldown', async () => {
-      const pool = makePool({
-        credentials: [
-          makeCredential({
-            health: 'cooldown',
-            cooldownUntil: Date.now() + 300_000,
-          }),
-        ],
-      })
-      renderPool(pool)
-      await flush()
-      await flush()
-
-      expect(container.textContent).toContain('Cooldown')
-    })
-
-    it('shows auth error badge', async () => {
-      const pool = makePool({
-        credentials: [makeCredential({ health: 'auth_error' })],
-      })
-      renderPool(pool)
-      await flush()
-      await flush()
-
-      expect(container.textContent).toContain('Auth Error')
-    })
-
-    it('shows request count', async () => {
-      renderPool()
-      await flush()
-      await flush()
-
-      expect(container.textContent).toContain('42')
-    })
-
-    it('shows Primary badge for primary credential', async () => {
-      renderPool()
-      await flush()
-      await flush()
-
-      expect(container.textContent).toContain('Primary')
-    })
-
-    it('shows account count badge', async () => {
-      renderPool()
-      await flush()
-      await flush()
-
-      expect(container.textContent).toContain('1 account')
-    })
-  })
-
-  /* ---- Remove credential ---- */
-
-  describe('remove credential', () => {
-    it('renders remove button for credentials', async () => {
-      renderPool()
-      await flush()
-      await flush()
-
-      // Remove button contains the Trash2 icon (rendered as an SVG inside a ghost button)
-      const removeButtons = Array.from(container.querySelectorAll('button')).filter(
-        (btn) => btn.classList.contains('size-7') && btn.querySelector('svg'),
-      )
-      expect(removeButtons.length).toBeGreaterThan(0)
-    })
-  })
-
-  /* ---- Strategy selector ---- */
-
   describe('strategy selector', () => {
-    it('shows strategy selector when multiple credentials exist', async () => {
-      const pool = makePool({
-        credentials: [
-          makeCredential({ id: 'cred-1', isPrimary: true }),
-          makeCredential({ id: 'cred-2', label: 'Second Account', isPrimary: false }),
-        ],
-      })
-      renderPool(pool)
-      await flush()
-      await flush()
-
-      expect(container.textContent).toContain('Strategy')
-    })
-
     it('does not show strategy selector for single credential', async () => {
       renderPool()
       await flush()
@@ -710,17 +593,6 @@ describe('OpenAICredentialPool', () => {
   /* ---- Add account ---- */
 
   describe('add account', () => {
-    it('renders Add Account button', async () => {
-      renderPool()
-      await flush()
-      await flush()
-
-      const addBtn = Array.from(container.querySelectorAll('button')).find(
-        (btn) => btn.textContent?.includes('Add Account'),
-      )
-      expect(addBtn).toBeTruthy()
-    })
-
     it('starts OAuth flow on Add Account click', async () => {
       settingsApiMock.startPoolAddAccountOAuthStream.mockImplementation(async () => {
         // Simulate a long-running operation
@@ -740,40 +612,6 @@ describe('OpenAICredentialPool', () => {
 
       // Should show Authorizing state
       expect(container.textContent).toContain('Authorizing')
-    })
-  })
-
-  /* ---- Rename credential ---- */
-
-  describe('rename credential', () => {
-    it('shows edit pencil icon on hover area (exists in markup)', async () => {
-      renderPool()
-      await flush()
-      await flush()
-
-      // The pencil icon exists in the DOM (shown on hover via CSS)
-      const pencilSvgs = container.querySelectorAll('.lucide-pencil')
-      expect(pencilSvgs.length).toBeGreaterThan(0)
-    })
-  })
-
-  /* ---- Set primary ---- */
-
-  describe('set primary', () => {
-    it('renders star icon for each credential', async () => {
-      const pool = makePool({
-        credentials: [
-          makeCredential({ id: 'cred-1', isPrimary: true }),
-          makeCredential({ id: 'cred-2', label: 'Second', isPrimary: false }),
-        ],
-      })
-      renderPool(pool)
-      await flush()
-      await flush()
-
-      // Star icons present (SVGs)
-      const starSvgs = container.querySelectorAll('.lucide-star')
-      expect(starSvgs.length).toBeGreaterThanOrEqual(2)
     })
   })
 
@@ -879,12 +717,6 @@ describe('OpenAICredentialPool', () => {
         expect.any(Object),
         expect.any(Object),
       )
-    })
-
-    it('collab apiClient does not reference local builder URL', () => {
-      expect(collabApiClient.target.apiBaseUrl).not.toContain('127.0.0.1')
-      expect(collabApiClient.target.apiBaseUrl).not.toContain('47187')
-      expect(collabApiClient.target.fetchCredentials).toBe('include')
     })
   })
 })

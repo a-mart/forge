@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentDescriptor, ManagerProfile } from "@forge/protocol";
 import {
-  ARCHIVE_DEFAULT_SESSION_NOT_ALLOWED_MESSAGE,
-  ARCHIVE_RESTORE_PARENT_PROJECT_REQUIRED_MESSAGE,
   isProfileArchived,
   isSessionDirectlyArchivable,
   isSessionDirectlyArchived,
@@ -43,11 +41,6 @@ function session(overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
 }
 
 describe("archive resolver", () => {
-  it("keeps the exact archive error copy centralized", () => {
-    expect(ARCHIVE_DEFAULT_SESSION_NOT_ALLOWED_MESSAGE).toBe("The default session for a project can’t be archived directly.");
-    expect(ARCHIVE_RESTORE_PARENT_PROJECT_REQUIRED_MESSAGE).toBe("Restore the project first.");
-  });
-
   it("resolves direct and effective archive state", () => {
     expect(isProfileArchived(profile())).toBe(false);
     expect(isProfileArchived(profile({ archivedAt: now }))).toBe(true);

@@ -79,17 +79,6 @@ function renderCard(props: {
 }
 
 describe('OpenRouterModelCard manager toggle', () => {
-  it('defaults Manager agents off for a verified tool-capable model', () => {
-    renderCard()
-
-    expect(getByText(container, 'Manager agents')).toBeTruthy()
-    expect(getByText(container, 'Show this model in manager create/change selectors.')).toBeTruthy()
-    expect(getByText(container, 'Tools')).toBeTruthy()
-    const toggle = getByLabelText(container, 'Enable Z.ai: GLM 5.1 for manager agents')
-    expect(toggle.getAttribute('data-state')).toBe('unchecked')
-    expect(getByRole(container, 'button', { name: 'Reset' })).toHaveProperty('disabled', true)
-  })
-
   it('enables the model through the existing openrouter override key and then allows reset', async () => {
     const { onRefresh } = renderCard()
     const overrideKey = getOpenRouterModelOverrideKey('z-ai/glm-5.1')

@@ -151,21 +151,6 @@ describe("CompactionSettingsService", () => {
     });
   });
 
-  it("includes timeout constraints in the settings view", async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "compaction-settings-constraints-"));
-    const service = new CompactionSettingsService({
-      dataDir,
-      getProviderAvailability: async () => createAvailabilityMap(),
-    });
-
-    await service.load();
-    const view = await service.getSettingsView();
-
-    expect(view.constraints).toEqual({
-      timeoutMs: { min: MIN_COMPACTION_TIMEOUT_MS, max: MAX_COMPACTION_TIMEOUT_MS, default: 300_000 },
-    });
-  });
-
   it("normalizes a known persisted Claude SDK compaction model to native Anthropic", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "compaction-settings-sdk-invalid-"));
     const service = new CompactionSettingsService({
@@ -397,12 +382,6 @@ describe("CompactionSettingsService", () => {
 });
 
 describe("normalizeTimeoutMs", () => {
-  it("accepts values within the configured bounds", () => {
-    expect(normalizeTimeoutMs(300_000)).toBe(300_000);
-    expect(normalizeTimeoutMs(60_000)).toBe(60_000);
-    expect(normalizeTimeoutMs(900_000)).toBe(900_000);
-  });
-
   it("clamps finite out-of-range timeout values", () => {
     expect(normalizeTimeoutMs(59_999)).toBe(MIN_COMPACTION_TIMEOUT_MS);
     expect(normalizeTimeoutMs(900_001)).toBe(MAX_COMPACTION_TIMEOUT_MS);

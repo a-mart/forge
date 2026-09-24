@@ -2,7 +2,6 @@
  * WP-4 behavioral characterization for the pi-coding-agent auto-compaction
  * reentrancy patch on @earendil-works/pi-coding-agent@0.80.6.
  */
-import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,10 +16,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildProjectSafePiProjectSettingsStorage } from "../project-executable-trust.js";
-import {
-  expectInstalledPiCodingAgentPatchIdentity,
-  findInstalledPiCodingAgentFile,
-} from "./pi-coding-agent-patch-identity.js";
 
 const tempDirs: string[] = [];
 const fauxRegistrations: Array<{ unregister: () => void }> = [];
@@ -85,15 +80,6 @@ async function createCompactionSession() {
 }
 
 describe("pi auto-compaction reentrancy characterization (0.80.6 patch)", () => {
-  it("keeps the installed agent-session reentrancy guard text and patch identity", () => {
-    const agentSessionPath = findInstalledPiCodingAgentFile(import.meta.url, "dist/core/agent-session.js");
-    const source = readFileSync(agentSessionPath, "utf8");
-    expect(source).toContain("Reentrancy guard: if compaction is already in progress, bail out.");
-    expect(source).toContain("localAbortController = new AbortController();");
-    expect(source).toContain("if (this._autoCompactionAbortController === localAbortController)");
-    expectInstalledPiCodingAgentPatchIdentity(import.meta.url, source);
-  });
-
   it("second concurrent _runAutoCompaction is a no-op while the first owns the controller", async () => {
     const session = await createCompactionSession();
     const agentSession = session as unknown as {

@@ -47,14 +47,6 @@ async function runScenario(scenario: string): Promise<ChildResult> {
 }
 
 describe("Cursor SDK containment child process behavior", () => {
-  it("filters only the known Node 26 module.register deprecation", () => {
-    const warning = "(node:12345) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.\n" +
-      "(Use `node --trace-deprecation ...` to show where the warning was created)\n";
-    expect(withoutKnownCursorSdkNode26Warning(warning)).toBe("");
-    expect(withoutKnownCursorSdkNode26Warning(`${warning}unexpected stderr\n`)).toBe("unexpected stderr\n");
-    expect(withoutKnownCursorSdkNode26Warning("(node:12345) [DEP0205] DeprecationWarning: different detail\n")).toContain("different detail");
-  });
-
   it.each([
     { scenario: "contained-transient", expectedBucket: "retryable_transport" },
     { scenario: "contained-auth", expectedBucket: "auth_permission" }

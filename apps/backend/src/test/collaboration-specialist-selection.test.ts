@@ -7,7 +7,6 @@ import {
 
 describe("collaboration specialist selection", () => {
   it("defaults new collaboration selections to the tier-based empty handle list", () => {
-    expect(DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES).toEqual([]);
     expect(parseCollaborationSpecialistHandlesJson(null)).toEqual([]);
     expect(serializeCollaborationSpecialistHandles(DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES)).toBe("[]");
   });

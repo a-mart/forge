@@ -7,11 +7,8 @@ import {
   appendSessionGoalCompactionInstructions,
   formatSessionGoalModelContext,
 } from '../goals/session-goal-context.js'
-import { buildGoalTools } from '../goals/goal-tools.js'
 import { SessionGoalStore } from '../goals/session-goal-store.js'
 import { getSessionGoalPath } from '../storage/data-paths.js'
-import type { SwarmToolHost } from '../swarm-tool-host.js'
-import type { AgentDescriptor } from '../types.js'
 
 const usage = { input: 100, output: 20, cacheRead: 30, cacheWrite: 0, total: 150 }
 
@@ -187,29 +184,6 @@ describe('session goals', () => {
       ...snapshot,
       goal: snapshot.goal ? { ...snapshot.goal, status: 'completed' } : null,
     })).toBeUndefined()
-  })
-
-  it('exposes three narrow tools and delegates each operation through the host', async () => {
-    const snapshot = makeSnapshot()
-    const host = {
-      createGoal: vi.fn(async () => snapshot),
-      getGoal: vi.fn(async () => snapshot),
-      updateGoal: vi.fn(async () => snapshot),
-    } as unknown as SwarmToolHost
-    const tools = buildGoalTools(host, { agentId: 'session-1', role: 'manager' } as AgentDescriptor)
-
-    expect(tools.map((tool) => tool.name)).toEqual(['create_goal', 'get_goal', 'update_goal'])
-    await tools[0]!.execute('create-1', { objective: 'Ship it', tokenBudget: 500 })
-    await tools[1]!.execute('get-1', {})
-    await tools[2]!.execute('update-1', { status: 'complete' })
-
-    expect(host.createGoal).toHaveBeenCalledWith(
-      'session-1',
-      'create-1',
-      { objective: 'Ship it', tokenBudget: 500 },
-    )
-    expect(host.getGoal).toHaveBeenCalledWith('session-1')
-    expect(host.updateGoal).toHaveBeenCalledWith('session-1', 'update-1', { status: 'complete' })
   })
 })
 

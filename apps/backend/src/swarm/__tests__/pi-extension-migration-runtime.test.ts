@@ -6,7 +6,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { registerFauxProvider } from "../pi/pi-ai-compat.js";
 import {
   AuthStorage,
@@ -25,10 +24,6 @@ import {
 
 const tempDirs: string[] = [];
 const fauxRegistrations: Array<{ unregister: () => void }> = [];
-const fixturesDir = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../../../../scripts/__tests__/fixtures/pi-extension-migration",
-);
 
 afterEach(async () => {
   while (fauxRegistrations.length > 0) {
@@ -191,14 +186,5 @@ describe("pi extension migration through real DefaultResourceLoader + createAgen
       `expected Forge migration guidance from real resourceLoader/extensionsResult errors; diagnosed=${JSON.stringify(result.diagnosed)} raw=${JSON.stringify(result.errors)}`,
     ).toBe(true);
     expect(result.diagnosed.join("\n")).not.toContain("must be rewritten to");
-  });
-
-  it("keeps committed scanner fixtures aligned with runtime cases", async () => {
-    const { readFile } = await import("node:fs/promises");
-    const supported = await readFile(join(fixturesDir, "legacy-supported.ts"), "utf8");
-    const unsupported = await readFile(join(fixturesDir, "legacy-unsupported.ts"), "utf8");
-    expect(supported).toContain("@mariozechner/pi-ai");
-    expect(supported).toContain("@mariozechner/pi-ai/oauth");
-    expect(unsupported).toContain("@mariozechner/pi-ai/private-subpath");
   });
 });

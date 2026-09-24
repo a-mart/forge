@@ -150,24 +150,6 @@ function buildStatsSnapshot(overrides: Partial<StatsSnapshot> = {}): StatsSnapsh
 }
 
 describe('StatsPanel', () => {
-  it('renders populated cards, activity, chart, and model distribution', () => {
-    const stats = buildStatsSnapshot({
-      tokens: { ...buildStatsSnapshot().tokens, today: 12000, last7Days: 45000, allTime: 100000, todayInputTokens: 7000, todayOutputTokens: 5000 },
-      code: { linesAdded: 80, linesDeleted: 12, commits: 4, repos: 2 },
-      activity: { ...buildStatsSnapshot().activity, longestStreak: 4, activeDays: 3, activeDaysInRange: 3 },
-      sessions: { ...buildStatsSnapshot().sessions, totalSessions: 6, totalMessagesSent: 24 },
-      models: [{ modelId: 'claude-opus', displayName: 'Claude Opus', percentage: 75, tokenCount: 75000 }],
-      dailyUsage: [{ date: '2026-04-01', dateLabel: 'Apr 1', tokens: 12000, inputTokens: 7000, outputTokens: 5000, cachedTokens: 0 }],
-    })
-    renderStatsPanel(stats)
-
-    expect(getByText(container, 'Today')).toBeTruthy()
-    expect(getByText(container, 'Longest Streak')).toBeTruthy()
-    expect(getByText(container, 'Claude Opus')).toBeTruthy()
-    expect(container.textContent).toContain('Apr 1')
-    expect(container.textContent).toContain('80')
-  })
-
   it('renders loading and initial error states with retry', () => {
     renderStatsPanel(null, { isLoading: true })
     expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0)

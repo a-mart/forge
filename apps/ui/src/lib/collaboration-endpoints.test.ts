@@ -314,26 +314,5 @@ describe('collaboration-endpoints', () => {
       expect(reg.connections[0].serverUrl).toBe('https://collab.example.com')
     })
 
-    it('target-aware helpers exist and resolve correctly', async () => {
-      const {
-        resolveCollaborationApiBaseUrlFor,
-        resolveCollaborationWsUrlFor,
-        isCollabServerRemoteFor,
-      } = await import('./collaboration-endpoints')
-
-      const target = {
-        connectionId: 'conn_test',
-        kind: 'remote' as const,
-        label: 'Test',
-        serverUrl: 'https://test.com',
-        apiBaseUrl: 'https://test.com/',
-        wsUrl: 'wss://test.com',
-        isRemote: true,
-      }
-
-      expect(resolveCollaborationApiBaseUrlFor(target)).toBe('https://test.com/')
-      expect(resolveCollaborationWsUrlFor(target)).toBe('wss://test.com')
-      expect(isCollabServerRemoteFor(target)).toBe(true)
-    })
   })
 })

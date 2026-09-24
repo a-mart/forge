@@ -168,14 +168,6 @@ describe('ProjectAgentSettingsSheet', () => {
     expect(discardButton).toBeUndefined()
   })
 
-  it('renders resize handle on the sheet', async () => {
-    renderSheet()
-    await flushEffects()
-
-    const resizeHandle = document.body.querySelector('[role="separator"][aria-label="Resize panel"]')
-    expect(resizeHandle).not.toBeNull()
-  })
-
   it('renders capability toggle reflecting initial state with create_session', async () => {
     renderSheet({
       currentProjectAgent: {

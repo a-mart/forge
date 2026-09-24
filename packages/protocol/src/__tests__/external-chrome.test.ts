@@ -4,18 +4,13 @@ import {
   EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS,
   EXTERNAL_CHROME_DESKTOP_AUTHORITY_IDLE_TIMEOUT_MS,
   EXTERNAL_CHROME_EXTENSION_ID,
-  EXTERNAL_CHROME_EXTENSION_ORIGIN,
   EXTERNAL_CHROME_MAX_MESSAGE_BYTES,
   EXTERNAL_CHROME_MAX_SCREENSHOT_BASE64_BYTES,
   EXTERNAL_CHROME_METHODS,
-  EXTERNAL_CHROME_NATIVE_HOST_NAME,
   EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS,
-  EXTERNAL_CHROME_NOTIFICATION_METHODS,
   EXTERNAL_CHROME_PHYSICAL_DEBUGGER_IDLE_TIMEOUT_MS,
   EXTERNAL_CHROME_PHYSICAL_DEBUGGER_MAXIMUM_LIFETIME_MS,
-  EXTERNAL_CHROME_PROTOCOL_VERSIONS,
   EXTERNAL_CHROME_REOBSERVE_REQUIRED_DETAILS,
-  EXTERNAL_CHROME_REQUEST_METHODS,
   ExternalChromeContractError,
   externalChromeControlCollisionDetails,
   negotiateExternalChromeProtocolVersion,
@@ -69,37 +64,14 @@ function expectContractFailure(value: unknown): void {
 }
 
 describe('External Chrome automatic transport contract', () => {
-  it('pins identity and exposes only automatic request families', () => {
-    expect(EXTERNAL_CHROME_EXTENSION_ID).toBe('fcchfcnadajoejfbiclihglkmbcfhajd')
-    expect(EXTERNAL_CHROME_EXTENSION_ORIGIN).toBe(`chrome-extension://${EXTERNAL_CHROME_EXTENSION_ID}/`)
-    expect(EXTERNAL_CHROME_NATIVE_HOST_NAME).toBe('com.forge.external_chrome')
-    expect(EXTERNAL_CHROME_PROTOCOL_VERSIONS).toEqual([1])
-    expect(EXTERNAL_CHROME_REQUEST_METHODS).toEqual([
-      'forge.runtime.hello',
-      'forge.runtime.ping',
-      'forge.browser.inventory',
-      'forge.browser.acquire',
-      'forge.browser.release',
-      'forge.browser.acknowledgeRelease',
-      'forge.browser.reveal',
-      'forge.browser.execute',
-      'forge.runtime.prepareUpdate',
-      'forge.runtime.reload',
-    ])
-    expect(EXTERNAL_CHROME_NOTIFICATION_METHODS).toHaveLength(8)
-    expect(EXTERNAL_CHROME_METHODS).toEqual([...EXTERNAL_CHROME_REQUEST_METHODS, ...EXTERNAL_CHROME_NOTIFICATION_METHODS])
-  })
-
   it('negotiates the sole supported version', () => {
     expect(negotiateExternalChromeProtocolVersion({ min: 1, max: 1 })).toBe(1)
     expect(() => negotiateExternalChromeProtocolVersion({ min: 2, max: 2 })).toThrow(ExternalChromeContractError)
   })
 
-  it('centralizes staggered Desktop and physical authority inactivity bounds', () => {
-    expect(EXTERNAL_CHROME_DESKTOP_AUTHORITY_IDLE_TIMEOUT_MS).toBe(30_000)
-    expect(EXTERNAL_CHROME_PHYSICAL_DEBUGGER_IDLE_TIMEOUT_MS).toBe(35_000)
-    expect(EXTERNAL_CHROME_PHYSICAL_DEBUGGER_MAXIMUM_LIFETIME_MS).toBe(5 * 60_000)
+  it('keeps Desktop authority idle timeout strictly below physical debugger idle timeout', () => {
     expect(EXTERNAL_CHROME_DESKTOP_AUTHORITY_IDLE_TIMEOUT_MS).toBeLessThan(EXTERNAL_CHROME_PHYSICAL_DEBUGGER_IDLE_TIMEOUT_MS)
+    expect(EXTERNAL_CHROME_PHYSICAL_DEBUGGER_IDLE_TIMEOUT_MS).toBeLessThan(EXTERNAL_CHROME_PHYSICAL_DEBUGGER_MAXIMUM_LIFETIME_MS)
   })
 
   it('round-trips strict hello without profile display metadata', () => {

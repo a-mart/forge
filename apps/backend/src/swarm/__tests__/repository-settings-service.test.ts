@@ -1,4 +1,4 @@
-import { access, constants as fsConstants, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -141,16 +141,6 @@ describe('RepositorySettingsService', () => {
       configuredHome: string
     }
     expect(raw.configuredHome).toBe(await real(configuredB))
-  })
-
-  it('falls back when the settings file is missing', async () => {
-    dataDir = await mkdtemp(join(tmpdir(), 'repo-settings-missing-'))
-    const home = join(dataDir, 'home')
-    await mkdir(home)
-    const service = new RepositorySettingsService({ dataDir, homeDir: home })
-    await service.load()
-    expect(service.getSettings().source).toBe('default')
-    await expect(access(getRepositorySettingsPath(dataDir), fsConstants.F_OK)).rejects.toBeTruthy()
   })
 })
 

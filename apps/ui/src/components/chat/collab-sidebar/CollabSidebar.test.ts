@@ -49,7 +49,6 @@ vi.mock('@/lib/collaboration-api', () => ({
 
 // Now import the components under test
 import { CollabSidebar } from './CollabSidebar'
-import { ConnectionSectionHeader } from './ConnectionSectionHeader'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -477,14 +476,6 @@ describe('CollabSidebar — multi-backend rendering', () => {
     expect(labels).toContain('Staging Disconnected')
   })
 
-  it('renders empty state when no backends are configured', () => {
-    connectionsValue.current = makeConnections([])
-
-    renderSidebar()
-
-    expect(container.textContent).toContain('No collaboration backends configured')
-  })
-
   it('renders categories within each connection section', () => {
     connectionsValue.current = makeConnections([
       {
@@ -570,54 +561,5 @@ describe('CollabSidebar — multi-backend rendering', () => {
     expect(container.textContent).toContain('#frontend')
     expect(container.textContent).toContain('Testing')
     expect(container.textContent).toContain('#qa-channel')
-  })
-})
-
-describe('ConnectionSectionHeader', () => {
-  it('renders label and health dot', () => {
-    flushSync(() => {
-      root.render(
-        createElement(ConnectionSectionHeader, {
-          label: 'Production',
-          health: 'connected',
-          totalUnread: 0,
-          isActive: true,
-        }),
-      )
-    })
-
-    expect(container.textContent).toContain('Production')
-    const statusEl = container.querySelector('[role="status"]')
-    expect(statusEl?.getAttribute('aria-label')).toBe('Production Connected')
-  })
-
-  it('shows unread badge when totalUnread > 0', () => {
-    flushSync(() => {
-      root.render(
-        createElement(ConnectionSectionHeader, {
-          label: 'Staging',
-          health: 'reconnecting',
-          totalUnread: 42,
-          isActive: false,
-        }),
-      )
-    })
-
-    expect(container.textContent).toContain('42')
-  })
-
-  it('caps unread badge at 99+', () => {
-    flushSync(() => {
-      root.render(
-        createElement(ConnectionSectionHeader, {
-          label: 'Dev',
-          health: 'disconnected',
-          totalUnread: 150,
-          isActive: false,
-        }),
-      )
-    })
-
-    expect(container.textContent).toContain('99+')
   })
 })

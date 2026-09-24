@@ -175,13 +175,6 @@ describe("RemoteBuildSettingsService env overlays", () => {
     expect(withoutEnv.getSources().enabled).toBe("settings");
   });
 
-  it("falls back to host name when effective instanceName is null", async () => {
-    const { service } = await createService();
-    const display = service.getInstanceDisplayName();
-    expect(typeof display).toBe("string");
-    expect(display.length).toBeGreaterThan(0);
-  });
-
   it("uses env instance name for display fallback chain", async () => {
     const { service } = await createService({
       envOverrides: { instanceName: "Env Display" },

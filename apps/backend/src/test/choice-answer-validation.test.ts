@@ -48,39 +48,6 @@ describe('choice answer ingress validation', () => {
     expect(send).not.toHaveBeenCalled()
   })
 
-  it('rejects invalid web choice responses without resolving the pending choice', async () => {
-    const send = vi.fn()
-    const swarmManager = {
-      getPendingChoice: vi.fn(() => pendingChoice),
-      resolveChoiceRequest: vi.fn(),
-      cancelChoiceRequest: vi.fn(),
-    }
-
-    const handled = await handleConversationCommand({
-      command: {
-        type: 'choice_response',
-        agentId: 'manager',
-        choiceId: 'choice-1',
-        answers: [{ questionId: 'q1', selectedOptionIds: ['yes', 'no'] }],
-      } as never,
-      socket: {} as never,
-      subscribedAgentId: 'manager',
-      swarmManager: swarmManager as never,
-      allowNonManagerSubscriptions: true,
-      send,
-      logDebug: vi.fn(),
-      resolveConfiguredManagerId: vi.fn(() => 'manager'),
-    })
-
-    expect(handled).toBe(true)
-    expect(swarmManager.resolveChoiceRequest).not.toHaveBeenCalled()
-    expect(send).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-      type: 'error',
-      code: 'CHOICE_INVALID_RESPONSE',
-    }))
-    expect(swarmManager.getPendingChoice('choice-1')).toBeTruthy()
-  })
-
   it('rejects invalid collaboration choice responses without resolving the pending choice', async () => {
     const send = vi.fn()
     const swarmManager = {

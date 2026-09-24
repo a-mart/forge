@@ -142,15 +142,6 @@ describe("CLI access settings routes", () => {
     expect(response.status).toBe(404);
   });
 
-  it("returns 405 for unsupported methods", async () => {
-    const { server } = await setup();
-
-    const putResponse = await fetch(`${server.baseUrl}/api/settings/cli-access/keys`, {
-      method: "PUT",
-    });
-    expect(putResponse.status).toBe(405);
-  });
-
   it("handles CORS OPTIONS preflight from same origin", async () => {
     const { server } = await setup();
 

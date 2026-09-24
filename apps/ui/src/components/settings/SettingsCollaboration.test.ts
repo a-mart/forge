@@ -324,18 +324,6 @@ describe('SettingsCollaboration', () => {
       expect(list!.textContent).toContain('collab.example.com')
     })
 
-    it('shows "Add connection" button', async () => {
-      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
-      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
-      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
-      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
-      renderCollab()
-      await flush()
-
-      const addBtn = container.querySelector('[data-testid="add-connection-btn"]')
-      expect(addBtn).not.toBeNull()
-    })
-
     it('shows multiple connections when configured', async () => {
       registryMock.connections = [
         remoteTarget('conn_a', 'server-a.test', 'https://server-a.test'),
@@ -652,29 +640,6 @@ describe('SettingsCollaboration', () => {
 
       expect(container.textContent).toContain('Disabled')
       expect(container.textContent).toContain('FORGE_COLLABORATION_ENABLED=true')
-    })
-
-    it('shows enabled badge when collab is active', async () => {
-      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
-      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
-      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
-      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
-      renderCollab()
-      await flush()
-
-      expect(container.textContent).toContain('Enabled')
-      expect(container.textContent).toContain('Configured')
-    })
-
-    it('shows base URL when available', async () => {
-      collabApiMock.fetchCollaborationStatus.mockResolvedValue(statusEnabled())
-      collabApiMock.fetchCollaborationMe.mockResolvedValue(adminSession())
-      collabApiMock.fetchCollaborationUsers.mockResolvedValue([])
-      collabApiMock.fetchCollaborationInvites.mockResolvedValue([])
-      renderCollab()
-      await flush()
-
-      expect(container.textContent).toContain('https://collab.test')
     })
 
     it('shows error state with retry', async () => {

@@ -8,7 +8,6 @@ import {
   isPathContainedInRoot,
   isValidGitRemoteNameShape,
   parseWorktreeListPorcelain,
-  resolveStableWorktreePathKey
 } from "../versioning/git-source-control-helpers.js";
 
 describe("git-source-control-helpers", () => {
@@ -55,11 +54,6 @@ describe("git-source-control-helpers", () => {
     const second = createWorktreeId("/Users/adam/repos/middleman");
     expect(first).toHaveLength(16);
     expect(first).toBe(second);
-  });
-
-  it("creates stable ids for reported paths when realpath is unavailable", () => {
-    const stableKey = resolveStableWorktreePathKey("/tmp/missing-worktree");
-    expect(createWorktreeId(stableKey)).toHaveLength(16);
   });
 
   it("computes deterministic status hashes", () => {

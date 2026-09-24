@@ -86,11 +86,6 @@ describe('conversation presentation cache lifecycle', () => {
 })
 
 describe('composite (originId, id) identity', () => {
-  it('builds and parses flat keys', () => {
-    expect(compositeKey('local', 'agent-1')).toBe('local::agent-1')
-    expect(parseCompositeKey('local::agent-1')).toEqual({ originId: 'local', id: 'agent-1' })
-  })
-
   it('round trips ids that themselves contain the separator', () => {
     const key = compositeKey('remote-a', 'ns::inner')
     expect(parseCompositeKey(key)).toEqual({ originId: 'remote-a', id: 'ns::inner' })

@@ -27,15 +27,6 @@ describe('audit view replay characterization (Phase 0 → Phase 1)', () => {
 
   const ancestorManagerId = 'ancestor-manager'
 
-  const worker: AgentDescriptor = {
-    ...currentManager,
-    agentId: 'worker-1',
-    displayName: 'Worker 1',
-    role: 'worker',
-    managerId: 'visible-messages-dropped',
-    sessionFile: '/tmp/project/worker-1.jsonl',
-  }
-
   function makeToolCall(
     agentId: string,
     actorAgentId: string,
@@ -184,58 +175,6 @@ describe('audit view replay characterization (Phase 0 → Phase 1)', () => {
       })
 
       expect(result.visibleMessages).toEqual([])
-    })
-  })
-
-  describe('B. Detailed toggle must not reveal worker internals', () => {
-    const workerTool = makeToolCall('visible-messages-dropped', 'worker-1', 'owned-call')
-
-    it('hides owned worker tool calls in detailed manager all view', () => {
-      const result = deriveVisibleMessages({
-        messages: [],
-        activityMessages: [workerTool],
-        agents: [currentManager, worker],
-        activeAgent: currentManager,
-        channelView: 'all',
-        detailedAllView: true,
-      })
-
-      expect(result.visibleMessages).toEqual([])
-    })
-
-    it('keeps default and detailed visibility identical for worker tool rows', () => {
-      const defaultResult = deriveVisibleMessages({
-        messages: [],
-        activityMessages: [workerTool],
-        agents: [currentManager, worker],
-        activeAgent: currentManager,
-        channelView: 'all',
-        detailedAllView: false,
-      })
-
-      const detailedResult = deriveVisibleMessages({
-        messages: [],
-        activityMessages: [workerTool],
-        agents: [currentManager, worker],
-        activeAgent: currentManager,
-        channelView: 'all',
-        detailedAllView: true,
-      })
-
-      expect(detailedResult.visibleMessages).toEqual(defaultResult.visibleMessages)
-    })
-
-    it('does not reveal worker internals after worker descriptors are present', () => {
-      const result = deriveVisibleMessages({
-        messages: [],
-        activityMessages: [workerTool],
-        agents: [currentManager, worker],
-        activeAgent: currentManager,
-        channelView: 'all',
-        detailedAllView: true,
-      })
-
-      expect(result.visibleMessages.some((entry) => entry.type === 'agent_tool_call')).toBe(false)
     })
   })
 

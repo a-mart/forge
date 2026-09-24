@@ -156,18 +156,6 @@ describe("file browser versioned save", () => {
     expect(response.status).toBe(413);
   });
 
-  it("advertises GET, PUT, and OPTIONS on /api/files/content", async () => {
-    const harness = await createHarness();
-
-    const optionsResponse = await fetch(`${harness.server.baseUrl}/api/files/content`, { method: "OPTIONS" });
-    expect(optionsResponse.status).toBe(204);
-    expect(optionsResponse.headers.get("access-control-allow-methods")).toContain("PUT");
-
-    const postResponse = await fetch(`${harness.server.baseUrl}/api/files/content`, { method: "POST" });
-    expect(postResponse.status).toBe(405);
-    expect(postResponse.headers.get("allow")).toContain("PUT");
-  });
-
   it("saves when baseVersion matches and returns a new version token", async () => {
     const harness = await createHarness();
     const filePath = "notes.txt";

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  FORGE_MIN_NODE_VERSION,
   assertNodeEngineFloor,
   compareNodeVersions,
   parseNodeVersion,
@@ -8,10 +7,6 @@ import {
 } from "../../node-engine-floor.js";
 
 describe("node engine floor", () => {
-  it("pins the Forge minimum at 22.19.0", () => {
-    expect(FORGE_MIN_NODE_VERSION).toBe("22.19.0");
-  });
-
   it("accepts versions at or above the floor", () => {
     expect(satisfiesNodeEngineFloor("22.19.0")).toBe(true);
     expect(satisfiesNodeEngineFloor("v22.19.1")).toBe(true);

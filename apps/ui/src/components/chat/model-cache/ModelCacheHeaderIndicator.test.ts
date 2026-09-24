@@ -55,33 +55,6 @@ afterEach(() => {
 })
 
 describe('ModelCacheHeaderIndicator', () => {
-  it('renders nothing when summary is unavailable', () => {
-    expect(buildModelCacheHeaderSummary({ enabled: false, observations: [observation('hit', 0.9)] })).toBeNull()
-  })
-
-  it('renders hit, partial, and miss chip labels', () => {
-    for (const [status, label] of [
-      ['hit', 'Prompt cache 91%'],
-      ['partial', 'Prompt cache partial 42%'],
-      ['miss', 'Prompt cache miss'],
-    ] as const) {
-      const ratio = status === 'hit' ? 0.91 : status === 'partial' ? 0.42 : 0
-      const summary = buildModelCacheHeaderSummary({
-        enabled: true,
-        observations: [observation(status, ratio)],
-      })
-      expect(summary?.chipLabel).toBe(label)
-
-      act(() => {
-        root.render(createElement(ModelCacheHeaderIndicator, { summary: summary! }))
-      })
-
-      expect(container.textContent).toContain(label)
-      act(() => root.unmount())
-      root = createRoot(container)
-    }
-  })
-
   it('opens popover with provider-reported disclaimer', () => {
     const summary = buildModelCacheHeaderSummary({
       enabled: true,

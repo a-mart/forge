@@ -61,12 +61,6 @@ function editorView() {
 }
 
 describe('CodeMirrorFileEditor', () => {
-  it('renders the controlled value', () => {
-    renderEditor({ value: 'const answer = 42' })
-
-    expect(contentElement().textContent).toContain('const answer = 42')
-  })
-
   it('updates rendered content when the controlled value changes', () => {
     renderEditor({ value: 'before' })
 
@@ -159,22 +153,6 @@ describe('CodeMirrorFileEditor', () => {
     expect(content.getAttribute('contenteditable')).toBe('false')
   })
 
-  it('defaults the accessibility label', () => {
-    renderEditor()
-
-    expect(contentElement().getAttribute('aria-label')).toBe('File editor')
-  })
-
-  it('opts the CodeMirror scroller into file browser scrollbar styling', () => {
-    renderEditor()
-
-    const editorRoot = container.querySelector<HTMLElement>('[data-testid="codemirror-file-editor"]')
-
-    expect(editorRoot).not.toBeNull()
-    expect(editorRoot?.classList.contains('file-browser-code-editor')).toBe(true)
-    expect(container.querySelector('.cm-scroller')).not.toBeNull()
-  })
-
   it('uses the light-safe CodeMirror theme extension by default', () => {
     renderEditor()
 
@@ -214,12 +192,6 @@ describe('CodeMirrorFileEditor', () => {
     })
 
     expect(syntaxTree(state).toString()).toContain('keyword')
-  })
-
-  it('enables CodeMirror line wrapping when wordWrap is true', () => {
-    renderEditor({ wordWrap: true })
-
-    expect(container.querySelector('.cm-lineWrapping')).not.toBeNull()
   })
 
   it('destroys the EditorView when unmounted', () => {

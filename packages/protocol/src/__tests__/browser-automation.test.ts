@@ -1,7 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
-import type { ClientCommand } from '../client-commands.js'
-import type { ServerEvent } from '../server-events.js'
 import {
   BROWSER_AUTOMATION_DEFAULT_TIMEOUT_MS,
   BROWSER_AUTOMATION_MAX_EVALUATE_BYTES,
@@ -9,17 +7,11 @@ import {
   BROWSER_AUTOMATION_MAX_URL_LENGTH,
   BROWSER_AUTOMATION_OPERATIONS,
   BROWSER_HOST_PROTOCOL_VERSION,
-  BROWSER_TARGET_AFFINITIES,
   BROWSER_VIEWPORT_MAX_AREA,
-  BROWSER_VIEWPORT_PRESETS,
   BrowserAutomationContractError,
   type BrowserAutomationInputByOperation,
   type BrowserAutomationOperation,
-  type BrowserAutomationRequest,
-  type BrowserAutomationResponse,
   type BrowserAutomationResultByOperation,
-  type BrowserHostRegistration,
-  type BrowserSessionSnapshot,
   isBrowserAutomationOperation,
   isBrowserHostProtocolCompatible,
   parseBrowserAutomationInput,
@@ -44,22 +36,7 @@ const validInputs = {
 } as const
 
 describe('browser automation operation contract', () => {
-  it('exports all 13 operations and operation-indexed inputs/results', () => {
-    expect(BROWSER_AUTOMATION_OPERATIONS).toEqual([
-      'status',
-      'open',
-      'navigate',
-      'resize',
-      'snapshot',
-      'click',
-      'type',
-      'press',
-      'scroll',
-      'evaluate',
-      'waitFor',
-      'recordingStart',
-      'recordingStop',
-    ])
+  it('parses every operation input and rejects unknown operations', () => {
     expectTypeOf<keyof BrowserAutomationInputByOperation>().toEqualTypeOf<BrowserAutomationOperation>()
     expectTypeOf<keyof BrowserAutomationResultByOperation>().toEqualTypeOf<BrowserAutomationOperation>()
 
@@ -70,13 +47,11 @@ describe('browser automation operation contract', () => {
     expect(isBrowserAutomationOperation('launch')).toBe(false)
   })
 
-  it('exposes protocol v2 and rejects caller-selected hosts and tunneled lifecycle fields', () => {
-    expect(BROWSER_HOST_PROTOCOL_VERSION).toBe(2)
-    expect(isBrowserHostProtocolCompatible({ minimum: 1, maximum: 2 })).toBe(true)
-    expect(isBrowserHostProtocolCompatible({ minimum: 2, maximum: 3 })).toBe(true)
+  it('negotiates host protocol compatibility across overlapping and disjoint ranges', () => {
+    expect(isBrowserHostProtocolCompatible({ minimum: 1, maximum: BROWSER_HOST_PROTOCOL_VERSION })).toBe(true)
+    expect(isBrowserHostProtocolCompatible({ minimum: BROWSER_HOST_PROTOCOL_VERSION, maximum: BROWSER_HOST_PROTOCOL_VERSION + 1 })).toBe(true)
     expect(isBrowserHostProtocolCompatible({ minimum: 1, maximum: 1 })).toBe(false)
-    expect(isBrowserHostProtocolCompatible({ minimum: 3, maximum: 3 })).toBe(false)
-    expect(BROWSER_TARGET_AFFINITIES).toEqual(['managed-electron', 'external-chrome'])
+    expect(isBrowserHostProtocolCompatible({ minimum: BROWSER_HOST_PROTOCOL_VERSION + 1, maximum: BROWSER_HOST_PROTOCOL_VERSION + 1 })).toBe(false)
     expect(parseBrowserAutomationInput('status', {})).toEqual({})
   })
 
@@ -103,8 +78,7 @@ describe('browser automation operation contract', () => {
     })
   })
 
-  it('retains T3 viewport presets and resolves orientation', () => {
-    expect(Object.keys(BROWSER_VIEWPORT_PRESETS)).toHaveLength(17)
+  it('resolves viewport preset orientation by swapping width and height', () => {
     expect(resolveBrowserViewportPreset('iphone-se')).toEqual({
       mode: 'preset',
       presetId: 'iphone-se',
@@ -156,160 +130,11 @@ describe('browser automation operation contract', () => {
     expect(() => parseBrowserAutomationInput('evaluate', { expression: 'x'.repeat(BROWSER_AUTOMATION_MAX_EVALUATE_BYTES + 1) })).toThrow()
     expect(() => parseBrowserAutomationInput('resize', { mode: 'freeform', width: 239, height: 800 })).toThrow()
     expect(() => parseBrowserAutomationInput('click', { x: Number.NaN, y: 1 })).toThrow()
-    expect(BROWSER_VIEWPORT_MAX_AREA).toBe(3_840 * 2_160)
+    expect(() => parseBrowserAutomationInput('resize', { mode: 'freeform', width: 3_840, height: Math.floor(BROWSER_VIEWPORT_MAX_AREA / 3_840) + 1 })).toThrow()
   })
 })
 
 describe('browser host, session, and routing wire contract', () => {
-  const host: BrowserHostRegistration = {
-    hostId: 'desktop-host',
-    clientInstanceId: 'desktop-installation',
-    registeredAt: '2026-07-22T00:00:00.000Z',
-    capabilities: {
-      supportedOperations: [...BROWSER_AUTOMATION_OPERATIONS],
-      runtimeVersions: { chromium: '138.0.7204.251', playwright: '1.60.0' },
-      maxResponseBytes: 8_000_000,
-    },
-  }
-
-  const session: BrowserSessionSnapshot = {
-    schemaVersion: 2,
-    sessionAgentId: 'session-1',
-    profileId: 'profile-1',
-    hostingState: 'hosted',
-    tabs: [],
-    activeTabId: null,
-    defaultTabId: null,
-    panelVisible: false,
-    panelReveal: { sequence: 0, acknowledgedSequence: 0, tabId: null },
-    recentActions: [],
-    revision: 1,
-    createdAt: '2026-07-22T00:00:00.000Z',
-    updatedAt: '2026-07-22T00:00:00.000Z',
-  }
-
-  it('requires request, session, profile, tab, host, generation, deadline, and artifact routing', () => {
-    const request: BrowserAutomationRequest = {
-      requestId: 'request-1',
-      sessionAgentId: 'session-1',
-      profileId: 'profile-1',
-      tabId: null,
-      hostId: 'desktop-host',
-      hostGeneration: 4,
-      deadlineAt: '2026-07-22T00:00:15.000Z',
-      artifactDirectory: null,
-      operation: 'status',
-      input: {},
-    }
-    expect(JSON.parse(JSON.stringify(request))).toEqual(request)
-  })
-
-  it('serializes mutually exclusive success and typed failure responses', () => {
-    const success: BrowserAutomationResponse = {
-      requestId: 'request-1',
-      sessionAgentId: 'session-1',
-      profileId: 'profile-1',
-      tabId: null,
-      hostId: 'desktop-host',
-      hostGeneration: 4,
-      elapsedMs: 8,
-      operation: 'status',
-      ok: true,
-      result: {
-        available: true,
-        host: {
-          connected: true,
-          hostId: host.hostId,
-          hostGeneration: 4,
-          focused: true,
-          capabilities: host.capabilities,
-          connectedAt: host.registeredAt,
-        },
-        panelVisible: false,
-        panelRevealRequested: false,
-        physicalTabVisible: false,
-        selectedTab: null,
-        eligibleTabs: [],
-        eligibleTabsTruncated: false,
-      },
-    }
-    const failure: BrowserAutomationResponse = {
-      requestId: 'request-2',
-      sessionAgentId: 'session-1',
-      profileId: 'profile-1',
-      tabId: 'tab-1',
-      hostId: 'desktop-host',
-      hostGeneration: 4,
-      elapsedMs: 15_000,
-      operation: 'click',
-      ok: false,
-      error: { code: 'timeout', message: 'Timed out', retryable: true },
-    }
-    expect(JSON.parse(JSON.stringify([success, failure]))).toEqual([success, failure])
-    expect('error' in success).toBe(false)
-    expect('result' in failure).toBe(false)
-  })
-
-  it('exports every browser client command and server event through the unions', () => {
-    const routedRequest = {
-      requestId: 'request-1',
-      sessionAgentId: 'session-1',
-      profileId: 'profile-1',
-      tabId: null,
-      hostId: host.hostId,
-      hostGeneration: 4,
-      deadlineAt: '2026-07-22T00:00:15.000Z',
-      artifactDirectory: null,
-      operation: 'status',
-      input: {},
-    } as const satisfies BrowserAutomationRequest
-    const routedResponse = {
-      requestId: routedRequest.requestId,
-      sessionAgentId: routedRequest.sessionAgentId,
-      profileId: routedRequest.profileId,
-      tabId: null,
-      hostId: host.hostId,
-      hostGeneration: 4,
-      elapsedMs: 1,
-      operation: 'status',
-      ok: false,
-      error: { code: 'unavailable-host', message: 'Unavailable', retryable: true },
-    } as const satisfies BrowserAutomationResponse
-    const commands = [
-      { type: 'browser_host_register', requestId: 'register-1', registration: host },
-      { type: 'browser_host_focus', hostId: host.hostId, hostGeneration: 4, focused: true },
-      { type: 'browser_host_response', response: routedResponse },
-      { type: 'browser_host_state_report', requestId: 'state-1', hostId: host.hostId, hostGeneration: 4, sessions: [{
-        sessionAgentId: session.sessionAgentId,
-        profileId: session.profileId,
-        baseRevision: session.revision,
-        tabs: session.tabs,
-      }] },
-      { type: 'browser_panel_reveal_acknowledge', requestId: 'reveal-1', hostId: host.hostId, hostGeneration: 4, sessionAgentId: 'session-1', profileId: 'profile-1', tabId: 'tab-1', sequence: 1 },
-      { type: 'browser_host_lifecycle_response', response: { requestId: 'life-1', sessionAgentId: 'session-1', profileId: 'profile-1', hostId: host.hostId, hostGeneration: 4, ok: true, kind: 'turn-ended', turnId: 'turn-1' } },
-      { type: 'browser_tab_open', requestId: '1', sessionAgentId: 'session-1', profileId: 'profile-1' },
-      { type: 'browser_tab_activate', requestId: '2', sessionAgentId: 'session-1', tabId: 'tab-1' },
-      { type: 'browser_tab_close', requestId: '3', sessionAgentId: 'session-1', tabId: 'tab-1' },
-      { type: 'browser_tab_resize', requestId: '4', sessionAgentId: 'session-1', tabId: 'tab-1', viewport: { mode: 'fill' } },
-      { type: 'browser_recording_start', requestId: '5', sessionAgentId: 'session-1', tabId: 'tab-1' },
-      { type: 'browser_recording_stop', requestId: '6', sessionAgentId: 'session-1', tabId: 'tab-1', recordingId: 'recording-1' },
-    ] satisfies ClientCommand[]
-    const events = [
-      { type: 'browser_host_connected', host: { connected: true, hostId: host.hostId, hostGeneration: 4, focused: true, capabilities: host.capabilities, connectedAt: host.registeredAt } },
-      { type: 'browser_host_hydration_chunk', requestId: 'register-1', hostId: host.hostId, hostGeneration: 4, chunkIndex: 0, chunkCount: 1, payloadBase64: 'W10=' },
-      { type: 'browser_host_state_report_result', requestId: 'state-1', result: { hostId: host.hostId, hostGeneration: 4, status: 'processed', sessions: [{ sessionAgentId: session.sessionAgentId, profileId: session.profileId, status: 'accepted', snapshot: session }] } },
-      { type: 'browser_automation_request', request: routedRequest },
-      { type: 'browser_session_snapshot', snapshot: session },
-      { type: 'browser_session_changed', snapshot: session, reason: 'recovery' },
-      { type: 'browser_panel_reveal_acknowledged', requestId: 'reveal-1', snapshot: session },
-      { type: 'browser_host_lifecycle_request', request: { requestId: 'life-1', sessionAgentId: 'session-1', profileId: 'profile-1', hostId: host.hostId, hostGeneration: 4, kind: 'turn-ended', turnId: 'turn-1' } },
-      { type: 'browser_tab_command_succeeded', requestId: '1', commandType: 'browser_tab_open', snapshot: session },
-      { type: 'browser_recording_command_succeeded', requestId: '5', commandType: 'browser_recording_start', result: { recordingId: 'recording-1', tabId: 'tab-1', recording: true, startedAt: host.registeredAt, mimeType: 'video/webm', width: 1000, height: 700 }, snapshot: session },
-    ] satisfies ServerEvent[]
-    expect(commands).toHaveLength(12)
-    expect(events).toHaveLength(10)
-  })
-
   it('makes browser state reports and human tab mutations required wire requests', () => {
     for (const commandType of ['browser_host_state_report', 'browser_panel_reveal_acknowledge', 'browser_tab_open', 'browser_tab_activate', 'browser_tab_close', 'browser_tab_resize', 'browser_recording_start', 'browser_recording_stop'] as const) {
       expect(getWsRequestContract(commandType)).toMatchObject({

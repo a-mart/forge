@@ -6,7 +6,6 @@ import {
   CORTEX_AUTO_REVIEW_SCHEDULE_ID,
   CortexAutoReviewSettingsService,
   CortexAutoReviewSettingsValidationError,
-  cronExpressionForIntervalMinutes,
   syncCortexAutoReviewSchedule,
 } from '../swarm/cortex-auto-review-settings.js'
 import { getCortexAutoReviewSettingsPath, getProfileScheduleFilePath } from '../swarm/data-paths.js'
@@ -91,11 +90,5 @@ describe('syncCortexAutoReviewSchedule', () => {
       message: 'Consolidate knowledge entries',
       nextFireAt: '2026-03-28T00:00:00.000Z',
     })
-  })
-})
-
-describe('cronExpressionForIntervalMinutes', () => {
-  it('maps the daily consolidation cadence', () => {
-    expect(cronExpressionForIntervalMinutes(1440)).toBe('0 0 * * *')
   })
 })

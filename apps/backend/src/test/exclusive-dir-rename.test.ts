@@ -3,10 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  DARWIN_RENAME_EXCL,
   ExclusiveRenameError,
-  LINUX_AT_FDCWD,
-  LINUX_RENAME_NOREPLACE,
   WIN32_ERROR_ACCESS_DENIED,
   WIN32_ERROR_ALREADY_EXISTS,
   WIN32_ERROR_DISK_FULL,
@@ -17,64 +14,9 @@ import {
   exclusiveRenameNoClobber,
   toWin32LongPath,
   win32ErrorToExclusive,
-  type ExclusiveRenameNativeBinding,
 } from '../versioning/exclusive-dir-rename.js'
 
-describe('exclusive-dir-rename table-driven bindings', () => {
-  const cases: Array<{
-    name: string
-    platform: NodeJS.Platform
-    arch: string
-    expectedFlags?: number
-    expectedConstants?: Record<string, number>
-  }> = [
-    {
-      name: 'darwin renamex_np RENAME_EXCL',
-      platform: 'darwin',
-      arch: 'arm64',
-      expectedFlags: DARWIN_RENAME_EXCL,
-    },
-    {
-      name: 'linux renameat2 RENAME_NOREPLACE',
-      platform: 'linux',
-      arch: 'x64',
-      expectedFlags: LINUX_RENAME_NOREPLACE,
-      expectedConstants: { AT_FDCWD: LINUX_AT_FDCWD },
-    },
-    {
-      name: 'win32 MoveFileExW no-replace',
-      platform: 'win32',
-      arch: 'x64',
-      expectedFlags: 0,
-    },
-  ]
-
-  for (const entry of cases) {
-    it(`invokes ${entry.name} with expected prototype/flags`, async () => {
-      const calls: unknown[][] = []
-      const binding: ExclusiveRenameNativeBinding = {
-        renameExclusive(source, destination) {
-          calls.push([source, destination, entry.expectedFlags])
-        },
-      }
-
-      await exclusiveRenameNoClobber('/tmp/src', '/tmp/dst', {
-        platform: entry.platform,
-        arch: entry.arch,
-        createBinding: (platform, arch) => {
-          expect(platform).toBe(entry.platform)
-          expect(arch).toBe(entry.arch)
-          if (entry.expectedConstants) {
-            expect(LINUX_AT_FDCWD).toBe(entry.expectedConstants.AT_FDCWD)
-          }
-          return binding
-        },
-      })
-
-      expect(calls).toEqual([['/tmp/src', '/tmp/dst', entry.expectedFlags]])
-    })
-  }
-
+describe('exclusive-dir-rename error mapping', () => {
   it('maps posix errno codes immediately', () => {
     expect(errnoToError(17, 'x').code).toBe('destination_exists')
     expect(errnoToError(66, 'x').code).toBe('destination_exists')

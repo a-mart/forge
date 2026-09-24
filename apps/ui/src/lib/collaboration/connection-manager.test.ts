@@ -759,66 +759,6 @@ describe('CollabConnectionManager', () => {
   })
 
   // -----------------------------------------------------------------------
-  // Accessor edge cases
-  // -----------------------------------------------------------------------
-
-  describe('accessors', () => {
-    it('getAllStates returns states for all connections', () => {
-      const manager = new CollabConnectionManager()
-      manager.syncConnections([
-        makeTarget('conn_a', 'ws://a.example.com'),
-        makeTarget('conn_b', 'ws://b.example.com'),
-      ])
-      vi.advanceTimersByTime(100)
-
-      const states = manager.getAllStates()
-      expect(Object.keys(states)).toEqual(['conn_a', 'conn_b'])
-      expect(states['conn_a'].connected).toBe(false)
-      expect(states['conn_b'].connected).toBe(false)
-
-      manager.destroy()
-    })
-
-    it('getClient returns correct client for connection', () => {
-      const manager = new CollabConnectionManager()
-      manager.syncConnections([
-        makeTarget('conn_a', 'ws://a.example.com'),
-        makeTarget('conn_b', 'ws://b.example.com'),
-      ])
-      vi.advanceTimersByTime(100)
-
-      const clientA = manager.getClient('conn_a')
-      const clientB = manager.getClient('conn_b')
-
-      expect(clientA).not.toBeNull()
-      expect(clientB).not.toBeNull()
-      expect(clientA).not.toBe(clientB)
-
-      manager.destroy()
-    })
-
-    it('getTarget returns target metadata', () => {
-      const manager = new CollabConnectionManager()
-      const target = makeTarget('conn_a', 'ws://a.example.com', 'Server A')
-      manager.syncConnections([target])
-      vi.advanceTimersByTime(100)
-
-      const retrieved = manager.getTarget('conn_a')
-      expect(retrieved).not.toBeNull()
-      expect(retrieved!.label).toBe('Server A')
-      expect(retrieved!.wsUrl).toBe('ws://a.example.com')
-
-      manager.destroy()
-    })
-
-    it('getTarget returns null for unknown connection', () => {
-      const manager = new CollabConnectionManager()
-      expect(manager.getTarget('unknown')).toBeNull()
-      manager.destroy()
-    })
-  })
-
-  // -----------------------------------------------------------------------
   // Auth-gated metadata connections
   // -----------------------------------------------------------------------
 

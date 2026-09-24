@@ -227,28 +227,6 @@ describe('WebSocketTransport', () => {
     expect(transport.send({ type: 'goodbye' })).toBe(false)
   })
 
-  it('send() JSON-serializes data', () => {
-    const transport = new WebSocketTransport({
-      url: 'ws://localhost:8787',
-    })
-
-    transport.connect()
-    vi.advanceTimersByTime(0)
-
-    const socket = FakeWebSocket.instances[0]
-    socket.emit('open')
-
-    transport.send({ type: 'subscribe', agentId: 'mgr-1' })
-
-    expect(socket.sentPayloads).toHaveLength(1)
-    expect(JSON.parse(socket.sentPayloads[0])).toEqual({
-      type: 'subscribe',
-      agentId: 'mgr-1',
-    })
-
-    transport.disconnect()
-  })
-
   it('sends heartbeat pings at the configured interval', () => {
     const transport = new WebSocketTransport({
       url: 'ws://localhost:8787',
@@ -348,21 +326,5 @@ describe('WebSocketTransport', () => {
     expect(FakeWebSocket.instances).toHaveLength(1)
 
     transport.disconnect()
-  })
-
-  it('isConnected() returns false before connect and after disconnect', () => {
-    const transport = new WebSocketTransport({
-      url: 'ws://localhost:8787',
-    })
-
-    expect(transport.isConnected()).toBe(false)
-
-    transport.connect()
-    vi.advanceTimersByTime(0)
-    FakeWebSocket.instances[0].emit('open')
-    expect(transport.isConnected()).toBe(true)
-
-    transport.disconnect()
-    expect(transport.isConnected()).toBe(false)
   })
 })

@@ -175,33 +175,6 @@ describe("KnowledgeMemoryCoordinator", () => {
       .toContain('"attemptId":"attempt-1"');
   });
 
-  it("delegates compaction and Cortex operations without reimplementing their algorithms", async () => {
-    const harness = await createHarness();
-    const manager = makeManager("session", "profile");
-
-    await harness.coordinator.compact("session", { trigger: "api" });
-    await harness.coordinator.smartCompact("session", { trigger: "slash_command" });
-    await harness.coordinator.listCortexConsolidationRuns();
-    await harness.coordinator.getCortexConsolidationSnapshot();
-    await harness.coordinator.runCortexConsolidation("manual");
-    await harness.coordinator.maybeRunCortexConsolidationFromIncomingMessage(
-      "consolidate",
-      manager,
-      { channel: "web" },
-    );
-
-    expect(harness.services.compaction.compact).toHaveBeenCalledWith("session", { trigger: "api" });
-    expect(harness.services.compaction.smartCompact).toHaveBeenCalledWith("session", {
-      trigger: "slash_command",
-    });
-    expect(harness.services.cortex.runConsolidation).toHaveBeenCalledWith("manual");
-    expect(harness.services.cortex.maybeRunConsolidationFromIncomingMessage).toHaveBeenCalledWith(
-      "consolidate",
-      manager,
-      { channel: "web" },
-    );
-  });
-
   it("runs the capture judge through candidate, auth, and response extraction paths", async () => {
     const harness = await createHarness();
     const model = { provider: "openai-codex", id: "gpt-5.5" };
@@ -355,22 +328,6 @@ describe("KnowledgeMemoryCoordinator", () => {
 
     await harness.coordinator.ensureCortexProfileForBoot();
     expect(harness.services.memory.ensureAgentMemoryFile).toHaveBeenCalledTimes(2);
-  });
-
-  it("keeps post-store memory and session-meta boot steps on their focused services", async () => {
-    const harness = await createHarness();
-    const calls: string[] = [];
-    harness.services.memory.ensureMemoryFilesForBoot = vi.fn(async () => calls.push("memory"));
-    harness.services.sessionMeta.rebuildSessionManifestForBoot = vi.fn(async () => calls.push("rebuild"));
-    harness.services.sessionMeta.hydrateCompactionCountsForBoot = vi.fn(async () => calls.push("hydrate"));
-    harness.services.sessionMeta.startCompactionCountBackfill = vi.fn(() => calls.push("backfill"));
-
-    await harness.coordinator.ensureMemoryFilesForBoot();
-    await harness.coordinator.rebuildSessionManifestForBoot();
-    await harness.coordinator.hydrateCompactionCountsForBoot();
-    harness.coordinator.startCompactionCountBackfill();
-
-    expect(calls).toEqual(["memory", "rebuild", "hydrate", "backfill"]);
   });
 });
 

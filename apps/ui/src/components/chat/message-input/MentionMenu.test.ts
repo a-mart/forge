@@ -44,18 +44,6 @@ function renderMenu(
 }
 
 describe('MentionMenu', () => {
-  it('renders listbox options with aria-selected on the active item', () => {
-    renderMenu()
-
-    const listbox = container.querySelector('[role="listbox"]')
-    expect(listbox?.getAttribute('aria-label')).toBe('Mentions')
-
-    const options = container.querySelectorAll('[role="option"]')
-    expect(options.length).toBe(1)
-    expect(options[0]?.getAttribute('aria-selected')).toBe('true')
-    expect(options[0]?.id).toBe('mention-listbox-test-option-0')
-  })
-
   it('shows loading status for Codex tool picker', () => {
     renderMenu({ status: 'loading', mentions: [], codexToolPicker: true })
 

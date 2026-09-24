@@ -4,9 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  buildCollaborationSkillsOverride,
   planPiResourceLoaderOptions,
-  planRuntimeEnv,
   planRuntimeResourcePaths,
   type RuntimeMemoryResourcesPlan,
 } from "../runtime/runtime-resource-plan.js";
@@ -210,21 +208,5 @@ describe("runtime resource plan", () => {
         { path: join(rootDir, "AGENTS.md"), content: "agents" },
         { path: join(rootDir, "recovery.md"), content: "recovery" },
       ]);
-  });
-
-  it("plans exact Claude/Cursor SDK runtime env values", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-resource-"));
-    const config = createConfig(rootDir);
-    expect(planRuntimeEnv({ dataDir: config.paths.dataDir, memoryContextFile: { path: join(rootDir, "memory.md"), content: "" } }))
-      .toEqual({ SWARM_DATA_DIR: config.paths.dataDir, SWARM_MEMORY_FILE: join(rootDir, "memory.md") });
-  });
-
-  it("exports the collaboration skills override helper for direct path matching", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-resource-"));
-    const allowed = skillMetadata(join(rootDir, "skills"), "memory");
-    const override = buildCollaborationSkillsOverride([allowed]);
-
-    expect(override({ skills: [{ baseDir: allowed.rootPath, filePath: allowed.path }] as never, diagnostics: [] }).skills)
-      .toHaveLength(1);
   });
 });

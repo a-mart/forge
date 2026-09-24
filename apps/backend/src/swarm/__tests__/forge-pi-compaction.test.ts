@@ -5,15 +5,12 @@ import {
   buildForgeCompactionStartInstrumentation,
   detectCompactionProviderOptionsPresence,
   ForgePiCompactionError,
-  mapCompactionReasoningToPiThinkingLevel,
-  resolveForgeCompactionModel,
   runForgePiCompaction,
 } from "../compaction/forge-pi-compaction.js";
 import {
   boundCompactionPreparation,
   serializeMessagesForCompactionMeasurement,
 } from "../compaction/forge-pi-compaction-bounds.js";
-import { createDefaultCompactionSettings } from "../compaction-settings-service.js";
 import { createStaticCompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { makeCompactionGuardDescriptor } from "../../test-support/compaction-guard-harness.js";
 
@@ -601,24 +598,5 @@ describe("forge pi compaction", () => {
     });
     expect(JSON.stringify(instrumentation)).not.toContain("secret");
     expect(instrumentation.deferredProviderParity.length).toBeGreaterThan(0);
-  });
-
-  it("defaults configured model/reasoning to openai-codex gpt-5.5 low", () => {
-    const defaults = createDefaultCompactionSettings();
-    expect(defaults.model).toEqual({ provider: "openai-codex", modelId: "gpt-5.5" });
-    expect(defaults.reasoningLevel).toBe("low");
-    expect(mapCompactionReasoningToPiThinkingLevel(defaults.model.provider, defaults.reasoningLevel)).toBe("low");
-    expect(
-      resolveForgeCompactionModel(
-        {
-          find: vi.fn((provider: string, modelId: string) =>
-            provider === "openai-codex" && modelId === "gpt-5.5"
-              ? { provider, id: modelId, reasoning: true }
-              : undefined,
-          ),
-        } as unknown as ModelRegistry,
-        defaults.model,
-      )?.id,
-    ).toBe("gpt-5.5");
   });
 });

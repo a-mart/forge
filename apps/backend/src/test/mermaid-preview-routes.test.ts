@@ -65,21 +65,6 @@ describe('mermaid preview shipped asset pair', () => {
     }
   })
 
-  it('vendored mermaid.min.js exposes a mermaid global', async () => {
-    const server = await createMermaidPreviewTestServer()
-
-    const response = await fetch(
-      `${server.baseUrl}/mermaid-preview/assets/vendor/mermaid.min.js`,
-    )
-    expect(response.status).toBe(200)
-    const source = await response.text()
-
-    // The vendored mermaid runtime must expose itself as a global
-    expect(source).toContain('globalThis["mermaid"]')
-    // It should be non-trivial (the real library is >1MB minified)
-    expect(source.length).toBeGreaterThan(10_000)
-  })
-
   it('embed.js ping handler calls the same postReadyMessage as bootstrap', async () => {
     const server = await createMermaidPreviewTestServer()
 

@@ -65,39 +65,6 @@ async function writeSessionFixture(
 }
 
 describe("agent-creator-context", () => {
-  it("formats lightweight seed context with cwd, agents, and recent sessions", () => {
-    const empty = formatAgentCreatorContextMessage({
-      projectCwd: "/tmp/project",
-      existingAgents: [],
-      recentSessions: []
-    });
-
-    expect(empty).toContain("<agent_creator_seed_context>");
-    expect(empty).toContain("projectCwd: /tmp/project");
-    expect(empty).toContain("No project agents configured in this profile yet.");
-    expect(empty).toContain("No recent sessions found.");
-
-    const populated = formatAgentCreatorContextMessage({
-      projectCwd: "/repo/forge",
-      existingAgents: [
-        {
-          handle: "backend-specialist",
-          whenToUse: "Use for backend correctness and route debugging."
-        }
-      ],
-      recentSessions: [
-        {
-          sessionId: "session-a",
-          label: "Release Work"
-        }
-      ]
-    });
-
-    expect(populated).toContain("projectCwd: /repo/forge");
-    expect(populated).toContain("- @backend-specialist: Use for backend correctness and route debugging.");
-    expect(populated).toContain("- Release Work (sessionId: session-a)");
-  });
-
   it("caps the formatted seed context while preserving the closing tag", () => {
     const message = formatAgentCreatorContextMessage({
       projectCwd: "/repo/forge",

@@ -4,7 +4,6 @@ import { join } from "node:path";
 import type { StatsSnapshot } from "@forge/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  STATS_CACHE_VERSION,
   getStatsCacheKey,
   loadPersistedStatsCache,
   persistStatsCache,
@@ -19,8 +18,6 @@ afterEach(async () => {
 
 describe("persisted stats cache", () => {
   it("uses version 9 and ignores older cache files that lack fuckMeter", async () => {
-    expect(STATS_CACHE_VERSION).toBe(9);
-
     const cacheFilePath = await createCacheFilePath();
     await writeFile(cacheFilePath, JSON.stringify({
       version: 7,

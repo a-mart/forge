@@ -38,10 +38,6 @@ describe('resolveElectronDevNativeBinding', () => {
 })
 
 describe('withNativeBinding', () => {
-  it('preserves the normal constructor when no override is required', () => {
-    expect(withNativeBinding(Database, undefined)).toBe(Database)
-  })
-
   it('opens SQLite through the explicitly selected native binding', () => {
     const ElectronDevDatabase = withNativeBinding(Database, hostNativeBinding)
     const database = new ElectronDevDatabase(':memory:')

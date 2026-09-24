@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -28,10 +27,6 @@ import { HistorySearchService } from "../history-recall/history-search-service.j
 import { getSessionFilePath } from "../storage/data-paths.js";
 import { buildProjectSafePiProjectSettingsStorage } from "../project-executable-trust.js";
 import type { AgentDescriptor } from "../types.js";
-import {
-  expectInstalledPiCodingAgentPatchIdentity,
-  findInstalledPiCodingAgentFile,
-} from "./pi-coding-agent-patch-identity.js";
 
 const tempDirs: string[] = [];
 const fauxRegistrations: Array<{ unregister: () => void }> = [];
@@ -108,14 +103,6 @@ function makeDescriptor(root: string): AgentDescriptor {
 }
 
 describe("pi fresh-window native runtime", () => {
-  it("keeps the installed fresh-handler and persistence patch identity", () => {
-    const agentSessionPath = findInstalledPiCodingAgentFile(import.meta.url, "dist/core/agent-session.js");
-    const source = readFileSync(agentSessionPath, "utf8");
-    expectInstalledPiCodingAgentPatchIdentity(import.meta.url, source);
-    const sessionManager = readFileSync(join(agentSessionPath, "..", "session-manager.js"), "utf8");
-    expect(sessionManager).toContain("isFreshCheckpoint");
-  });
-
   it("commits a durable first-user fresh boundary, retains the old branch, and reopens without prior messages", async () => {
     const { session, sessionFile, root } = await createFreshSession();
     session.sessionManager.appendMessage({

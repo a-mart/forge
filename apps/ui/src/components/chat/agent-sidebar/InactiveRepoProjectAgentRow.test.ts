@@ -62,22 +62,6 @@ describe('InactiveRepoProjectAgentRow', () => {
     expect(onSelect).toHaveBeenCalledTimes(1)
   })
 
-  it('shows selected styling when isSelected is true', () => {
-    const entry = makeEntry()
-
-    root = createRoot(container)
-    flushSync(() => {
-      root?.render(createElement(InactiveRepoProjectAgentRow, {
-        entry,
-        isSelected: true,
-        onSelect: vi.fn(),
-      }))
-    })
-
-    const button = container.querySelector('button')
-    expect(button?.className).toContain('ring-1')
-  })
-
   it('uses muted styling for unavailable definitions', () => {
     const entry = makeEntry({ status: 'wrong_workspace' }, false)
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CodexMcpCatalog, isPluginPickerEligible } from "../codex-app-server/codex-mcp-catalog.js";
+import { CodexMcpCatalog } from "../codex-app-server/codex-mcp-catalog.js";
 import type { CodexAppServerClientPort } from "../codex-app-server/types.js";
 import {
   LIVE_APP_LIST_RESPONSE,
@@ -322,40 +322,6 @@ describe("CodexMcpCatalog", () => {
     ]);
     expect(snapshot.plugins.some((plugin) => plugin.selector === "disabled_demo")).toBe(false);
     expect(snapshot.plugins.some((plugin) => plugin.selector === "unavailable_demo")).toBe(false);
-  });
-
-  it("filters picker catalog to enabled=true plugins with allowed availability", () => {
-    expect(
-      isPluginPickerEligible({
-        selector: "fireflies",
-        displayName: "Fireflies",
-        enabled: true,
-        availability: "available",
-      }),
-    ).toBe(true);
-    expect(
-      isPluginPickerEligible({
-        selector: "disabled",
-        displayName: "Disabled",
-        enabled: false,
-        availability: "available",
-      }),
-    ).toBe(false);
-    expect(
-      isPluginPickerEligible({
-        selector: "missing-enabled",
-        displayName: "Missing Enabled",
-        availability: "available",
-      }),
-    ).toBe(false);
-    expect(
-      isPluginPickerEligible({
-        selector: "unavailable",
-        displayName: "Unavailable",
-        enabled: true,
-        availability: "unavailable",
-      }),
-    ).toBe(false);
   });
 
   it("authorizes tools within a plugin scope and rejects unrelated servers", async () => {

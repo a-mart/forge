@@ -65,11 +65,6 @@ export interface PlanPiResourceLoaderOptionsOptions {
   ) => Array<{ path: string; content: string }>;
 }
 
-export type RuntimeEnvPlan = Record<string, string> & {
-  SWARM_DATA_DIR: string;
-  SWARM_MEMORY_FILE: string;
-};
-
 export function planRuntimeResourcePaths(options: {
   config: SwarmConfig;
   descriptor: AgentDescriptor;
@@ -131,16 +126,6 @@ export function planPiResourceLoaderOptions(options: PlanPiResourceLoaderOptions
     ...(skillsOverride ? { skillsOverride } : {}),
     systemPrompt: promptPlan.systemPrompt,
     appendSystemPromptOverride: promptPlan.appendSystemPromptOverride,
-  };
-}
-
-export function planRuntimeEnv(options: {
-  dataDir: string;
-  memoryContextFile: { path: string; content: string };
-}): RuntimeEnvPlan {
-  return {
-    SWARM_DATA_DIR: options.dataDir,
-    SWARM_MEMORY_FILE: options.memoryContextFile.path,
   };
 }
 

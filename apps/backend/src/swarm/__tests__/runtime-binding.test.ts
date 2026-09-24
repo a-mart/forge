@@ -123,16 +123,6 @@ describe("RuntimeBinding", () => {
     expect(binding.getRuntimeCreationPromise("agent-1")).toBeUndefined();
   });
 
-  it("restores runtime token for fallback rollback", () => {
-    const options = createBinding();
-    const binding = new RuntimeBinding(options);
-
-    binding.allocateRuntimeToken("agent-1");
-    binding.restoreRuntimeTokenForFallbackRollback("agent-1", 42);
-
-    expect(binding.getRuntimeToken("agent-1")).toBe(42);
-  });
-
   it("detachRuntimeIfMatches preserves concurrent runtime and supports tokenless detach", () => {
     const options = createBinding();
     const binding = new RuntimeBinding(options);

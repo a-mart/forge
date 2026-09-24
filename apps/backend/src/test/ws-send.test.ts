@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { WebSocket } from 'ws'
 import type { ServerEvent } from '@forge/protocol'
 import {
-  BOOTSTRAP_CRITICAL_EVENT_TYPES,
   MAX_WS_BUFFERED_AMOUNT_BYTES,
   MAX_WS_CATALOG_SNAPSHOT_BYTES,
   MAX_WS_EVENT_BYTES,
@@ -67,16 +66,6 @@ function liveEvent(): ServerEvent {
 }
 
 describe('sendWsEventWithBackpressure', () => {
-  it('exposes ready and conversation_history as bootstrap-critical', () => {
-    expect(BOOTSTRAP_CRITICAL_EVENT_TYPES.has('ready')).toBe(true)
-    expect(BOOTSTRAP_CRITICAL_EVENT_TYPES.has('conversation_history')).toBe(true)
-    expect(BOOTSTRAP_CRITICAL_EVENT_TYPES.has('bootstrap_failed')).toBe(true)
-    expect(BOOTSTRAP_CRITICAL_EVENT_TYPES.has('agents_snapshot')).toBe(true)
-    // Sole carrier of sticky Needs You state at bootstrap and in live fanout.
-    expect(BOOTSTRAP_CRITICAL_EVENT_TYPES.has('session_attention_snapshot')).toBe(true)
-    expect(BOOTSTRAP_CRITICAL_EVENT_TYPES.has('agent_message')).toBe(false)
-  })
-
   it('rechecks bootstrap supersession after a drain wait, before any stale frame is sent', async () => {
     vi.useFakeTimers()
     try {

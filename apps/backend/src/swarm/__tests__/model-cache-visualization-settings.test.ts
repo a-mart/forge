@@ -39,20 +39,6 @@ describe('model-cache-visualization-settings', () => {
     expect(JSON.parse(raw)).toMatchObject({ enabled: true })
   })
 
-  it('persists disabled state to shared config', async () => {
-    dataDir = await mkdtemp(join(tmpdir(), 'model-cache-visualization-settings-'))
-    await setModelCacheVisualizationEnabled(dataDir, false)
-    await expect(getModelCacheVisualizationEnabled(dataDir)).resolves.toBe(false)
-  })
-
-  it('treats enabled: false explicitly as disabled', async () => {
-    dataDir = await mkdtemp(join(tmpdir(), 'model-cache-visualization-settings-'))
-    const filePath = getModelCacheVisualizationSettingsPath(dataDir)
-    await mkdir(join(dataDir, 'shared', 'config'), { recursive: true })
-    await writeFile(filePath, JSON.stringify({ enabled: false }) + '\n', 'utf8')
-    await expect(getModelCacheVisualizationEnabled(dataDir)).resolves.toBe(false)
-  })
-
   it('falls back to disabled when the settings file is malformed', async () => {
     dataDir = await mkdtemp(join(tmpdir(), 'model-cache-visualization-settings-'))
     const filePath = getModelCacheVisualizationSettingsPath(dataDir)

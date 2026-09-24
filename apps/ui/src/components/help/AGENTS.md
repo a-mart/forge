@@ -20,5 +20,5 @@ fidelity work only. Do not regenerate or require the migration baseline for norm
 ## Component changes
 
 Keep the help registry, provider, search, drawer, and article rendering responsibilities separated.
-When changing registration or lookup behavior, add focused coverage for metadata validation, context
-routing, and rendered article selection.
+When changing registration or lookup behavior, verify metadata validation, context routing, and
+rendered article selection.

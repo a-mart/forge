@@ -40,31 +40,6 @@ describe('BootstrapBuffer', () => {
   // Basic lifecycle
   // ---------------------------------------------------------------------------
 
-  it('starts inactive', () => {
-    const { buffer } = setup()
-    expect(buffer.active).toBe(false)
-  })
-
-  it('becomes active after begin()', () => {
-    const { buffer } = setup()
-    buffer.begin('session-b')
-    expect(buffer.active).toBe(true)
-  })
-
-  it('becomes inactive after flush()', () => {
-    const { buffer } = setup()
-    buffer.begin('session-b')
-    buffer.flush()
-    expect(buffer.active).toBe(false)
-  })
-
-  it('becomes inactive after clear()', () => {
-    const { buffer } = setup()
-    buffer.begin('session-b')
-    buffer.clear()
-    expect(buffer.active).toBe(false)
-  })
-
   it('flush() is a no-op when inactive', () => {
     const { buffer, patches } = setup()
     buffer.flush()

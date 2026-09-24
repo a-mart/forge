@@ -164,44 +164,6 @@ describe("CodexDirectSidecarCoordinator", () => {
 
     expect(harness.sessionActivity).toEqual([]);
   });
-
-  it("constructs the app-server service with the typed Forge host adapter", async () => {
-    const harness = new CoordinatorHarness();
-    harness.descriptors.delete(harness.sidecar.agentId);
-    const coordinator = new CodexDirectSidecarCoordinator({
-      dataDir: "/tmp/forge-data",
-      host: harness.host,
-    });
-
-    const created = await coordinator.appServerService.getOrCreateSidecarDescriptor(
-      harness.manager,
-    );
-
-    expect(created).toMatchObject({
-      agentId: harness.sidecar.agentId,
-      managerId: harness.manager.agentId,
-      externalThread: { type: "codex_app_server", persisted: true },
-    });
-    expect(harness.descriptors.get(harness.sidecar.agentId)).toBe(created);
-  });
-
-  it("exposes distinct stop-preserve and terminate-cleanup lifecycle seams", async () => {
-    const harness = new CoordinatorHarness();
-    const interruptTurn = vi
-      .spyOn(harness.appServerService, "interruptTurn")
-      .mockResolvedValue(undefined);
-    const cleanupTurnStateForTermination = vi
-      .spyOn(harness.appServerService, "cleanupSidecarTurnStateForTermination")
-      .mockResolvedValue(undefined);
-
-    await harness.coordinator.interruptTurn(harness.sidecar.agentId);
-    await harness.coordinator.cleanupTurnStateForTermination(harness.sidecar.agentId);
-
-    expect(interruptTurn).toHaveBeenCalledWith(harness.sidecar.agentId);
-    expect(cleanupTurnStateForTermination).toHaveBeenCalledWith(harness.sidecar.agentId);
-    expect(harness.coordinator.isSidecarDescriptor(harness.sidecar)).toBe(true);
-    expect(harness.coordinator.isSidecarDescriptor(harness.manager)).toBe(false);
-  });
 });
 
 class CoordinatorHarness {

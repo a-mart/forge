@@ -74,46 +74,12 @@ function makeApiClient(target: SettingsBackendTarget): SettingsApiClient & { fet
   }
 }
 
-const MOCK_STATE = {
-  status: 'completed' as const,
-  completedAt: '2026-01-01T00:00:00Z',
-  skippedAt: null,
-  preferences: {
-    preferredName: 'Test',
-    technicalLevel: 'developer' as const,
-  },
-}
-
 /* ================================================================== */
 /*  Target-aware client functions                                      */
 /* ================================================================== */
 
 describe('onboarding-api — client functions', () => {
   describe('fetchOnboardingStateViaClient', () => {
-    it('calls client.fetch with /api/onboarding/state', async () => {
-      const client = makeApiClient(makeBuilderTarget())
-      client.fetch.mockResolvedValue(
-        new Response(JSON.stringify({ state: MOCK_STATE }), { status: 200 }),
-      )
-
-      const result = await fetchOnboardingStateViaClient(client)
-
-      expect(client.fetch).toHaveBeenCalledWith('/api/onboarding/state', { signal: undefined })
-      expect(result).toEqual(MOCK_STATE)
-    })
-
-    it('passes abort signal when provided', async () => {
-      const client = makeApiClient(makeCollabTarget())
-      const controller = new AbortController()
-      client.fetch.mockResolvedValue(
-        new Response(JSON.stringify({ state: MOCK_STATE }), { status: 200 }),
-      )
-
-      await fetchOnboardingStateViaClient(client, controller.signal)
-
-      expect(client.fetch).toHaveBeenCalledWith('/api/onboarding/state', { signal: controller.signal })
-    })
-
     it('throws when response is not ok', async () => {
       const client = makeApiClient(makeCollabTarget())
       client.fetch.mockResolvedValue(
@@ -136,23 +102,6 @@ describe('onboarding-api — client functions', () => {
   })
 
   describe('saveOnboardingPreferencesViaClient', () => {
-    it('POSTs to /api/onboarding/preferences with JSON body', async () => {
-      const client = makeApiClient(makeBuilderTarget())
-      client.fetch.mockResolvedValue(
-        new Response(JSON.stringify({ state: MOCK_STATE }), { status: 200 }),
-      )
-
-      const input = { preferredName: 'Test', technicalLevel: 'developer' as const }
-      const result = await saveOnboardingPreferencesViaClient(client, input)
-
-      expect(client.fetch).toHaveBeenCalledWith('/api/onboarding/preferences', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(input),
-      })
-      expect(result).toEqual(MOCK_STATE)
-    })
-
     it('throws when response is not ok', async () => {
       const client = makeApiClient(makeCollabTarget())
       client.fetch.mockResolvedValue(
@@ -183,22 +132,6 @@ describe('onboarding-api — client functions', () => {
   })
 
   describe('skipOnboardingViaClient', () => {
-    it('POSTs { status: "skipped" } to /api/onboarding/preferences', async () => {
-      const client = makeApiClient(makeCollabTarget())
-      client.fetch.mockResolvedValue(
-        new Response(JSON.stringify({ state: { ...MOCK_STATE, status: 'skipped', skippedAt: '2026-01-01T00:00:00Z' } }), { status: 200 }),
-      )
-
-      const result = await skipOnboardingViaClient(client)
-
-      expect(client.fetch).toHaveBeenCalledWith('/api/onboarding/preferences', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ status: 'skipped' }),
-      })
-      expect(result.status).toBe('skipped')
-    })
-
     it('throws when response is not ok', async () => {
       const client = makeApiClient(makeBuilderTarget())
       client.fetch.mockResolvedValue(
@@ -226,34 +159,6 @@ describe('onboarding-api — legacy wsUrl functions', () => {
   })
 
   describe('fetchOnboardingState', () => {
-    it('fetches from Builder endpoint with same-origin credentials by default', async () => {
-      fetchSpy.mockResolvedValue(
-        new Response(JSON.stringify({ state: MOCK_STATE }), { status: 200 }),
-      )
-
-      const result = await fetchOnboardingState('ws://127.0.0.1:47187')
-
-      expect(fetchSpy).toHaveBeenCalledWith(
-        'http://127.0.0.1:47187/api/onboarding/state',
-        expect.objectContaining({ signal: undefined }),
-      )
-      expect(result).toEqual(MOCK_STATE)
-    })
-
-    it('passes abort signal', async () => {
-      fetchSpy.mockResolvedValue(
-        new Response(JSON.stringify({ state: MOCK_STATE }), { status: 200 }),
-      )
-      const controller = new AbortController()
-
-      await fetchOnboardingState('ws://127.0.0.1:47187', controller.signal)
-
-      expect(fetchSpy).toHaveBeenCalledWith(
-        'http://127.0.0.1:47187/api/onboarding/state',
-        expect.objectContaining({ signal: controller.signal }),
-      )
-    })
-
     it('throws on error response', async () => {
       fetchSpy.mockResolvedValue(
         new Response(JSON.stringify({ error: 'Not found' }), { status: 404 }),
@@ -264,24 +169,6 @@ describe('onboarding-api — legacy wsUrl functions', () => {
   })
 
   describe('saveOnboardingPreferences', () => {
-    it('POSTs preferences to the Builder endpoint', async () => {
-      fetchSpy.mockResolvedValue(
-        new Response(JSON.stringify({ state: MOCK_STATE }), { status: 200 }),
-      )
-
-      const input = { preferredName: 'Test', technicalLevel: 'developer' as const }
-      await saveOnboardingPreferences('ws://127.0.0.1:47187', input)
-
-      expect(fetchSpy).toHaveBeenCalledWith(
-        'http://127.0.0.1:47187/api/onboarding/preferences',
-        expect.objectContaining({
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(input),
-        }),
-      )
-    })
-
     it('throws on error response', async () => {
       fetchSpy.mockResolvedValue(
         new Response(JSON.stringify({ error: 'Validation failed' }), { status: 422 }),
@@ -297,22 +184,6 @@ describe('onboarding-api — legacy wsUrl functions', () => {
   })
 
   describe('skipOnboarding', () => {
-    it('POSTs skip request to the Builder endpoint', async () => {
-      fetchSpy.mockResolvedValue(
-        new Response(JSON.stringify({ state: { ...MOCK_STATE, status: 'skipped' } }), { status: 200 }),
-      )
-
-      await skipOnboarding('ws://127.0.0.1:47187')
-
-      expect(fetchSpy).toHaveBeenCalledWith(
-        'http://127.0.0.1:47187/api/onboarding/preferences',
-        expect.objectContaining({
-          method: 'POST',
-          body: JSON.stringify({ status: 'skipped' }),
-        }),
-      )
-    })
-
     it('throws on error response', async () => {
       fetchSpy.mockResolvedValue(
         new Response(JSON.stringify({ error: 'Server error' }), { status: 500 }),

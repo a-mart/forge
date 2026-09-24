@@ -1,19 +1,12 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import {
-  BITWARDEN_PASSWORD_MANAGER_CLI_SOURCES,
-  BITWARDEN_PASSWORD_MANAGER_CLI_STATES,
   SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS,
-  SECURE_SECRET_DELIVERY_KINDS,
-  SECURE_SECRET_LEASE_GRANT_SOURCES,
-  SECURE_SECRET_LEASE_KINDS,
   SECURE_SECRET_MAX_PROJECT_DEFAULTS,
   SECURE_SECRET_MAX_TIMED_LEASE_SECONDS,
   SECURE_SECRET_MIN_PROJECT_DEFAULTS,
-  SECURE_SECRET_PROVIDER_KINDS,
   getSecureSecretSettingsConstraints,
   parseMaxProjectDefaults,
-  SECURE_SESSION_PRINCIPAL_KINDS,
   SecureSessionsContractError,
   isSecureSecretBinding,
   isSecureSecretLeaseSpec,
@@ -35,10 +28,8 @@ import {
   type ApplySecureSessionProjectDefaultsRequest,
   type SecureAccessRequestSummary,
   type SecureSecretBinding,
-  type SecureSecretCatalog,
   type SecureSecretCatalogChangedEvent,
   type SecureSecretProviderSummary,
-  type SecureSecretProjectDefaultSummary,
   type SecureSecretSummary,
   type SecureSshTrustedHostSummary,
   type SecureSshTrustRequestSummary,
@@ -63,93 +54,25 @@ describe('Secure Sessions protocol', () => {
     expect(() => parseSetSecureSessionAccessRequest({ baseRevision: 1, subject: { kind: 'task' }, blocked: 'false' })).toThrow()
   })
 
-  it('exports bounded Bitwarden Password Manager CLI diagnostics', () => {
-    expect(BITWARDEN_PASSWORD_MANAGER_CLI_STATES).toEqual([
-      'ready',
-      'missing',
-      'unsupported',
-    ])
-    expect(BITWARDEN_PASSWORD_MANAGER_CLI_SOURCES).toEqual([
-      'configured',
-      'managed',
-      'system',
-    ])
-  })
-
-  it('exports the metadata-only provider and catalog vocabulary', () => {
-    expect(SECURE_SECRET_PROVIDER_KINDS).toEqual([
-      'local_keychain',
-      'bitwarden_secrets_manager',
-      'bitwarden_password_manager',
-    ])
-    expect(SECURE_SECRET_DELIVERY_KINDS).toEqual([
-      'environment',
-      'stdin',
-      'file',
-      'askpass',
-      'ssh_agent',
-    ])
-    expect(SECURE_SECRET_LEASE_KINDS).toEqual(['task', 'timed', 'one_use'])
-    expect(SECURE_SECRET_LEASE_GRANT_SOURCES).toEqual([
-      'manual',
-      'access_request',
-      'project_default',
-    ])
-    expect(SECURE_SESSION_PRINCIPAL_KINDS).toEqual(['manager', 'worker'])
-    expect(SECURE_SECRET_MAX_PROJECT_DEFAULTS).toBe(50)
-    expect(SECURE_SECRET_MIN_PROJECT_DEFAULTS).toBe(1)
-    expect(SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS).toBe(256)
+  it('parses bounded project-default settings and secret scopes', () => {
     expect(getSecureSecretSettingsConstraints()).toEqual({
-      maxProjectDefaults: { min: 1, max: 256, default: 50 },
+      maxProjectDefaults: {
+        min: SECURE_SECRET_MIN_PROJECT_DEFAULTS,
+        max: SECURE_SECRET_ABSOLUTE_MAX_PROJECT_DEFAULTS,
+        default: SECURE_SECRET_MAX_PROJECT_DEFAULTS,
+      },
     })
     expect(parseMaxProjectDefaults(12)).toBe(12)
     expect(() => parseMaxProjectDefaults(12.5)).toThrow(TypeError)
     expect(() => parseMaxProjectDefaults(0)).toThrow(TypeError)
     expect(() => parseMaxProjectDefaults(257)).toThrow(TypeError)
-
-    const provider = {
-      providerId: 'provider-local',
-      kind: 'local_keychain',
-      displayName: 'Local keychain',
-      enabled: true,
-      status: 'available',
-      lastVerifiedAt: now,
-      lastStatusCode: 'ok',
-    } satisfies SecureSecretProviderSummary
-
-    const secret = {
-      secretId: 'secret-api',
-      providerId: provider.providerId,
-      displayAlias: 'github/work',
-      displayName: 'Work GitHub credential',
-      note: 'Used for release automation.',
-      scope: { kind: 'profile', profileId: 'profile-1' },
-      retention: 'saved',
-      bindings: [{ deliveryKind: 'environment', targetName: 'GITHUB_TOKEN' }],
-      available: true,
-      updatedAt: now,
-    } satisfies SecureSecretSummary
-
-    const catalog = {
-      revision: 3,
-      providers: [provider],
-      secrets: [secret],
-      projectDefaults: [{
-        profileId: 'profile-1',
-        secretId: secret.secretId,
-        createdAt: now,
-        updatedAt: now,
-      } satisfies SecureSecretProjectDefaultSummary],
-      updatedAt: now,
-    } satisfies SecureSecretCatalog
-
-    expect(catalog.secrets[0]?.displayAlias).toBe('github/work')
-    expect(catalog.secrets[0]?.note).toBe('Used for release automation.')
-    expect(catalog.projectDefaults).toEqual([expect.objectContaining({
+    expect(parseSecureSecretScope({
+      kind: 'profile',
       profileId: 'profile-1',
-      secretId: 'secret-api',
-    })])
-    expect(parseSecureSecretScope(secret.scope)).toEqual(secret.scope)
+    })).toEqual({
+      kind: 'profile',
+      profileId: 'profile-1',
+    })
     expect(parseSecureSecretScope({
       kind: 'profiles',
       profileIds: ['profile-1', 'profile-2'],

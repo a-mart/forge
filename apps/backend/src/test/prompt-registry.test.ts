@@ -31,20 +31,6 @@ async function createRegistryFixture(): Promise<{
 }
 
 describe("FileBackedPromptRegistry", () => {
-  it("loads built-in archetype and operational prompts", async () => {
-    const { registry } = await createRegistryFixture();
-
-    await expect(registry.resolve("archetype", "manager")).resolves.toContain(
-      "You are Forge, a capable collaborator working with the user in a shared workspace."
-    );
-    await expect(registry.resolve("archetype", "collaboration-channel")).resolves.toContain(
-      "You are the manager agent for a collaboration channel in a multi-agent swarm."
-    );
-    await expect(registry.resolve("operational", "memory-merge")).resolves.toContain(
-      "You are a memory file editor."
-    );
-  });
-
   it("prefers module-local built-ins over stale resources-dir built-ins", async () => {
     const root = await mkdtemp(join(tmpdir(), "prompt-registry-test-"));
     const dataDir = join(root, "data");
