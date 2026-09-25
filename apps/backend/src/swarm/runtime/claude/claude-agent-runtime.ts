@@ -1,3 +1,4 @@
+import { NATIVE_USAGE_ENTRY_TYPE, NativeUsageAccumulator, normalizeClaudeUsage, parseNativeUsageEntry, type NativeUsageRecord } from "../../../utils/native-usage-records.js";
 import type { Usage } from "@anthropic-ai/sdk/resources/messages";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -60,6 +61,8 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
   private recoveryConsumed = false;
   private pinned?: string;
   private previousCost = 0;
+  private readonly accounting = new NativeUsageAccumulator();
+  private readonly runtimeStartedAt = new Date().toISOString();
   private turnCompaction?: Input["compact"];
 
   private constructor(private readonly options: ClaudeRuntimeOptions) {
@@ -68,6 +71,10 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     const session = openSessionManagerWithSizeGuard(this.descriptor.sessionFile, { context: "claude-native" });
     if (!session) throw new Error("Could not open the Forge session for native Claude; history was left unchanged.");
     this.session = session;
+    for (const entry of session.getEntries()) {
+      const usage = parseNativeUsageEntry(entry);
+      if (usage) this.accounting.consume(usage);
+    }
     this.bridge = new ClaudeRuntimeTools({ ...options, agentId: this.descriptor.agentId,
       signal: this.abort.signal, guard: value => this.guard(value) });
   }
@@ -255,6 +262,16 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
       this.usage = { tokens, contextWindow, percent: tokens / contextWindow * 100 }; await this.publishStatus();
     }
     if (frame.type !== "result") return;
+    // modelUsage includes pipeline calls such as compaction and is cumulative across
+    // streaming-input turns and saved resumes. Never sum repeated result snapshots.
+    for (const [modelId, modelUsage] of Object.entries(frame.modelUsage)) {
+      const usage = normalizeClaudeUsage(modelUsage);
+      if (!usage) continue;
+      const record: NativeUsageRecord = { version: 1, provider: "claude-native", nativeSessionId: this.state.sessionId,
+        counterId: modelId, modelId: modelUsage.canonicalModel ?? modelId, reasoningLevel: this.descriptor.model.thinkingLevel,
+        ownerAgentId: this.descriptor.agentId, runtimeStartedAt: this.runtimeStartedAt, capturedAt: new Date().toISOString(), usage };
+      if (this.accounting.consume(record)) this.appendCustomEntry(NATIVE_USAGE_ENTRY_TYPE, record);
+    }
     // Native account/model limits can differ from the catalog (for example,
     // extended context eligibility). Prefer the limit reported by this session.
     const nativeUsage = frame.modelUsage[this.descriptor.model.modelId]

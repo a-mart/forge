@@ -87,7 +87,7 @@ export function SettingsSpecialists({
   const categoryId = isCategory ? parseCategoryId(selectedScope) : undefined
 
   const modelPresets = useModelPresets(presetsApiClient, modelConfigChangeKey, { allowDynamicPresetIds: true })
-  const selectableModels = useMemo(() => getAllSelectableModels(modelPresets), [modelPresets])
+  const selectableModels = useMemo(() => getAllSelectableModels(modelPresets).filter(model => !isCollab || !['codex-native', 'claude-native'].includes(model.provider)), [modelPresets, isCollab])
 
   /* ---- Collab scope data (shared hook, WP-U3) ---- */
   const { collabCategories, collabChannels, setCollabCategories } = useCollabScopeData(

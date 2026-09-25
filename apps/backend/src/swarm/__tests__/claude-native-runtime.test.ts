@@ -165,3 +165,24 @@ it("projects progress before a tool and a final answer once, even with partial s
   expect(events.filter(e => e.type === "message_end")).toHaveLength(2);
   expect(events.filter(e => e.type === "message_end").at(-1)).toMatchObject({ message: { stopReason: "stop" } });
 });
+
+it("persists per-model native totals across turns and resume without summing result snapshots", async () => {
+  const root = await mkdtemp(join(tmpdir(), "forge-claude-usage-"));
+  const f = await fixture(root);
+  let resumed: Awaited<ReturnType<typeof fixture>> | undefined;
+  try {
+    const modelUsage = { "claude-fable-5-1": { inputTokens: 10, outputTokens: 5, cacheReadInputTokens: 20, cacheCreationInputTokens: 2, costUSD: 0.01 } };
+    const first = await f.runtime.sendMessage("work"); await f.input.next();
+    await f.emit(result([first.deliveryId], { modelUsage }));
+    const second = await f.runtime.sendMessage("again"); await f.input.next();
+    await f.emit(result([second.deliveryId], { modelUsage }));
+    expect(f.runtime.getCustomEntries("swarm_native_usage")).toHaveLength(1);
+    expect(f.runtime.getCustomEntries("swarm_native_usage")[0]).toMatchObject({ modelId: "claude-fable-5-1", usage: { input: 10, output: 5, cacheRead: 20, cacheWrite: 2, total: 37 } });
+    await f.runtime.stopInFlight();
+    resumed = await fixture(root);
+    const third = await resumed.runtime.sendMessage("continue"); await resumed.input.next();
+    await resumed.emit(result([third.deliveryId], { modelUsage: { "claude-fable-5-1": { ...modelUsage["claude-fable-5-1"], outputTokens: 8 } } }));
+    expect(resumed.runtime.getCustomEntries("swarm_native_usage")).toHaveLength(2);
+    expect(resumed.runtime.getCustomEntries("swarm_native_usage").at(-1)).toMatchObject({ usage: { total: 40 } });
+  } finally { await f.runtime.stopInFlight(); await resumed?.runtime.stopInFlight(); await rm(root, { recursive: true, force: true }); }
+});

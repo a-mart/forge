@@ -1,3 +1,5 @@
+import { NativeUsageHistory } from "./native-usage-history.js";
+import { NativeUsageAccumulator, parseNativeUsageEntry, accountingModel, type NativeUsageRecord } from "../utils/native-usage-records.js";
 import { join } from "node:path";
 import { getAgentsStoreFilePath, getProfilesDir } from "../swarm/data-paths.js";
 import {
@@ -21,7 +23,11 @@ export async function scanProfilesData(
   profileIds: string[],
   timezone: string
 ): Promise<StatsScanResult> {
+  const nativeUsageHistory = new NativeUsageHistory(dataDir);
   const usageRecords: UsageRecord[] = [];
+  const nativeRecords: Array<{ record: NativeUsageRecord; sourceAgentId: string; workerRunKey?: string }> = [];
+  const nativeWorkerTotals = new Map<string, number>();
+  const workerRunKeys = new Map<WorkerRun, string>();
   const dailyUsage = new Map<string, DailyTotals>();
   const workerRuns: WorkerRun[] = [];
   const userMessages: number[] = [];
@@ -43,12 +49,14 @@ export async function scanProfilesData(
       const workerBillableTokenTotalsByRunKey = new Map<string, number>();
 
       await scanJsonlFile(sessionFile, (entry, context) => {
+        const native = parseNativeUsageEntry(entry);
+        if (native) { nativeRecords.push({ record: native, sourceAgentId: sessionId }); return; }
         collectUsageAndMessages(entry, usageRecords, dailyUsage, userMessages, fuckMeterDaily, {
           fallbackThinkingLevel: context.thinkingLevel,
           timezone,
           diagnostics,
         });
-      }, { dataDir });
+      }, { dataDir, nativeUsageHistory, nativeUsageOwner: sessionId });
 
       const workerFiles = (await listFileNames(workersDir)).filter(
         (name) => name.endsWith(".jsonl") && !name.endsWith(".conversation.jsonl")
@@ -60,12 +68,14 @@ export async function scanProfilesData(
         let billableTokensForWorker = 0;
 
         await scanJsonlFile(join(workersDir, workerFileName), (entry, context) => {
+          const native = parseNativeUsageEntry(entry);
+          if (native) { nativeRecords.push({ record: native, sourceAgentId: workerId, workerRunKey }); return; }
           billableTokensForWorker += collectUsageAndMessages(entry, usageRecords, dailyUsage, userMessages, fuckMeterDaily, {
             fallbackThinkingLevel: context.thinkingLevel,
             timezone,
             diagnostics,
           });
-        }, { dataDir });
+        }, { dataDir, nativeUsageHistory, nativeUsageOwner: workerId });
 
         workerBillableTokenTotalsByRunKey.set(workerRunKey, billableTokensForWorker);
       }
@@ -88,17 +98,32 @@ export async function scanProfilesData(
           const workerId = typeof worker.id === "string" && worker.id.trim().length > 0 ? worker.id : "unknown";
           const workerRunKey = toWorkerRunKey(profileId, sessionId, workerId);
 
-          workerRuns.push({
+          const run: WorkerRun = {
             workerId,
             createdAtMs,
             terminatedAtMs,
             durationMs,
             billableTokens: workerBillableTokenTotalsByRunKey.get(workerRunKey) ?? 0,
-          });
+          };
+          workerRuns.push(run); workerRunKeys.set(run, workerRunKey);
         }
       }
     }
   }
+
+  const accounting = new NativeUsageAccumulator();
+  // Merge before differencing: fork copies and filesystem enumeration must not move
+  // historical usage between days or count a native session twice.
+  for (const { record, workerRunKey } of nativeRecords.sort((a, b) => Date.parse(a.record.capturedAt) - Date.parse(b.record.capturedAt)
+    || Number(b.record.ownerAgentId === b.sourceAgentId) - Number(a.record.ownerAgentId === a.sourceAgentId))) {
+    const usage = accounting.consume(record);
+    if (!usage) continue;
+    const billable = collectUsageAndMessages({ type: "message", timestamp: record.capturedAt, message: {
+      model: accountingModel(record.modelId, record.provider).modelId, reasoningLevel: record.reasoningLevel, usage,
+    } }, usageRecords, dailyUsage, userMessages, fuckMeterDaily, { fallbackThinkingLevel: null, timezone, diagnostics });
+    if (workerRunKey) nativeWorkerTotals.set(workerRunKey, (nativeWorkerTotals.get(workerRunKey) ?? 0) + billable);
+  }
+  for (const run of workerRuns) run.billableTokens += nativeWorkerTotals.get(workerRunKeys.get(run)!) ?? 0;
 
   let earliestUsageDayKey: string | null = null;
   for (const day of dailyUsage.keys()) {
@@ -358,13 +383,13 @@ function extractModelId(message: unknown): string {
   }
 
   if (typeof message.model === "string" && message.model.trim().length > 0) {
-    return message.model;
+    return accountingModel(message.model, typeof message.provider === "string" ? message.provider : undefined).modelId;
   }
 
   const provider = typeof message.provider === "string" ? message.provider.trim() : "";
   const modelId = typeof message.modelId === "string" ? message.modelId.trim() : "";
   if (provider && modelId) {
-    return `${provider}/${modelId}`;
+    return accountingModel(modelId, provider).modelId;
   }
 
   return modelId || provider || "unknown";
@@ -373,4 +398,3 @@ function extractModelId(message: unknown): string {
 function toWorkerRunKey(profileId: string, sessionId: string, workerId: string): string {
   return `${profileId}/${sessionId}/${workerId}`;
 }
-

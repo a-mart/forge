@@ -1882,7 +1882,8 @@ describe('SwarmWebSocketServer', () => {
         models: Array<{ presetId: string }>
       }
 
-      expect(initialPayload.models.map((model) => model.presetId)).toEqual([])
+      // Claude native uses its own CLI subscription login, independent of Pi credentials.
+      expect(initialPayload.models.map((model) => model.presetId)).toEqual(['claude-native'])
 
       const authUpdateResponse = await fetch(`http://${config.host}:${config.port}/api/settings/auth`, {
         method: 'PUT',
@@ -1920,6 +1921,8 @@ describe('SwarmWebSocketServer', () => {
       expect(updatedPresetIds).toContain('pi-6')
       expect(updatedPresetIds).toContain('pi-grok')
       expect(updatedPresetIds).not.toContain('codex-app')
+      expect(updatedPresetIds).toContain('codex-native')
+      expect(updatedPresetIds).toContain('claude-native')
       expect(updatedPresetIds).not.toContain('pi-opus')
     } finally {
       if (previousAnthropicApiKey === undefined) {

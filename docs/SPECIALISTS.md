@@ -253,3 +253,13 @@ When resolving a collaboration channel roster:
 2. Selected global specialists whose `TargetSpace` includes `collaboration` (in `~/.forge/shared/specialists/`)
 
 Project or channel-local files shadow global files with the same handle. Workspace specialists are Builder-only passive project resources and do not override builtins. Collaboration category defaults select global handles for newly created channels only; existing channels keep their own selected-handle list in SQLite.
+
+### Native Claude and Codex workers
+
+Local Builder rosters can select **Claude native** and **Codex native** as primary or availability-fallback models. These workers run through the same native runtimes as native managers, with their assigned specialist instructions and Forge-owned completion delivery. They inherit the owning session's project trust, memory, and Secure Sessions authority; choosing a native model does not grant manager tools or permission to launch a second delegation system.
+
+Claude native uses the connection in **Settings → Authentication → Claude native**. Codex native uses Forge's OpenAI connection and requires the Codex executable. Native selections are stored with their provider, so changing a roster preserves the selected runtime across reloads. Existing roster choices are unchanged. Collaboration and internal/system workers remain outside this native Builder support.
+
+Native models can be fallback targets, and native primary workers use configured fallbacks for eligible availability failures during setup. Once a native turn starts, Forge does not replay it automatically on a different model; the native engine handles its own retries and unresolved failures return to the manager. This preserves the native runtime's existing execution and shutdown behavior.
+
+Usage reporting groups native and Pi executions of the same model together. Overview includes managers and workers; Token Analytics remains scoped to workers and includes native specialists. Native provider counters are persisted independently of assistant text, and older counts are recovered from retained native histories linked to Forge sessions on this machine. Missing native history cannot be reconstructed. Response throughput is a separate measurement and is unavailable for native requests without generation timing records; token totals do not imply measured tokens per second.

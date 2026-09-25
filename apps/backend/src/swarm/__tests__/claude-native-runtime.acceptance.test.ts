@@ -17,6 +17,7 @@ import type { SecureRuntimeBinding } from "../secure-sessions/runtime/secure-run
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
 import type { RuntimeSessionEvent } from "../runtime-contracts.js";
 import { extractCleanManagerAssistantFinalMessage } from "../runtime/manager-assistant-final-message.js";
+import { NATIVE_USAGE_ENTRY_TYPE, type NativeUsageRecord } from "../../utils/native-usage-records.js";
 
 // Real SDK + bundled Claude process and tools; only the remote model is replaced
 // by a deterministic local HTTP fixture. No account credentials or live data.
@@ -101,9 +102,11 @@ describe("Claude native process acceptance", () => {
       await waitFor(() => events.filter(e => e.type === "turn_end").length > before && runtime!.getStatus() === "idle", text);
       expect(errors).toEqual([]);
     };
+    const latestUsage = () => runtime!.getCustomEntries(NATIVE_USAGE_ENTRY_TYPE).at(-1) as NativeUsageRecord;
     try {
       runtime = await create();
       await send("CASE_READ Read input.txt.");
+      expect(latestUsage().usage).toMatchObject({ input: 200, output: 60, total: 260 });
       expect(requests.some(r => r.raw.includes("fixture file contents"))).toBe(true);
       const tools = requests[0]!.body.tools.map((t: any) => t.name);
       expect(tools).toContain("Read"); expect(tools).toContain("mcp__forge__fixture_tool");
@@ -139,12 +142,16 @@ describe("Claude native process acceptance", () => {
 
       await runtime.compact("Preserve CASE_READ and the fixture facts.");
       expect(events.some(e => e.type === "auto_compaction_end")).toBe(true);
+      const beforeResume = latestUsage();
+      expect(beforeResume.usage.total).toBeGreaterThan(260);
       const state = runtime.getCustomEntries(NATIVE_CLAUDE_STATE).at(-1);
       await runtime.stopInFlight({ shutdownTimeoutMs: 10_000 });
       expect(exits.every(Boolean)).toBe(true);
       runtime = await create();
       expect(runtime.getCustomEntries(NATIVE_CLAUDE_STATE).at(-1)).toMatchObject(state as object);
       await send("CASE_RESUME Continue earlier work.");
+      expect(latestUsage().nativeSessionId).toBe(beforeResume.nativeSessionId);
+      expect(latestUsage().usage.total).toBe(beforeResume.usage.total + 130);
       expect(requests.at(-1)!.raw).toContain("CASE_READ");
       // Forked Forge files carry parent state. They must never resume the parent's writer.
       await runtime.stopInFlight({ shutdownTimeoutMs: 10_000 });
@@ -152,6 +159,8 @@ describe("Claude native process acceptance", () => {
       runtime = await create("fork");
       expect(runtime.getCustomEntries(NATIVE_CLAUDE_STATE).at(-1)).not.toMatchObject(state as object);
       await send("CASE_FORK New fork work.");
+      expect(latestUsage().nativeSessionId).not.toBe(beforeResume.nativeSessionId);
+      expect(latestUsage().usage.total).toBe(130);
       await runtime.sendMessage("CASE_STOP Start a long shell command.");
       await waitFor(() => existsSync(join(cwd, "stop-started")), "stop tool starts");
       await runtime.sendMessage("CASE_CANCELLED queued work must not run", "followUp");

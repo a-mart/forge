@@ -1,3 +1,4 @@
+import { NATIVE_USAGE_ENTRY_TYPE, parseNativeUsageEntry, normalizeCodexUsage, normalizeClaudeUsage } from "../utils/native-usage-records.js";
 import { parseGenerationMeasurementCustomEntry, GENERATION_MEASUREMENT_ENTRY_TYPE } from "../utils/generation-measurement-records.js";
 import { parseCursorSdkUsageCustomEntry, CURSOR_SDK_USAGE_ENTRY_TYPE } from "../utils/cursor-sdk-usage-records.js";
 
@@ -7,6 +8,23 @@ const object = (value: unknown): value is ObjectValue => value !== null && typeo
 /** Only fields consumed by statistics survive. Never persist message/tool bodies. */
 export function projectStatsEntry(value: unknown, fromCache = false): ObjectValue | null {
   if (!object(value)) return null;
+  // Native history recovery reads only count/identity fields from explicitly linked files.
+  if (fromCache && ["native_claude_usage", "native_codex_usage", "native_codex_context", "native_codex_identity"].includes(String(value.type))) {
+    return { ...pick(value, ["type", "timestamp", "sessionId", "messageId", "modelId", "reasoningLevel"]),
+      ...(object(value.usage) ? { usage: pickNumbers(value.usage) } : {}) };
+  }
+  if (value.type === "assistant" && object(value.message) && !value.isSidechain) {
+    const usage = normalizeClaudeUsage(value.message.usage);
+    if (!usage || typeof value.message.id !== "string" || typeof value.message.model !== "string") return null;
+    return { type: "native_claude_usage", ...pick(value, ["timestamp", "sessionId"]), messageId: value.message.id, modelId: value.message.model, usage };
+  }
+  if (value.type === "session_meta" && object(value.payload) && typeof value.payload.id === "string") return { type: "native_codex_identity", sessionId: value.payload.id };
+  if (value.type === "turn_context" && object(value.payload) && typeof value.payload.model === "string") return { type: "native_codex_context", ...pick(value, ["timestamp"]),
+    modelId: value.payload.model, reasoningLevel: typeof value.payload.effort === "string" ? value.payload.effort : undefined };
+  if (value.type === "event_msg" && object(value.payload) && value.payload.type === "token_count" && object(value.payload.info)) {
+    const usage = normalizeCodexUsage(value.payload.info.total_token_usage);
+    return usage ? { type: "native_codex_usage", ...pick(value, ["timestamp"]), usage } : null;
+  }
   if (value.type === "thinking_level_change" || value.type === "reasoning_level_change") {
     return pick(value, ["type", "thinkingLevel", "reasoningLevel"]);
   }
@@ -17,6 +35,13 @@ export function projectStatsEntry(value: unknown, fromCache = false): ObjectValu
     return { type: "message", ...pick(value, ["timestamp"]), message: { ...message, usage } };
   }
   if (value.type !== "custom") return null;
+  if (["swarm_native_codex_state", "swarm_native_claude_state"].includes(String(value.customType)) && object(value.data)) {
+    return { type: "custom", customType: value.customType, data: pick(value.data, ["version", "threadId", "sessionId", "ownerAgentId", "cwd"]) };
+  }
+  if (value.customType === NATIVE_USAGE_ENTRY_TYPE) {
+    const record = parseNativeUsageEntry(value);
+    return record ? { type: "custom", customType: NATIVE_USAGE_ENTRY_TYPE, data: record } : null;
+  }
   if (value.customType === GENERATION_MEASUREMENT_ENTRY_TYPE) {
     const record = parseGenerationMeasurementCustomEntry(value);
     // Keep a countable marker for malformed measurement diagnostics.

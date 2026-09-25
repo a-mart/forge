@@ -30,14 +30,17 @@ interface Dependencies {
 export class ClaudeRuntimeCreator {
   constructor(private readonly deps: Dependencies) {}
 
-  async create(options: { descriptor: AgentDescriptor; systemPrompt: string; runtimeToken: number;
+  async create(options: { descriptor: AgentDescriptor; sessionDescriptor?: AgentDescriptor; systemPrompt: string; runtimeToken: number;
     callbacks: SwarmRuntimeCallbacks; creationOptions?: RuntimeCreationOptions }): Promise<SwarmAgentRuntime> {
     const { descriptor } = options;
-    if (descriptor.role !== "manager" || descriptor.sessionSurface === "collab" || descriptor.collab || descriptor.sessionPurpose || descriptor.internalWorkerKind) {
-      throw new Error("Claude native is available for ordinary local Builder manager sessions.");
+    const sessionDescriptor = descriptor.role === "manager" ? descriptor : options.sessionDescriptor;
+    if (!sessionDescriptor || sessionDescriptor.sessionSurface === "collab" || sessionDescriptor.collab
+      || sessionDescriptor.sessionPurpose || sessionDescriptor.internalWorkerKind
+      || descriptor.sessionSurface === "collab" || descriptor.collab || descriptor.sessionPurpose || descriptor.internalWorkerKind) {
+      throw new Error("Claude native is available for ordinary local Builder sessions and their roster workers.");
     }
-    const trust = await this.deps.resolveProjectExecutableTrustPlan({ descriptor, sessionDescriptor: descriptor });
-    const prepared = await this.deps.forgeExtensionHost.prepareRuntimeBindings({ descriptor, sessionDescriptor: descriptor,
+    const trust = await this.deps.resolveProjectExecutableTrustPlan({ descriptor, sessionDescriptor });
+    const prepared = await this.deps.forgeExtensionHost.prepareRuntimeBindings({ descriptor, sessionDescriptor,
       runtimeType: "claude", runtimeToken: options.runtimeToken, projectExecutableTrustPlan: trust });
     const { swarmTools } = planRuntimeTools({ host: this.deps.host, descriptor,
       forgeExtensionHost: this.deps.forgeExtensionHost, preparedForgeBindings: prepared });
@@ -46,7 +49,7 @@ export class ClaudeRuntimeCreator {
       actor => this.deps.host.getSecureRuntimeBinding?.(actor))];
     if (descriptor.profileId && tools.some(tool => tool.name === "history")) {
       tools.push(createTaskNotesTool(new TaskNotesStore({ dataDir: this.deps.config.paths.dataDir }).forActor({
-        profileId: descriptor.profileId, sessionAgentId: descriptor.agentId, actorAgentId: descriptor.agentId,
+        profileId: descriptor.profileId, sessionAgentId: sessionDescriptor.agentId, actorAgentId: descriptor.agentId,
       })));
     }
     const [memory, contextFiles, agentsFiles] = await Promise.all([
@@ -55,7 +58,10 @@ export class ClaudeRuntimeCreator {
     const skills = memory.skillMetadata.map(skill => `- ${skill.skillName}: ${skill.description ?? ""} (file: ${skill.path})`).join("\n");
     const secureSessionsEnabled = this.deps.host.isSecureSessionsEnabledForAgent?.(descriptor.agentId) !== false;
     const systemPrompt = [options.systemPrompt,
-      "Forge integration tools are in the mcp__forge__ tool namespace. Keep native coding tools and native context management. Use Forge workers for the configured roster; do not start a second coordination system.",
+      "Forge integration tools are in the mcp__forge__ tool namespace. Keep native coding tools and native context management.",
+      descriptor.role === "worker"
+        ? "Return your result to the owning Forge manager. Follow the assigned specialist instructions; do not start another coordination system."
+        : "Use Forge workers for the configured roster; do not start a second coordination system.",
       secureSessionsEnabled
         ? "For credentialed work, when the Secure Sessions tools are available, inspect mcp__forge__secure_session_status and use mcp__forge__secure_bash with the exact granted aliases. Forge delivers values privately to that command and filters its output. Never ask for values in chat, copy them into files in the workspace, or use native shell/read tools to inspect credential material. Ordinary coding remains on native tools. For SSH password login use an SSH_ASKPASS binding; for a password needed after login, use a separate environment or stdin binding and pipe it to the remote program (such as sudo -S), keeping values out of command text. Browser login delivery is not supported."
         : "Secure Sessions are disabled for this project. Use native tools and the normal host SSH configuration and authentication for authorized SSH, SCP, Git, and other host commands. Do not require Secure Sessions, secret grants, or secure_bash for that work. The Secure Sessions tool definitions remain registered for native runtime compatibility, but they do not indicate availability or impose a requirement to use them. Do not call them while the project setting is disabled. Never print credential material or ask for secret values in chat.",

@@ -126,7 +126,7 @@ export class RuntimeFactory {
 
     if (["codex-native", "claude-native"].includes(descriptor.model.provider)) {
       const creator = descriptor.model.provider === "codex-native" ? new CodexRuntimeCreator(this.deps) : new ClaudeRuntimeCreator(this.deps);
-      return creator.create({ descriptor, systemPrompt, runtimeToken, creationOptions,
+      return creator.create({ descriptor, sessionDescriptor: this.getForgeSessionDescriptor(descriptor), systemPrompt, runtimeToken, creationOptions,
         callbacks: {
           onStatusChange: (...args) => this.deps.callbacks.onStatusChange(runtimeToken, ...args),
           onSessionEvent: (...args) => this.deps.callbacks.onSessionEvent(runtimeToken, ...args),

@@ -357,7 +357,9 @@ export function DelegationPolicyEditor({
                   })}
                 />
                 <p className="text-[11px] text-muted-foreground">
-                  Used only when the primary model is unavailable.
+                  {['codex-native', 'claude-native'].includes(policy.provider)
+                    ? 'For a native primary, used during worker setup. Failures after a turn starts return to the manager.'
+                    : 'Used only when the primary model is unavailable.'}
                 </p>
               </div>
 

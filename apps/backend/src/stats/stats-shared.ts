@@ -1,3 +1,4 @@
+import { NativeUsageHistory } from "./native-usage-history.js";
 import { getStatsSourceCache } from "./stats-source-cache.js";
 import { createReadStream } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
@@ -20,14 +21,20 @@ export interface JsonlScanContext {
 export async function scanJsonlFile(
   path: string,
   onEntry: (entry: unknown, context: JsonlScanContext) => void,
-  options: { throwOnError?: boolean; dataDir?: string } = {}
+  options: { throwOnError?: boolean; dataDir?: string; nativeUsageOwner?: string; nativeUsageHistory?: NativeUsageHistory } = {}
 ): Promise<void> {
   try {
     if (options.dataDir) {
       let thinkingLevel: string | null = null;
-      for (const { entry } of await getStatsSourceCache(options.dataDir).read(path)) {
+      const rows = await getStatsSourceCache(options.dataDir).read(path);
+      for (const { entry } of rows) {
         thinkingLevel = extractThinkingLevelChange(entry) ?? thinkingLevel;
         onEntry(entry, { thinkingLevel });
+      }
+      if (options.nativeUsageOwner) {
+        for (const entry of await (options.nativeUsageHistory ?? new NativeUsageHistory(options.dataDir)).recover(rows.map(row => row.entry), options.nativeUsageOwner)) {
+          onEntry(entry, { thinkingLevel: null });
+        }
       }
       return;
     }

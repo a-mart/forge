@@ -54,6 +54,8 @@ export const DEFAULT_REASONING_LEVEL: ManagerReasoningLevel = 'xhigh'
 
 /** Human-friendly provider labels for Select group headers. */
 export const PROVIDER_LABELS: Record<string, string> = {
+  'codex-native': 'Codex native',
+  'claude-native': 'Claude native',
   'openai-codex': 'OpenAI Codex',
   'anthropic': 'Anthropic',
   'cursor-sdk': 'Cursor SDK',

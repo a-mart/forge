@@ -8,7 +8,7 @@ import { projectStatsEntry } from "./stats-entry-projection.js";
 
 export interface StatsSourceRow { byteOffset: number; entry: Record<string, unknown> }
 interface SourceCache {
-  version: 1;
+  version: 2;
   source: string;
   dev: number;
   ino: number;
@@ -56,7 +56,7 @@ export class StatsSourceCache {
     if (!cached) {
       try {
         const candidate = JSON.parse(await readFile(cachePath, "utf8")) as SourceCache;
-        if (candidate.version === 1 && candidate.source === path && Array.isArray(candidate.rows)
+        if (candidate.version === 2 && candidate.source === path && Array.isArray(candidate.rows)
           && Number.isSafeInteger(candidate.offset) && candidate.offset >= 0 && candidate.offset <= candidate.size
           && candidate.rows.every((row) => Number.isSafeInteger(row.byteOffset) && row.byteOffset >= 0
             && row.byteOffset < candidate.offset && row.entry && typeof row.entry === "object")) {
@@ -92,7 +92,7 @@ export class StatsSourceCache {
       if (!resume) this.diagnostics.rebuilds++;
       const scanned = await this.readRows(file, offset, opened.size, rows);
       const entry: SourceCache = {
-        version: 1, source: path, dev: opened.dev, ino: opened.ino, birthtimeMs: opened.birthtimeMs,
+        version: 2, source: path, dev: opened.dev, ino: opened.ino, birthtimeMs: opened.birthtimeMs,
         mtimeMs: opened.mtimeMs, ctimeMs: opened.ctimeMs, size: opened.size, offset: scanned.offset,
         boundary: await this.boundary(file, scanned.offset), rows,
       };

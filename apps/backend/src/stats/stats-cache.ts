@@ -5,7 +5,7 @@ import { isEnoentError, isRecord, STATS_CACHE_TTL_MS } from "./stats-shared.js";
 import { normalizeTimezone } from "./stats-time.js";
 import type { CacheEntry, PersistedStatsCache } from "./stats-types.js";
 
-const STATS_CACHE_VERSION = 9;
+const STATS_CACHE_VERSION = 10;
 
 export { STATS_CACHE_VERSION };
 
@@ -32,12 +32,12 @@ export async function loadPersistedStatsCache(
   try {
     const raw = await readFile(cacheFilePath, "utf8");
     const parsed = JSON.parse(raw) as PersistedStatsCache;
-    if (!isRecord(parsed) || (parsed.version !== STATS_CACHE_VERSION && parsed.version !== 8) || !isRecord(parsed.entries)) {
+    if (!isRecord(parsed) || parsed.version !== STATS_CACHE_VERSION || !isRecord(parsed.entries)) {
       return;
     }
 
     for (const [key, entry] of Object.entries(parsed.entries)) {
-      const range = (parsed.version === 8 ? key : key.split(":")[1]) as StatsRange;
+      const range = key.split(":")[1] as StatsRange;
       if (!["7d", "30d", "all"].includes(range)) continue;
       if (!entry || !isRecord(entry)) {
         continue;

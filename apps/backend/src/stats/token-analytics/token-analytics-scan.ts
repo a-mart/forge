@@ -1,3 +1,5 @@
+import { NativeUsageHistory } from "../native-usage-history.js";
+import { NativeUsageAccumulator, parseNativeUsageEntry, accountingModel, type NativeUsageRecord } from "../../utils/native-usage-records.js";
 import { join } from "node:path";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
@@ -39,7 +41,9 @@ import type { TokenAnalyticsAttributionKind, TokenCostTotals } from "@forge/prot
 export async function scanTokenAnalyticsProfiles(swarmManager: SwarmManager): Promise<TokenAnalyticsScanResult> {
   const dataDir = swarmManager.getConfig().paths.dataDir;
   const profiles = swarmManager.listUserProfiles();
+  const nativeUsageHistory = new NativeUsageHistory(dataDir);
   const events: TokenAnalyticsEventRecord[] = [];
+  const nativeRecords: Array<{ record: NativeUsageRecord; options: Parameters<typeof toEventRecord>[1] }> = [];
   const workers: TokenAnalyticsWorkerRecord[] = [];
   const specialistMetadataByProfile = new Map<string, Map<string, SpecialistDisplayMeta>>();
   const diagnostics: TokenAnalyticsScanDiagnostics = {
@@ -97,7 +101,7 @@ export async function scanTokenAnalyticsProfiles(swarmManager: SwarmManager): Pr
         );
 
         await scanJsonlFile(join(workersDir, workerFileName), (entry, context) => {
-          const event = toEventRecord(entry, {
+          const eventOptions = {
             profileId: profile.profileId,
             sessionId,
             workerId,
@@ -105,13 +109,27 @@ export async function scanTokenAnalyticsProfiles(swarmManager: SwarmManager): Pr
             attributionKind,
             fallbackThinkingLevel: context.thinkingLevel,
             diagnostics,
-          });
+          };
+          const native = parseNativeUsageEntry(entry);
+          if (native) { nativeRecords.push({ record: native, options: eventOptions }); return; }
+          const event = toEventRecord(entry, eventOptions);
           if (event) {
             events.push(event);
           }
-        }, { throwOnError: true, dataDir });
+        }, { throwOnError: true, dataDir, nativeUsageHistory, nativeUsageOwner: workerId });
       }
     }
+  }
+
+  const accounting = new NativeUsageAccumulator();
+  for (const { record, options } of nativeRecords.sort((a, b) => Date.parse(a.record.capturedAt) - Date.parse(b.record.capturedAt)
+    || Number(b.record.ownerAgentId === b.options.workerId) - Number(a.record.ownerAgentId === a.options.workerId))) {
+    const usage = accounting.consume(record);
+    if (!usage) continue;
+    const event = toEventRecord({ type: "message", timestamp: record.capturedAt, message: {
+      ...accountingModel(record.modelId, record.provider), reasoningLevel: record.reasoningLevel, usage,
+    } }, options);
+    if (event) events.push(event);
   }
 
   const workerMap = new Map(workers.map((worker) => [toWorkerKey(worker.profileId, worker.sessionId, worker.workerId), worker]));
@@ -284,10 +302,7 @@ function extractProviderAndModel(message: Record<string, unknown>): { provider: 
   const rawModelId = explicitModelId ?? "unknown";
 
   if (explicitProvider) {
-    return {
-      provider: explicitProvider,
-      modelId: rawModelId,
-    };
+    return accountingModel(rawModelId, explicitProvider);
   }
 
   const inferredProvider = modelCatalogService.inferProvider(rawModelId) ?? inferProviderFromScopedModelId(rawModelId) ?? "unknown";

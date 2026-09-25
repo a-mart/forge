@@ -1,3 +1,4 @@
+import { NATIVE_USAGE_ENTRY_TYPE, NativeUsageAccumulator, normalizeCodexUsage, parseNativeUsageEntry, type NativeUsageRecord } from "../../../utils/native-usage-records.js";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -64,6 +65,8 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
   private active?: ActiveTurn;
   private status: AgentStatus = "idle";
   private usage?: AgentContextUsage;
+  private readonly accounting = new NativeUsageAccumulator();
+  private readonly runtimeStartedAt = new Date().toISOString();
   private stopping = false;
   private closed = false;
   private dispatching = false;
@@ -78,6 +81,10 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     const session = openSessionManagerWithSizeGuard(this.descriptor.sessionFile, { context: "codex-native" });
     if (!session) throw new Error("Could not open the Forge session for native Codex; history was left unchanged.");
     this.session = session;
+    for (const entry of session.getEntries()) {
+      const usage = parseNativeUsageEntry(entry);
+      if (usage) this.accounting.consume(usage);
+    }
     this.bridge = new CodexRuntimeTools({ tools: options.tools, agentId: this.descriptor.agentId,
       host: options.host, emit: event => this.emit(event) });
     this.client = (options.createClient ?? (handlers => createCodexAppServerClient(handlers, {
@@ -353,6 +360,13 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       }
     }
     if (method === "thread/tokenUsage/updated") {
+      const usage = normalizeCodexUsage(params.tokenUsage?.total);
+      if (usage) {
+        const record: NativeUsageRecord = { version: 1, provider: "codex-native", nativeSessionId: this.threadId,
+          counterId: "thread", modelId: this.descriptor.model.modelId, reasoningLevel: this.descriptor.model.thinkingLevel,
+          ownerAgentId: this.descriptor.agentId, runtimeStartedAt: this.runtimeStartedAt, capturedAt: new Date().toISOString(), usage };
+        if (this.accounting.consume(record)) this.appendCustomEntry(NATIVE_USAGE_ENTRY_TYPE, record);
+      }
       const tokens = params.tokenUsage?.last?.totalTokens;
       const window = params.tokenUsage?.modelContextWindow;
       if (typeof tokens === "number" && typeof window === "number") {

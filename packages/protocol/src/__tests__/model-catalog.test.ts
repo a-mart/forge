@@ -176,7 +176,7 @@ const NATIVE_MODEL_IDS = ['gpt-5.5', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']
 describe('model-catalog', () => {
   it('keeps native Codex managers separate from Pi and worker presets', () => {
     expect(getCatalogProvider('codex-native')).toMatchObject({ piProjectionMode: 'none' })
-    expect(getCatalogFamily('codex-native')).toMatchObject({ visibleInSpawnPreset: false, visibleInSpecialists: false })
+    expect(getCatalogFamily('codex-native')).toMatchObject({ visibleInSpawnPreset: true, visibleInSpecialists: true })
     for (const id of NATIVE_MODEL_IDS) {
       expect(getCatalogModel(id, 'codex-native')).toMatchObject({ modelId: id, provider: 'codex-native', familyId: 'codex-native' })
       expect(getCatalogModel(id, 'openai-codex')?.provider).toBe('openai-codex')
@@ -646,6 +646,8 @@ describe('model-catalog', () => {
       'pi-grok',
       'cursor-composer',
       'cursor-grok-45',
+      'claude-native',
+      'codex-native',
     ])
 
     expect(getSpecialistFamilies().map((family) => family.familyId)).toEqual([
@@ -657,6 +659,8 @@ describe('model-catalog', () => {
       'pi-grok',
       'cursor-composer',
       'cursor-grok-45',
+      'claude-native',
+      'codex-native',
     ])
   })
 })
@@ -672,7 +676,7 @@ it.each(['openai-codex', 'codex-native'])('excludes retired GPT-5.6 from the %s 
 
 it('keeps native Claude on Builder managers and preserves existing Pi selections', () => {
   expect(getCatalogProvider('claude-native')).toMatchObject({ availabilityMode: 'external', piProjectionMode: 'none' })
-  expect(getCatalogFamily('claude-native')).toMatchObject({ defaultModelId: 'claude-opus-5-5', visibleInSpawnPreset: false, visibleInSpecialists: false })
+  expect(getCatalogFamily('claude-native')).toMatchObject({ defaultModelId: 'claude-opus-5-5', visibleInSpawnPreset: true, visibleInSpecialists: true })
   expect(getCatalogModel('claude-opus-5-5', 'claude-native')).toMatchObject({ provider: 'claude-native', familyId: 'claude-native', defaultReasoningLevel: 'medium' })
   expect(getCatalogModel('claude-opus-5-5', 'anthropic')).toMatchObject({ provider: 'anthropic', familyId: 'pi-opus' })
   expect(isCompactionProviderSupported('claude-native')).toBe(false)

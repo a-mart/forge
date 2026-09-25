@@ -111,4 +111,4 @@ export interface DecodedCursor {
 
 export const DEFAULT_WORKER_PAGE_LIMIT = 25;
 export const MAX_WORKER_PAGE_LIMIT = 100;
-export const TOKEN_ANALYTICS_CACHE_VERSION = 1;
+export const TOKEN_ANALYTICS_CACHE_VERSION = 2;

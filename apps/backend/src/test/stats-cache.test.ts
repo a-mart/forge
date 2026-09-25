@@ -17,7 +17,7 @@ afterEach(async () => {
 });
 
 describe("persisted stats cache", () => {
-  it("uses version 9 and ignores older cache files that lack fuckMeter", async () => {
+  it("uses version 10 and ignores older cache files that lack fuckMeter", async () => {
     const cacheFilePath = await createCacheFilePath();
     await writeFile(cacheFilePath, JSON.stringify({
       version: 7,
@@ -35,7 +35,7 @@ describe("persisted stats cache", () => {
     expect(cache.size).toBe(0);
   });
 
-  it("round-trips version 9 snapshots including fuckMeter daily buckets", async () => {
+  it("round-trips version 10 snapshots including fuckMeter daily buckets", async () => {
     const cacheFilePath = await createCacheFilePath();
     const snapshot = {
       ...createSnapshot(),
@@ -60,14 +60,16 @@ describe("persisted stats cache", () => {
     await loadPersistedStatsCache(cacheFilePath, loaded);
     expect(loaded.get(getStatsCacheKey("7d", "UTC"))?.snapshot.fuckMeter).toEqual(snapshot.fuckMeter);
   });
-  it("keeps different timezones cached across restart and reads legacy v8 entries", async () => {
+  it("keeps different timezones cached across restart and invalidates versions without native usage", async () => {
     const path = await createCacheFilePath();
     const snapshot = createSnapshot();
-    await writeFile(path, JSON.stringify({ version: 8, entries: { "7d": {
+    await writeFile(path, JSON.stringify({ version: 9, entries: { "stats:7d:UTC": {
       expiresAt: Date.now() + 60000, timezone: "UTC", snapshot,
     } } }));
     const cache = new Map<string, CacheEntry>();
     await loadPersistedStatsCache(path, cache);
+    expect(cache.size).toBe(0);
+    cache.set(getStatsCacheKey("7d", "UTC"), { expiresAt: Date.now() + 60000, timezone: "UTC", snapshot });
     cache.set(getStatsCacheKey("7d", "America/Chicago"), {
       expiresAt: Date.now() + 60000, timezone: "America/Chicago", snapshot,
     });

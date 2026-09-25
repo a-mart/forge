@@ -586,13 +586,13 @@ export const FORGE_MODEL_CATALOG: ForgeModelCatalog = {
       familyId: 'claude-native', displayName: 'Claude native', provider: 'claude-native',
       defaultModelId: 'claude-opus-5-5', defaultReasoningLevel: 'medium',
       visibleInCreateManager: true, visibleInChangeManager: true,
-      visibleInSpawnPreset: false, visibleInSpecialists: false,
+      visibleInSpawnPreset: true, visibleInSpecialists: true,
     },
     'codex-native': {
       familyId: 'codex-native', displayName: 'Codex native', provider: 'codex-native',
       defaultModelId: 'gpt-6-sol', defaultReasoningLevel: 'high',
       visibleInCreateManager: true, visibleInChangeManager: true,
-      visibleInSpawnPreset: false, visibleInSpecialists: false,
+      visibleInSpawnPreset: true, visibleInSpecialists: true,
     },
   },
   models: {

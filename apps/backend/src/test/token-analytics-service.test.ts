@@ -498,7 +498,7 @@ describe("TokenAnalyticsService", () => {
     await waitFor(async () => {
       const raw = await readFile(cachePath, "utf8");
       const parsed = JSON.parse(raw) as { version?: number };
-      return parsed.version === 1;
+      return parsed.version === 2;
     });
 
     await appendWorkerEvent(
@@ -540,7 +540,7 @@ describe("TokenAnalyticsService", () => {
     await waitFor(async () => {
       const raw = await readFile(cachePath, "utf8");
       const parsed = JSON.parse(raw) as { version?: number };
-      return parsed.version === 1;
+      return parsed.version === 2;
     });
 
     type PersistedCachePayload = {

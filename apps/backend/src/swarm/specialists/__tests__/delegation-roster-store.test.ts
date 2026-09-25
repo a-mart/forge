@@ -455,3 +455,15 @@ it("migrates saved GPT-5.6 route and fallback selections across reloads", async 
   await saveDelegationRosterSettings(dataDir, loaded);
   expect(await resolveDelegationRosterSettings(dataDir)).toEqual(loaded);
 });
+
+it("retains native primary and cross-runtime fallback choices through save and reload", async () => {
+  const dataDir = await makeDataDir();
+  const settings = await resolveDelegationRosterSettings(dataDir);
+  const roster = settings.rosters[0]!;
+  roster.routes[0] = { ...roster.routes[0]!, provider: "claude-native", modelId: "claude-fable-5-1", reasoningLevel: "high",
+    availabilityFallback: { provider: "codex-native", modelId: "gpt-6-sol", reasoningLevel: "xhigh" } };
+  await saveDelegationRosterSettings(dataDir, settings);
+  const loaded = await resolveDelegationRosterSettings(dataDir);
+  expect(loaded.rosters[0]!.routes[0]).toMatchObject({ provider: "claude-native", modelId: "claude-fable-5-1",
+    availabilityFallback: { provider: "codex-native", modelId: "gpt-6-sol", reasoningLevel: "xhigh" } });
+});

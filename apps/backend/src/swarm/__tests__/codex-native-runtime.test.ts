@@ -564,3 +564,24 @@ it("recreates only an unused native allocation after a settings recycle", async 
   await fresh.runtime.terminate();
   await expect(fixture({ root: f.root, rejectResume: true })).rejects.toThrow("Missing native thread");
 });
+
+it("persists cumulative native usage once per observation, including interrupted turns", async () => {
+  const f = await fixture();
+  await f.runtime.sendMessage("work");
+  const params = { threadId: "native-thread", turnId: "turn-1", tokenUsage: {
+    total: { inputTokens: 100, cachedInputTokens: 80, outputTokens: 30, reasoningOutputTokens: 20, totalTokens: 130 },
+    last: { totalTokens: 100 }, modelContextWindow: 200000,
+  } };
+  await f.notify("thread/tokenUsage/updated", params);
+  await f.notify("thread/tokenUsage/updated", params);
+  await f.runtime.stopInFlight();
+  const records = f.runtime.getCustomEntries("swarm_native_usage") as any[];
+  expect(records).toHaveLength(1);
+  expect(records[0]).toMatchObject({ provider: "codex-native", nativeSessionId: "native-thread", modelId: "gpt-6-astra",
+    usage: { input: 20, output: 30, cacheRead: 80, cacheWrite: 0, total: 130 } });
+  const resumed = await fixture({ root: f.root });
+  await resumed.runtime.sendMessage("continue");
+  await resumed.notify("thread/tokenUsage/updated", params);
+  expect(resumed.runtime.getCustomEntries("swarm_native_usage")).toHaveLength(1);
+  await resumed.runtime.stopInFlight();
+});
