@@ -194,6 +194,8 @@ export interface ConversationLogEvent {
   toolCallId?: string
   text: string
   isError?: boolean
+  /** Native lifecycle metadata; safe to retain when raw tool output is omitted. */
+  executionState?: 'background'
 }
 
 export interface AgentMessageEvent {
@@ -228,6 +230,8 @@ export interface AgentToolCallEvent {
   toolCallId?: string
   text: string
   isError?: boolean
+  /** The command continues after its foreground tool call returns. */
+  executionState?: 'background'
 }
 
 export const ACTIVITY_SUMMARY_SCHEMA_VERSION = 1 as const

@@ -20,7 +20,7 @@ async function fixture(root: string, options: { prompt?: string; onEnd?: () => P
   let allowClose = true;
   const consumed = vi.fn();
   const errors = vi.fn();
-  const native = { initializationResult: vi.fn(async () => ({})), supportedModels: vi.fn(async () => []),
+  const native = { backgroundTasks: vi.fn(async (_id: string) => true), initializationResult: vi.fn(async () => ({})), supportedModels: vi.fn(async () => []),
     close: vi.fn(() => { if (!allowClose) return; ended = true; waiting?.({ done: true, value: undefined }); }),
     [Symbol.asyncIterator]() { return this; }, next(): Promise<IteratorResult<SDKMessage>> {
       if (frames.length) return Promise.resolve({ done: false, value: frames.shift()! });
@@ -43,6 +43,52 @@ const result = (ids: string[], fields = {}) => ({ type: "result", subtype: "succ
   duration_ms: 5, duration_api_ms: 4, total_cost_usd: 0.1, usage: { input_tokens: 5, output_tokens: 3 }, modelUsage: {}, ...fields });
 
 describe("Claude native lifecycle", () => {
+  it("bounds native command waits without changing Forge MCP timeouts or short explicit waits", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-command-policy-")); const f = await fixture(root);
+    try {
+      const hook = f.setup.hooks!.PreToolUse![0]!.hooks[0]!;
+      const apply = async (name: string, input: object) => await hook({ hook_event_name: "PreToolUse", tool_name: name, tool_input: input } as never, "id", { signal: new AbortController().signal });
+      expect(await apply("Bash", { command: "gh run watch 123", timeout: 3600000 })).toMatchObject({ hookSpecificOutput: { updatedInput: { command: "gh run watch 123", timeout: 10000 } } });
+      expect(await apply("Bash", { command: "make check" })).toMatchObject({ hookSpecificOutput: { updatedInput: { timeout: 10000 } } });
+      expect(await apply("Bash", { command: "sleep 90; echo finished", timeout: 3600000 })).toMatchObject({ hookSpecificOutput: { updatedInput: { run_in_background: true, timeout: 3600000 } } });
+      expect(await apply("Bash", { command: "sleep 1", timeout: 2000 })).toEqual({});
+      expect(await apply("Bash", { command: "make build", run_in_background: true })).toEqual({});
+      expect(await apply("TaskOutput", { task_id: "task", block: true, timeout: 300000 })).toMatchObject({ hookSpecificOutput: { updatedInput: { timeout: 10000, task_id: "task", block: true } } });
+      expect(await apply("mcp__forge__secure_bash", { command: "ssh fixture", timeout: 3600 })).toEqual({});
+    } finally { await f.runtime.stopInFlight(); await rm(root, { recursive: true, force: true }); }
+  });
+
+  it.each([false, true, "error"])("targets only foreground Bash for steering, keeps follow-ups queued, and tolerates background response %s", async outcome => {
+    const root = await mkdtemp(join(tmpdir(), "forge-command-control-")); const f = await fixture(root);
+    if (outcome === "error") f.native.backgroundTasks.mockRejectedValue(new Error("disabled"));
+    else f.native.backgroundTasks.mockResolvedValue(outcome);
+    try {
+      const first = await f.runtime.sendMessage("work"); await f.input.next();
+      expect(f.native.backgroundTasks).not.toHaveBeenCalled();
+      await f.emit({ type: "assistant", user_message_uuids: [first.deliveryId], message: { content: [{ type: "tool_use", id: "bash-one", name: "Bash", input: { command: "make build" } }] } });
+      await f.runtime.sendMessage("afterward", "followUp");
+      expect(f.native.backgroundTasks).not.toHaveBeenCalled();
+      const steer = await f.runtime.sendMessage("status"); await f.input.next();
+      expect(f.native.backgroundTasks).toHaveBeenCalledWith("bash-one");
+      await f.emit({ type: "assistant", user_message_uuids: [steer.deliveryId], message: { content: [{ type: "text", text: "Status" }] } });
+      expect(f.runtime.getPendingCount()).toBe(1);
+      expect(f.errors).not.toHaveBeenCalled();
+    } finally { await f.runtime.stopInFlight(); await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("keeps background commands open across a result, then settles them on native completion or Stop all", () => {
+    const mapper = new ClaudeRuntimeEvents();
+    const start = (id: string) => mapper.map({ type: "assistant", message: { content: [{ type: "tool_use", id, name: "Bash", input: { command: "build" } }] } } as never);
+    start("shell");
+    expect(mapper.map({ type: "system", subtype: "task_started", task_id: "task", tool_use_id: "shell", task_type: "local_bash", is_backgrounded: true } as never)).toContainEqual(expect.objectContaining({ type: "tool_execution_update", partialResult: expect.objectContaining({ status: "running_in_background" }) }));
+    expect(mapper.map({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "shell", content: "background" }] } } as never).some(e => e.type === "tool_execution_end")).toBe(false);
+    expect(mapper.finish(true, "Still running").some(e => e.type === "tool_execution_end")).toBe(false);
+    expect(mapper.map({ type: "system", subtype: "task_notification", task_id: "task", tool_use_id: "shell", status: "completed", summary: "Build done" } as never)).toContainEqual(expect.objectContaining({ type: "tool_execution_end", isError: false }));
+    start("second");
+    mapper.map({ type: "system", subtype: "task_started", task_id: "second-task", tool_use_id: "second", task_type: "local_bash", is_backgrounded: true } as never);
+    expect(mapper.finish(false, undefined, true)).toContainEqual(expect.objectContaining({ type: "tool_execution_end", isError: true, result: expect.objectContaining({ status: "cancelled" }) }));
+  });
+
   it.each([true, false])("preserves a provider rejection instead of hiding it as a generic turn failure (assistant frame: %s)", async assistantFrame => {
     const root = await mkdtemp(join(tmpdir(), "forge-claude-error-"));
     const binding = { guardValue: (value: unknown) => JSON.parse(JSON.stringify(value).replaceAll("PRIVATE_TOKEN", "[REDACTED]")) } as SecureRuntimeBinding;

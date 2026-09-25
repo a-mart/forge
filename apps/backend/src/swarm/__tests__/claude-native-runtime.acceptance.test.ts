@@ -55,7 +55,7 @@ describe("Claude native process acceptance", () => {
         CASE_SECURE: { name: "mcp__forge__secure_bash", input: { command: "opaque credential command", secretAliases: ["fixture-password"] } },
         CASE_HOOK: { name: "Bash", input: { command: "printf \"$FIXTURE_CANARY\"" } },
         CASE_QUESTION: { name: "AskUserQuestion", input: { questions: [{ question: "Pick the fixture option", header: "Fixture", options: [{ label: "First", description: "First option" }, { label: "Second", description: "Second option" }], multiSelect: false }] } },
-        CASE_QUEUE: { name: "Bash", input: { command: "printf started > queue-started; sleep 0.7" } },
+        CASE_QUEUE: { name: "Bash", input: { command: "printf started > queue-started; sleep 0.7", timeout: 2000 } },
         CASE_STOP: { name: "Bash", input: { command: "echo $$ > stop-pid; printf started > stop-started; sleep 30; printf survived > stop-survived" } },
       };
       const blocks = !hasResult && calls[marker] ? [{ type: "text", text: `Working on ${marker}.` }, { type: "tool_use", id, ...calls[marker] }]

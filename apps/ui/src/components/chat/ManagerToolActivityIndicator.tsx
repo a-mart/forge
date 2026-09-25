@@ -1,15 +1,25 @@
-import { Wrench } from 'lucide-react'
+import { Clock3, Wrench } from 'lucide-react'
 import type { ManagerToolActivityEvent } from '@forge/protocol'
 
 interface ManagerToolActivityIndicatorProps {
   activity?: ManagerToolActivityEvent | null
+  pendingCount?: number
 }
 
 /**
  * Shows the latest ephemeral manager-tool activity at the live conversation edge.
  * The payload is deliberately limited to count and normalized tool name.
  */
-export function ManagerToolActivityIndicator({ activity }: ManagerToolActivityIndicatorProps) {
+export function ManagerToolActivityIndicator({ activity, pendingCount = 0 }: ManagerToolActivityIndicatorProps) {
+  if (pendingCount > 0) {
+    return (
+      <div className="flex shrink-0 items-center gap-1.5 border-y border-border/60 bg-muted/20 px-3 py-1.5 text-xs text-muted-foreground" role="status" aria-live="polite"
+        title="Accepted by Forge. The agent has not picked this input up yet; it may be waiting for the current operation to yield.">
+        <Clock3 className="size-3.5 shrink-0" aria-hidden="true" />
+        <span>{pendingCount === 1 ? '1 message waiting for agent' : `${pendingCount} messages waiting for agent`}</span>
+      </div>
+    )
+  }
   if (!activity || activity.toolCount <= 0) return null
 
   const toolLabel = `${activity.toolCount} tool${activity.toolCount === 1 ? '' : 's'}`

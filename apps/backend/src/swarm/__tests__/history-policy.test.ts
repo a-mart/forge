@@ -171,6 +171,8 @@ describe("history policy", () => {
     expect(shouldPersistConversationEntry(toolLog("start", "tool_execution_start"))).toBe(true);
     expect(shouldPersistConversationEntry(toolLog("end", "tool_execution_end"))).toBe(false);
     expect(shouldPersistConversationEntry(tool("update", "tool_execution_update"))).toBe(false);
+    expect(shouldPersistConversationEntry({ ...tool("background", "tool_execution_update"), executionState: "background" } as ConversationEntryEvent)).toBe(true);
+    expect(shouldPersistConversationEntry({ ...toolLog("background", "tool_execution_update"), executionState: "background" } as ConversationEntryEvent)).toBe(true);
     expect(shouldPersistConversationEntry(tool("start", "tool_execution_start"))).toBe(true);
     expect(shouldPersistConversationEntry(tool("end", "tool_execution_end"))).toBe(true);
     expect(shouldPersistConversationEntry(message("assistant"))).toBe(true);

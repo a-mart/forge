@@ -43,6 +43,14 @@ describe('ManagerToolActivityIndicator', () => {
     expect(indicator?.getAttribute('role')).toBe('status')
   })
 
+  it('shows accepted input waiting for the runtime and clears it when consumption is reported', () => {
+    act(() => root.render(createElement(ManagerToolActivityIndicator, { pendingCount: 2 })))
+    expect(container.textContent).toContain('2 messages waiting for agent')
+    expect(container.querySelector('[role="status"]')).not.toBeNull()
+    act(() => root.render(createElement(ManagerToolActivityIndicator, { pendingCount: 0 })))
+    expect(container.textContent).toBe('')
+  })
+
   it('stays hidden when activity is empty', () => {
     act(() => {
       root.render(createElement(ManagerToolActivityIndicator, {

@@ -48,6 +48,7 @@ export interface ToolExecutionDisplayEntry {
   startTimestamp?: string
   latestKind: ToolExecutionEvent['kind']
   isError?: boolean
+  executionState?: ToolExecutionEvent['executionState']
 }
 
 export interface ChoiceRequestDisplayEntry {

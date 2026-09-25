@@ -16,6 +16,7 @@ import { normalizeRuntimeUserMessage } from "../runtime-utils.js";
 import { buildModelChangeRecoveryContext } from "../model-change-recovery-context.js";
 import { ClaudeRuntimeTools } from "./claude-runtime-tools.js";
 import { ClaudeRuntimeEvents } from "./claude-runtime-events.js";
+import { claudeCommandWaitHook } from "./claude-command-policy.js";
 import { guardSecureRuntimeValue, SECURE_RUNTIME_GUARD_FAILURE_MESSAGE } from "../../secure-sessions/runtime/secure-runtime-binding.js";
 
 export const NATIVE_CLAUDE_STATE = "swarm_native_claude_state";
@@ -105,7 +106,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
       disallowedTools: ["Agent", "Task", "Workflow", "SendMessage", "ListAgents", "TeamCreate", "TeamDelete", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TodoWrite", "CronCreate", "CronDelete", "CronList", "EnterWorktree", "ExitWorktree", "EnterPlanMode", "ExitPlanMode"],
       mcpServers: { forge: runtime.bridge.server }, strictMcpConfig: true,
       canUseTool: runtime.bridge.canUseTool,
-      hooks: { PostToolUse: [{ hooks: [async event => event.hook_event_name === "PostToolUse"
+      hooks: { PreToolUse: [{ hooks: [claudeCommandWaitHook] }], PostToolUse: [{ hooks: [async event => event.hook_event_name === "PostToolUse"
         ? { hookSpecificOutput: { hookEventName: "PostToolUse", updatedToolOutput: runtime.guard(event.tool_response) } } : {}] }] },
       spawnClaudeCodeProcess(spawnOptions) {
         const child = spawn(spawnOptions.command, spawnOptions.args, { cwd: spawnOptions.cwd, env: spawnOptions.env,
@@ -147,7 +148,15 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
       const value: Input = { id: randomUUID(), message: normalizeRuntimeUserMessage(input), activated: false };
       const busy = this.turnOpen || this.sent.size > 0;
       if (busy && mode === "followUp") { this.followUps.push(value); await this.publishStatus(); }
-      else await this.submit(value);
+      else {
+        await this.submit(value);
+        if (busy) {
+          // Never wait for a control response in the serialized reader/admission
+          // queue. A silent/just-started Bash may not be registered yet; the
+          // foreground budget handles that case without interrupts or replay.
+          for (const id of this.mapper.foregroundCommands()) void this.native.backgroundTasks(id).catch(() => undefined);
+        }
+      }
       return { targetAgentId: this.descriptor.agentId, deliveryId: value.id,
         acceptedMode: busy ? mode === "followUp" ? "followUp" : "steer" : "prompt" };
     });
@@ -184,8 +193,8 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     this.turnOpen = false;
     this.closed = true;
     this.status = "idle";
+    for (const event of this.mapper.finish(false, undefined, true)) await this.emit(event);
     if (hadTurn) {
-      for (const event of this.mapper.finish(false)) await this.emit(event);
       await this.emit({ type: "agent_end" });
     }
     await this.publishStatus();
@@ -247,6 +256,9 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
       await this.begin(); await this.activate(input); this.sent.delete(id);
       if (!this.recoveryConsumed) { await this.options.creationOptions?.onStartupRecoveryConsumed?.(); this.recoveryConsumed = true; }
     }
+    if (ids.length) await this.publishStatus();
+    // Background completion can trigger a new native turn without new user input.
+    if (frame.type === "assistant" && !this.turnOpen) await this.begin();
     // API failures arrive as synthetic assistant messages and can use a
     // "success" result envelope with is_error=true. Keep the explanation for
     // the runtime error path rather than dropping it as unfinished progress.

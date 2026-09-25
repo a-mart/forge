@@ -29,6 +29,7 @@ import type {
 interface ChatWorkspaceProps {
   headerProps: ComponentPropsWithoutRef<typeof ChatHeader>
   managerToolActivity?: ManagerToolActivityEvent | null
+  pendingInputCount?: number
   /** Already filtered to the active local project by the Builder shell. */
   remoteUpdateSnapshot?: RemoteUpdateAwarenessProjectSnapshot | null
   onRemoteUpdateSnapshotChange?: RemoteUpdateAwarenessSnapshotChange
@@ -60,6 +61,7 @@ interface ChatWorkspaceProps {
 export function ChatWorkspace({
   headerProps,
   managerToolActivity,
+  pendingInputCount,
   remoteUpdateSnapshot = null,
   onRemoteUpdateSnapshotChange,
   onOpenRemoteUpdateIncoming,
@@ -170,7 +172,7 @@ export function ChatWorkspace({
             <TerminalPanel {...terminalPanelProps} />
           </div>
 
-          <ManagerToolActivityIndicator activity={managerToolActivity} />
+          <ManagerToolActivityIndicator activity={managerToolActivity} pendingCount={pendingInputCount} />
 
           <MessageInput ref={messageInputRef} {...messageInputProps} />
         </>

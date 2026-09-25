@@ -175,6 +175,7 @@ function mapNonManagerRuntimeEvent(
           timestamp,
           source: "runtime_log",
           kind: "tool_execution_update",
+          ...(event.executionState ? { executionState: event.executionState } : {}),
           toolName: event.toolName,
           toolCallId: event.toolCallId,
           text: safeJson(sanitizeToolExecutionEndResultForAudit(event.partialResult, { descriptor, toolName: event.toolName }))
@@ -278,6 +279,7 @@ function mapToolCallActivityFromRuntime(
         ...(turnId ? { turnId } : {}),
         timestamp,
         kind: "tool_execution_update",
+        ...(event.executionState ? { executionState: event.executionState } : {}),
         toolName: event.toolName,
         toolCallId: event.toolCallId,
         text: safeJson(sanitizeToolExecutionEndResultForAudit(event.partialResult, { descriptor, toolName: event.toolName }))

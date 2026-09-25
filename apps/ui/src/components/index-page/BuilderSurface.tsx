@@ -2415,6 +2415,8 @@ export function BuilderSurface({
               />
             ) : (
               <ChatWorkspace
+                pendingInputCount={state.connected && activeAgent?.model.provider === 'claude-native'
+                  ? state.statuses[activeAgentId ?? '']?.pendingCount ?? 0 : 0}
                 managerToolActivity={
                   !isRemoteOriginActive && isActiveManager && state.managerToolActivity?.sessionAgentId === activeAgentId
                     ? state.managerToolActivity

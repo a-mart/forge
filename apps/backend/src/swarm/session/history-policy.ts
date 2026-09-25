@@ -11,6 +11,10 @@ import {
 export const MAX_CONVERSATION_HISTORY = 2000;
 
 export function shouldPersistConversationEntry(entry: ConversationEntryEvent): boolean {
+  // Unlike output chunks, this one native lifecycle transition must survive
+  // refresh/restart so an unfinished command is not shown as completed.
+  if ((entry.type === "agent_tool_call" || entry.type === "conversation_log") &&
+      entry.kind === "tool_execution_update" && entry.executionState === "background") return true;
   if (entry.type === "conversation_log") {
     if (entry.kind !== "tool_execution_start") {
       return false;

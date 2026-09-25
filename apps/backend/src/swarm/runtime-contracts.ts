@@ -1,4 +1,5 @@
 import type {
+  AgentToolCallEvent,
   GenerationMeasurementScope,
   GenerationOutcome,
   GenerationProviderAttemptScope,
@@ -192,6 +193,7 @@ export type RuntimeSessionEvent =
       toolName: string;
       toolCallId: string;
       partialResult: unknown;
+      executionState?: AgentToolCallEvent["executionState"];
     }
   | {
       type: "tool_execution_end";

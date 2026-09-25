@@ -66,6 +66,22 @@ for a turn boundary. Stop closes the native process and waits for cleanup before
 another runtime can write the session. A cleanup failure blocks replacement and can
 be retried.
 
+Long native commands keep the conversation responsive. Forge limits foreground
+`Bash` and blocking `TaskOutput` waits to ten seconds; ordinary Bash then continues
+as a native background task rather than being restarted. Explicit shorter timeouts
+are preserved. Long sleep-based commands start in the background because Claude's
+sleep timeout would otherwise stop them. New steering also asks Claude to background
+the specific foreground Bash call immediately when it is already registered. Silent
+or just-started commands may need the foreground wait to expire first.
+
+The conversation shows pending input until Claude acknowledges consumption, and
+command rows remain running in the background until native completion is reported.
+Backgrounding does not cancel the command or an external deployment. Stop all closes
+the native process; external jobs that were already dispatched need their own cancel
+operation. Forge MCP tools, including Secure Bash/SSH, retain their existing execution
+and timeout behavior. Use bounded remote status checks for those operations. This
+behavior requires native background tasks to remain enabled in Claude's settings.
+
 Full access is enabled. Ordinary commands do not need repeated approvals. Real user
 questions and Forge secret/trust grants still use Forge's existing choice UI; native
 enterprise permission policies can also require a decision. Assistant text between
@@ -103,6 +119,11 @@ tools, Forge MCP tools with original call IDs, Secure Bash binding, output canar
 questions, concurrent inputs, compaction, restart/resume, fork ownership, process
 cleanup, and native/Forge JSONL. It makes no calls to Anthropic and is not a model
 quality or subscription-authentication benchmark.
+
+`claude-command-steering.acceptance.test.ts` also verifies steering during silent and
+output-producing long commands using the real process. The original command executes
+once, steering is answered before it completes, and its eventual completion settles
+the Forge command row.
 
 Lifecycle, model selection, prompt selection, setup errors, and secret grant/revoke
 tests cover the surrounding Forge contracts. Desktop staging preserves the SDK and

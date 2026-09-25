@@ -137,7 +137,7 @@ export function isProtectedManagerContextEntry(
   }
 
   if (entry.type === 'agent_tool_call') {
-    if (entry.kind === 'tool_execution_update') {
+    if (entry.kind === 'tool_execution_update' && entry.executionState !== 'background') {
       return false
     }
 

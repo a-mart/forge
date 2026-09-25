@@ -106,6 +106,15 @@ describe('manager All view choice_request visibility', () => {
     expect(isVisibleInManagerAllView(entry, visibilityOptions())).toBe(false)
   })
 
+  it('shows background lifecycle changes but still hides ordinary output updates', () => {
+    const entry: ConversationEntry = { type: 'agent_tool_call', agentId: activeManagerId,
+      actorAgentId: activeManagerId, timestamp: '2026-06-21T00:00:00.000Z',
+      kind: 'tool_execution_update', toolName: 'Bash', toolCallId: 'command', text: 'omitted' }
+    expect(isVisibleInManagerAllView(entry, visibilityOptions())).toBe(false)
+    expect(isVisibleInManagerAllView({ ...entry, executionState: 'background' }, visibilityOptions())).toBe(true)
+    expect(isVisibleInManagerAllView({ ...entry, actorAgentId: workerId, executionState: 'background' }, visibilityOptions())).toBe(false)
+  })
+
   it('does not broaden worker tool-call visibility', () => {
     const entry: ConversationEntry = {
       type: 'agent_tool_call',

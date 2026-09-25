@@ -52,6 +52,15 @@ function makeActorDisplay(overrides: Partial<AgentDisplayMeta> = {}): AgentDispl
 }
 
 describe('ToolLogRow actor metadata rendering', () => {
+  it('labels a live or replayed background update as running until actual completion', () => {
+    const entry = makeToolEntry({ latestKind: 'tool_execution_update', executionState: 'background', latestPayload: '[Raw activity payload omitted from Builder timeline.]' })
+    act(() => root.render(createElement(ToolLogRow, { type: 'tool_execution', entry })))
+    expect(container.textContent).toContain('Command running in background')
+    act(() => root.render(createElement(ToolLogRow, { type: 'tool_execution', entry: { ...entry, latestKind: 'tool_execution_end', outputPayload: '{"status":"completed"}' } })))
+    expect(container.textContent).toContain('Ran command')
+    expect(container.textContent).not.toContain('running in background')
+  })
+
   it('renders actor label chip when actorDisplay is provided', () => {
     const entry = makeToolEntry({ actorAgentId: 'worker-1' })
     const actorDisplay = makeActorDisplay()

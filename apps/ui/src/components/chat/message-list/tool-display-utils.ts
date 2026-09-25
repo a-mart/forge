@@ -43,6 +43,7 @@ export function hydrateToolDisplayEntry(
   displayEntry.toolCallId = event.toolCallId ?? displayEntry.toolCallId
   displayEntry.timestamp = event.timestamp
   displayEntry.latestKind = event.kind
+  displayEntry.executionState = event.executionState
   // A raw live event is richer than the replay-safe collapsed summary. Clear
   // a summary that may have arrived first so it cannot mask live input/output.
   displayEntry.displaySummary = undefined

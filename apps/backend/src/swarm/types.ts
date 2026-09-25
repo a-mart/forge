@@ -6,6 +6,8 @@ import {
   type CliSessionMetadata,
   type ConversationMessageSource,
   type ConversationTimelineEntryMetadata,
+  type ConversationLogEvent as ProtocolConversationLogEvent,
+  type AgentToolCallEvent as ProtocolAgentToolCallEvent,
   type DelegationBehaviorMode,
   type DelegationRosterOrigin,
   type AgentModelOrigin,
@@ -412,25 +414,7 @@ export interface ConversationMessageEvent extends ConversationTimelineEntryMetad
   systemNoticeKind?: "worker_outcome_backstop" | "model_change";
 }
 
-export type ConversationLogKind =
-  | "message_start"
-  | "message_end"
-  | "tool_execution_start"
-  | "tool_execution_update"
-  | "tool_execution_end";
-
-export interface ConversationLogEvent extends ConversationTimelineEntryMetadata {
-  type: "conversation_log";
-  agentId: string;
-  timestamp: string;
-  source: "runtime_log";
-  kind: ConversationLogKind;
-  role?: "user" | "assistant" | "system";
-  toolName?: string;
-  toolCallId?: string;
-  text: string;
-  isError?: boolean;
-}
+export type ConversationLogEvent = ProtocolConversationLogEvent & ConversationTimelineEntryMetadata;
 
 export interface AgentMessageEvent extends ConversationTimelineEntryMetadata {
   type: "agent_message";
@@ -448,23 +432,7 @@ export interface AgentMessageEvent extends ConversationTimelineEntryMetadata {
   projectAgentExchange?: true;
 }
 
-export type AgentToolCallKind = Extract<
-  ConversationLogKind,
-  "tool_execution_start" | "tool_execution_update" | "tool_execution_end"
->;
-
-export interface AgentToolCallEvent extends ConversationTimelineEntryMetadata {
-  type: "agent_tool_call";
-  agentId: string;
-  actorAgentId: string;
-  turnId?: string;
-  timestamp: string;
-  kind: AgentToolCallKind;
-  toolName?: string;
-  toolCallId?: string;
-  text: string;
-  isError?: boolean;
-}
+export type AgentToolCallEvent = ProtocolAgentToolCallEvent & ConversationTimelineEntryMetadata;
 
 export interface ActivitySummaryEvent extends ConversationTimelineEntryMetadata {
   type: "activity_summary";
