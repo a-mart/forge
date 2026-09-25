@@ -529,34 +529,38 @@ export class SwarmAgentLifecycleService {
     }
 
     await this.options.recoverRuntimeShutdown(descriptor);
-    if (previousStatus === "stopped") {
-      await this.options.reconcileStoppedManagerRuntime({
-        agentId,
-        turnId: interruptedTurnId,
-      });
-    }
+    // A later stop must either win before recovery is admitted or wait until
+    // replacement creation settles; never clear its fence halfway through start.
+    await this.options.withRuntimeAdmission(agentId, async () => {
+      if (previousStatus === "stopped") {
+        await this.options.reconcileStoppedManagerRuntime({
+          agentId,
+          turnId: interruptedTurnId,
+        });
+      }
 
-    if (isNonRunningAgentStatus(descriptor.status)) {
-      descriptor.status = transitionAgentStatus(descriptor.status, "idle");
-    }
+      if (isNonRunningAgentStatus(descriptor.status)) {
+        descriptor.status = transitionAgentStatus(descriptor.status, "idle");
+      }
 
-    descriptor.updatedAt = this.options.now();
-    this.upsertDescriptor(descriptor);
-
-    try {
-      const runtime = await this.getOrCreateRuntimeForDescriptor(descriptor);
-      descriptor.contextUsage = runtime.getContextUsage();
-      this.upsertDescriptor(descriptor);
-    } catch (error) {
-      descriptor.status = previousStatus;
       descriptor.updatedAt = this.options.now();
       this.upsertDescriptor(descriptor);
-      throw error;
-    }
 
-    await this.options.saveStore();
-    this.options.emitAgentsSnapshot();
-    this.options.emitProfilesSnapshot();
+      try {
+        const runtime = await this.getOrCreateRuntimeForDescriptor(descriptor);
+        descriptor.contextUsage = runtime.getContextUsage();
+        this.upsertDescriptor(descriptor);
+      } catch (error) {
+        descriptor.status = previousStatus;
+        descriptor.updatedAt = this.options.now();
+        this.upsertDescriptor(descriptor);
+        throw error;
+      }
+
+      await this.options.saveStore();
+      this.options.emitAgentsSnapshot();
+      this.options.emitProfilesSnapshot();
+    });
   }
 
   async spawnAgent(callerAgentId: string, input: SpawnAgentInput): Promise<AgentDescriptor> {
@@ -1332,7 +1336,10 @@ export class SwarmAgentLifecycleService {
     terminatedWorkerIds: string[];
     managerTerminated: boolean;
   }> {
-    const manager = this.options.assertManager(callerAgentId, "stop all agents");
+    const caller = this.options.descriptors.get(callerAgentId);
+    const manager = caller?.role === "manager" && caller.status === "stopped"
+      ? caller
+      : this.options.assertManager(callerAgentId, "stop all agents");
 
     const target = this.options.descriptors.get(targetManagerId);
     if (!target || target.role !== "manager") {
@@ -1380,7 +1387,7 @@ export class SwarmAgentLifecycleService {
 
       this.clearWorkerTeardownState(descriptor.agentId);
 
-      if (isNonRunningAgentStatus(descriptor.status)) {
+      if (isNonRunningAgentStatus(descriptor.status) && descriptor.status !== "stopped") {
         continue;
       }
 
@@ -1418,7 +1425,7 @@ export class SwarmAgentLifecycleService {
 
     let managerStopped = false;
     let managerShutdownIncomplete = false;
-    if (!isNonRunningAgentStatus(target.status)) {
+    if (!isNonRunningAgentStatus(target.status) || target.status === "stopped") {
       if (shouldAllowManualStopMessageEnd) {
         this.options.markPendingManualManagerStopNotice(target.agentId);
         this.options.allowInvalidatedManualStopMessageEnd(target.agentId, invalidatedManagerRuntime.runtimeToken);

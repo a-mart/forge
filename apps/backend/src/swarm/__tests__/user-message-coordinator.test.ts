@@ -115,6 +115,10 @@ function createHarness() {
       getConversationHistory: vi.fn(() => history),
     },
     runtime: {
+      recoverStoppedSession: vi.fn(async (agentId: string) => {
+        order.push("runtime:recover");
+        descriptors.get(agentId)!.status = "idle";
+      }),
       executableTrust: {
         schedulePrompt: vi.fn(() => order.push("trust:schedule")),
       },
@@ -275,6 +279,25 @@ describe("InboundConversationAppender", () => {
 });
 
 describe("UserMessageCoordinator", () => {
+  it("recovers only an explicit user send to a stopped local manager, before persisting input", async () => {
+    const h = createHarness();
+    h.manager.status = "stopped";
+    await h.coordinator.handleUserMessage("Continue", { targetAgentId: h.manager.agentId });
+    expect(h.options.runtime.recoverStoppedSession).toHaveBeenCalledWith(h.manager.agentId);
+    expect(h.order.indexOf("runtime:recover")).toBeLessThan(h.order.indexOf("event:conversation"));
+  });
+
+  it.each(["worker", "archived", "collab", "terminated", "error"])("does not auto-resume %s targets", async kind => {
+    const h = createHarness();
+    const target = kind === "worker" ? h.worker : h.manager;
+    target.status = kind === "terminated" || kind === "error" ? kind : "stopped";
+    if (kind === "archived") target.archivedAt = now;
+    if (kind === "collab") target.sessionSurface = "collab";
+    await expect(h.coordinator.handleUserMessage("Continue", { targetAgentId: target.agentId })).rejects.toThrow();
+    expect(h.options.runtime.recoverStoppedSession).not.toHaveBeenCalled();
+    expect(h.emittedConversations).toEqual([]);
+  });
+
   it("validates target and content while allowing attachment-only appends", async () => {
     const harness = createHarness();
 

@@ -177,6 +177,7 @@ export interface UserMessageTargetingPort {
 }
 
 export interface UserMessageRuntimePort {
+  recoverStoppedSession(agentId: string): Promise<void>;
   executableTrust: Pick<
     ProjectExecutableTrustCoordinator,
     "schedulePrompt"
@@ -317,7 +318,13 @@ export class UserMessageCoordinator {
     if (!trimmed && attachments.length === 0) return;
 
     const sourceContext = normalizeMessageSourceContext(options?.sourceContext ?? { channel: "web" });
-    const target = this.resolveTarget(options?.targetAgentId);
+    let target = this.resolveTarget(options?.targetAgentId, true);
+    if (target.status === "stopped") {
+      // An explicit new message can retry a failed stop. The lifecycle must
+      // confirm the old writer is gone before we append or dispatch this input.
+      await this.options.runtime.recoverStoppedSession(target.agentId);
+      target = this.resolveTarget(target.agentId);
+    }
     this.options.codex.plugin.assertWorkerNotUserTargetable(target);
     const resolvedReplyTo = options?.replyTo
       ? resolveConversationReplyTarget(
@@ -419,7 +426,7 @@ export class UserMessageCoordinator {
     });
   }
 
-  private resolveTarget(targetAgentId?: string): AgentDescriptor {
+  private resolveTarget(targetAgentId?: string, allowStoppedSession = false): AgentDescriptor {
     const resolvedTargetAgentId = targetAgentId ?? this.options.targeting.resolvePreferredManagerId();
     if (!resolvedTargetAgentId) {
       throw new Error("No manager is available. Create a manager first.");
@@ -432,7 +439,9 @@ export class UserMessageCoordinator {
     this.options.targeting.assertDescriptorNotEffectivelyArchived(target);
     if (isNonRunningAgentStatus(target.status)) {
       const recoverableCodexRetry = isExternalThreadDescriptor(target) && target.status === "error";
-      if (!recoverableCodexRetry) {
+      const recoverableStoppedSession = allowStoppedSession && target.status === "stopped"
+        && target.role === "manager" && target.sessionSurface !== "collab";
+      if (!recoverableCodexRetry && !recoverableStoppedSession) {
         throw new Error(`Target agent is not running: ${resolvedTargetAgentId}`);
       }
     }

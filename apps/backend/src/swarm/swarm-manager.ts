@@ -1260,9 +1260,9 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
         getConversationHistory: (agentId) => this.getConversationHistory(agentId),
       },
       runtime: {
+        recoverStoppedSession: (agentId) => this.sessionLifecycleCoordinator.resumeStoppedSessionForUserInput(agentId),
         executableTrust: this.projectExecutableTrustCoordinator,
-        withRuntimeAdmission: (agentId, operation) =>
-          this.runtimeController.withRuntimeAdmission(agentId, operation),
+        withRuntimeAdmission: this.runtimeController.withRuntimeAdmission.bind(this.runtimeController),
         getOrCreateRuntime: (descriptor) => this.getOrCreateRuntimeForDescriptor(descriptor),
       },
       attachments: this.conversationAttachmentService,

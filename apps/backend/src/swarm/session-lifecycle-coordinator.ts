@@ -188,6 +188,7 @@ export interface SessionLifecycleCoordinatorOptions {
  * snapshots, and extension notifications.
  */
 export class SessionLifecycleCoordinator {
+  private readonly userInputRecoveries = new Map<string, Promise<void>>();
   constructor(private readonly options: SessionLifecycleCoordinatorOptions) {}
 
   async createSession(
@@ -448,6 +449,22 @@ export class SessionLifecycleCoordinator {
     this.options.goals.scheduleContinuation(
       this.getRequiredBuilderSessionDescriptor(agentId, "resume Builder sessions"),
     );
+  }
+
+  async resumeStoppedSessionForUserInput(agentId: string): Promise<void> {
+    const pending = this.userInputRecoveries.get(agentId);
+    if (pending) return pending;
+    const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "resume Builder sessions");
+    this.assertDescriptorNotEffectivelyArchived(descriptor);
+    if (descriptor.status !== "stopped") return;
+    const recovery = (async () => {
+      await this.options.runtime.beforeResumeSession(descriptor);
+      // Only the new input resumes work; do not also schedule a goal continuation.
+      if (descriptor.status === "stopped") await this.options.lifecycle.resumeSession(agentId);
+    })();
+    this.userInputRecoveries.set(agentId, recovery);
+    try { await recovery; }
+    finally { this.userInputRecoveries.delete(agentId); }
   }
 
   async deleteSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {

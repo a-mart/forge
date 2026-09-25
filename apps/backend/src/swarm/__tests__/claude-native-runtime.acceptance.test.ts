@@ -163,8 +163,9 @@ describe("Claude native process acceptance", () => {
       expect(latestUsage().usage.total).toBe(130);
       await runtime.sendMessage("CASE_STOP Start a long shell command.");
       await waitFor(() => existsSync(join(cwd, "stop-started")), "stop tool starts");
+      await runtime.sendMessage("CASE_STEER accepted steering must not run after Stop all");
       await runtime.sendMessage("CASE_CANCELLED queued work must not run", "followUp");
-      await runtime.stopInFlight({ shutdownTimeoutMs: 10_000 });
+      await runtime.stopInFlight();
       expect(exits.every(Boolean)).toBe(true);
       expect(requests.at(-1)!.raw).not.toContain("CASE_CANCELLED");
       expect(existsSync(join(cwd, "stop-survived"))).toBe(false);
@@ -172,6 +173,10 @@ describe("Claude native process acceptance", () => {
         const shellPid = Number(await readFile(join(cwd, "stop-pid"), "utf8"));
         expect(() => process.kill(shellPid, 0)).toThrow();
       }
+      runtime = await create("fork");
+      await send("CASE_AFTERSTOP Follow the new user instruction.");
+      expect(requests.at(-1)!.raw).not.toContain("CASE_CANCELLED");
+      expect(runtime.getCustomEntries(NATIVE_CLAUDE_STATE).at(-1)).toMatchObject({ ownerAgentId: "fork" });
       expect(events.map(extractCleanManagerAssistantFinalMessage).filter(Boolean).some(m => m!.text.startsWith("DONE_CASE_READ"))).toBe(true);
       for (const file of await jsonlFiles(root)) expect(await readFile(file, "utf8")).not.toContain(canary);
     } finally {

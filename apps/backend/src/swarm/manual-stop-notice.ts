@@ -1,7 +1,7 @@
 export const MANUAL_MANAGER_STOP_NOTICE = "Session stopped.";
 
 export const MANUAL_MANAGER_STOP_INCOMPLETE_NOTICE =
-  "Forge could not confirm this session stopped cleanly. Stop or start this session again to retry cleanup; new input remains blocked until cleanup succeeds.";
+  "Forge could not confirm this session stopped cleanly. Send a new message or choose Stop all to retry cleanup. New work will start only after cleanup succeeds.";
 
 export function formatWorkerStopIncompleteNotice(workerIds: string[]): string {
   const label = workerIds.length === 1
