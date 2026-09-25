@@ -98,6 +98,47 @@ describe('service-worker control-session lifecycle', () => {
     await release('idle')
   })
 
+  it('releases a lease whose debugger setup is stuck on a hung renderer instead of wedging authority work', async () => {
+    // chrome.debugger.attach succeeds browser-side, but renderer-bound setup commands never answer
+    // while the renderer main thread is hung, until Chrome detaches and fails them.
+    // scripts/hung-renderer-release-fixture.mjs proves the same behavior in real Chrome.
+    const { chrome, runtime, execute, release, detachCalls } = await harness()
+    let hung = true
+    const stuck: Array<(error: Error) => void> = []
+    const send = chrome.debugger.sendCommand.bind(chrome.debugger)
+    chrome.debugger.sendCommand = async (target, method, params) => {
+      if (hung && method === 'Page.enable') {
+        chrome.commands.push({ target, method })
+        return new Promise((_resolve, reject) => { stuck.push(reject) })
+      }
+      return send(target, method, params)
+    }
+    const detach = chrome.debugger.detach.bind(chrome.debugger)
+    chrome.debugger.detach = async (target) => {
+      await detach(target)
+      for (const reject of stuck.splice(0)) reject(new Error('Detached while handling command.'))
+    }
+
+    const operation = execute('hung', 'evaluate-hung')
+    await vi.waitFor(() => expect(stuck).toHaveLength(1))
+
+    const released = await Promise.race([
+      release('operation-failed'),
+      new Promise<'wedged'>((resolve) => setTimeout(() => resolve('wedged'), 500)),
+    ])
+    expect(released).toMatchObject({ releasedTabIds: [7] })
+    await expect(operation).resolves.toMatchObject({ ok: false })
+    expect(chrome.attached).toEqual(new Set())
+    expect(detachCalls()).toBe(1)
+    expect(runtime.diagnostics()).toMatchObject({ authorities: [], debuggerMetrics: { activeAttachments: 0 } })
+
+    // Authority work is not wedged: the same tab can be leased and driven again.
+    hung = false
+    await acquire(runtime, 7, 'lease-2', 2)
+    await expect(runEvaluate(runtime, 7, 'lease-2', 2, 'thawed')).resolves.toMatchObject({ ok: true, result: { value: 'thawed' } })
+    await releaseOwner(runtime, 'lease-2', 2, 'turn-ended')
+  })
+
   it('revokes and detaches after a bounded executor failure instead of retaining an ambiguous session', async () => {
     const { chrome, runtime, execute, release } = await harness({
       evaluate: async () => ({
