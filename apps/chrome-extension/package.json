@@ -6,6 +6,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "fixture:chrome": "node scripts/isolated-chrome-fixture.mjs",
+    "fixture:hung-renderer": "node scripts/hung-renderer-release-fixture.mjs",
     "identity": "node scripts/verify-identity.mjs",
     "typecheck": "node scripts/ensure-protocol.mjs && tsc --noEmit",
     "test": "node scripts/ensure-protocol.mjs && vitest run"

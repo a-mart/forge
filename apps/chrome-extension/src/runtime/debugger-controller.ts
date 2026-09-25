@@ -206,7 +206,9 @@ export class DebuggerController {
   private readonly navigationGenerations = new Map<number, number>()
   private readonly pendingCommands = new Map<number, Set<Promise<unknown>>>()
   private readonly attachTasks = new Map<number, Promise<void>>()
+  private readonly physicalAttaches = new Map<number, Promise<boolean>>()
   private readonly closedDuringAttach = new Set<number>()
+  private readonly cancelledAttaches = new Set<number>()
   private readonly resetTasks = new Map<number, Promise<void>>()
 
   constructor(
@@ -264,12 +266,16 @@ export class DebuggerController {
   async attach(tabId: number): Promise<void> {
     if (this.attachTasks.has(tabId) || this.state(tabId) !== 'UNATTACHED') throw new Error(`debugger is ${this.state(tabId)}`)
     this.closedDuringAttach.delete(tabId)
+    this.cancelledAttaches.delete(tabId)
     const task = this.attachNow(tabId)
     this.attachTasks.set(tabId, task)
     try {
       await task
     } finally {
-      if (this.attachTasks.get(tabId) === task) this.attachTasks.delete(tabId)
+      if (this.attachTasks.get(tabId) === task) {
+        this.attachTasks.delete(tabId)
+        this.physicalAttaches.delete(tabId)
+      }
     }
   }
 
@@ -282,7 +288,9 @@ export class DebuggerController {
     let didAttach = false
     try {
       try {
-        await this.debuggerApi.attach(target, '1.3')
+        const physicalAttach = this.debuggerApi.attach(target, '1.3')
+        this.physicalAttaches.set(tabId, physicalAttach.then(() => true, () => false))
+        await physicalAttach
       } catch (error) {
         if (isDebuggerAttachConflict(error)) {
           throw new DebuggerAttachConflictError(error instanceof Error ? error.message : String(error))
@@ -329,6 +337,10 @@ export class DebuggerController {
       if (!didAttach) {
         this.states.delete(tabId)
         throw error
+      }
+      // A cancelling reset owns the physical detach that settled this setup.
+      if (this.cancelledAttaches.has(tabId)) {
+        throw new DebuggerIdentityLossError('debugger attachment was released before the control session could adopt it')
       }
       this.states.set(tabId, 'DETACHING')
       try {
@@ -561,16 +573,27 @@ export class DebuggerController {
   }
 
   private assertAttachContinuing(tabId: number): void {
-    if (this.state(tabId) !== 'ATTACHING' || this.closedDuringAttach.has(tabId)) {
+    if (this.state(tabId) !== 'ATTACHING' || this.closedDuringAttach.has(tabId) || this.cancelledAttaches.has(tabId)) {
       throw new Error('debugger attachment was cancelled before setup completed')
     }
   }
 
   private async resetNow(tabId: number): Promise<void> {
-    await this.attachTasks.get(tabId)?.catch(() => undefined)
+    const attach = this.attachTasks.get(tabId)
+    if (attach !== undefined) await this.cancelAttach(tabId, attach)
     const pending = [...(this.pendingCommands.get(tabId) ?? [])]
     await this.detach(tabId)
     await Promise.allSettled(pending)
+  }
+
+  /**
+   * Setup commands are renderer-bound and wait indefinitely while the renderer main thread is hung.
+   * Only a physical detach makes Chrome settle them, so reset cancels setup and detaches first.
+   */
+  private async cancelAttach(tabId: number, attach: Promise<void>): Promise<void> {
+    this.cancelledAttaches.add(tabId)
+    if (await this.physicalAttaches.get(tabId) === true && this.state(tabId) === 'ATTACHING') await this.detach(tabId)
+    await attach.catch(() => undefined)
   }
 
   private trackCommand(tabId: number, command: Promise<unknown>): Promise<unknown> {
