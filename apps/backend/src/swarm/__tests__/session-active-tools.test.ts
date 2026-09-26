@@ -6,6 +6,15 @@ const manager = descriptor({ agentId: "session-1", role: "manager", managerId: "
 const worker = descriptor({ agentId: "worker-1", role: "worker", managerId: "session-1" });
 
 describe("SessionActiveToolsState", () => {
+  it("retains background state through output updates and reconnect until actual completion", () => {
+    const state = new SessionActiveToolsState();
+    state.recordToolCall(tool({ kind: "tool_execution_start" }));
+    state.recordToolCall(tool({ kind: "tool_execution_update", executionState: "background" }));
+    state.recordToolCall(tool({ kind: "tool_execution_update", text: "more output" }));
+    expect(state.buildSnapshotEvent("session-1").activeTools).toMatchObject([{ executionState: "background" }]);
+    state.recordToolCall(tool({ kind: "tool_execution_end" }));
+    expect(state.getSnapshot("session-1")).toEqual([]);
+  });
   it("tracks start, update, duplicate start, and terminal end events per session", () => {
     const state = new SessionActiveToolsState();
 

@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 import { ManagerToolActivityState } from "../manager-tool-activity.js";
 
 describe("ManagerToolActivityState", () => {
+  it("preserves the projected background count across steering and clears it on terminal cleanup", () => {
+    const state = new ManagerToolActivityState();
+    state.activate("manager", "first");
+    expect(state.setBackgroundCount("manager", 2)).toMatchObject({ backgroundCount: 2, revision: 2 });
+    expect(state.setBackgroundCount("manager", 2)).toBeNull();
+    expect(state.activate("manager", "steer")).toMatchObject({ backgroundCount: 2 });
+    expect(state.buildSnapshotEvent("manager")).toMatchObject({ backgroundCount: 2 });
+    expect(state.setBackgroundCount("manager", 1)).toMatchObject({ backgroundCount: 1 });
+    expect(state.clear("manager")).not.toHaveProperty("backgroundCount");
+  });
   it("counts distinct starts only for the authoritative manager turn and emits no tool detail", () => {
     const state = new ManagerToolActivityState();
 

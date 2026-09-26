@@ -243,6 +243,7 @@ export interface CliActiveToolSnapshotEntry {
   startedAt?: string
   updatedAt?: string
   isError?: boolean
+  executionState?: 'background'
 }
 
 export interface SessionActiveToolsSnapshotEvent {

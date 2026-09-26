@@ -310,6 +310,13 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
       await this.options.callbacks.onRuntimeError?.(this.descriptor.agentId, { phase: "prompt_start", message: error.message });
     } else compaction?.resolve({});
     this.turnError = undefined;
+    // Claude's result closes a model reply, not necessarily the work. Keep the
+    // Forge turn active until tracked commands settle and Claude handles their
+    // notifications. Steering stays available; worker completion must wait too.
+    if (this.mapper.hasBackgroundCommands()) {
+      await this.publishStatus();
+      return;
+    }
     this.turnOpen = false;
     this.status = this.sent.size ? "streaming" : "idle";
     await this.emit({ type: "agent_end" }); await this.publishStatus();

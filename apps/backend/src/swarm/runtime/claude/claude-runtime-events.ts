@@ -10,6 +10,8 @@ export class ClaudeRuntimeEvents {
   private readonly background = new Map<string, string>();
   private readonly taskTools = new Map<string, string>();
 
+  hasBackgroundCommands(): boolean { return this.background.size > 0; }
+
   foregroundCommands(): string[] {
     return [...this.tools].filter(([id, name]) => name === "Bash" && !this.background.has(id)).map(([id]) => id);
   }

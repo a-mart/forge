@@ -69,11 +69,15 @@ describe("Claude command steering acceptance", () => {
       expect(runtime.getPendingCount()).toBe(0);
       expect(events.some(e => e.type === "tool_execution_update" && JSON.stringify(e.partialResult).includes("running_in_background"))).toBe(true);
       expect(events.some(e => e.type === "tool_execution_end" && e.toolCallId === "toolu_long_command")).toBe(false);
+      expect(runtime.getStatus()).toBe("streaming");
+      expect(events.some(e => e.type === "agent_end")).toBe(false);
       await writeFile(join(cwd, "release"), "release");
       await waitFor(() => existsSync(join(cwd, "completed")), "original command completion");
       await waitFor(() => frames.some(f => f.type === "system" && f.subtype === "task_notification" && f.status === "completed"), "background completion notification");
       expect(existsSync(join(cwd, "completed"))).toBe(true);
       await waitFor(() => events.some(e => e.type === "tool_execution_end" && e.toolCallId === "toolu_long_command"), "Forge background settlement");
+      await waitFor(() => runtime!.getStatus() === "idle", "completion reply settles the session");
+      expect(events.filter(e => e.type === "agent_end")).toHaveLength(1);
       expect(errors).toEqual([]);
       // Emit only structural evidence, never model requests or environment data.
       console.log(JSON.stringify({ steeringBeforeCompletion: true, executions: 1, kind, steeringMs: Date.now() - startedSteering,

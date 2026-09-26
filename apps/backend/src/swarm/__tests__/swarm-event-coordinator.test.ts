@@ -60,6 +60,19 @@ function setup(initialDescriptors: AgentDescriptor[] = [manager()]) {
 }
 
 describe("SwarmEventCoordinator", () => {
+  it("projects background work into Builder counts without another actor's tasks or raw tool detail", () => {
+    const { coordinator, emitted } = setup();
+    coordinator.activateManagerToolActivity("manager-1", "turn");
+    coordinator.emitSessionActiveToolsSnapshot({ type: "session_active_tools_snapshot", sessionAgentId: "manager-1", activeTools: [
+      { sessionAgentId: "manager-1", actorAgentId: "manager-1", toolCallId: "private-id", text: "private-command", executionState: "background" },
+      { sessionAgentId: "manager-1", actorAgentId: "worker-1", executionState: "background" },
+    ] });
+    const activity = emitted.filter(e => e.name === "manager_tool_activity").at(-1)?.event;
+    expect(activity).toMatchObject({ backgroundCount: 1 });
+    expect(JSON.stringify(activity)).not.toContain("private");
+    coordinator.emitSessionActiveToolsSnapshot({ type: "session_active_tools_snapshot", sessionAgentId: "manager-1", activeTools: [] });
+    expect(emitted.filter(e => e.name === "manager_tool_activity").at(-1)?.event).not.toHaveProperty("backgroundCount");
+  });
   it("coalesces agent snapshots and advances the version once", async () => {
     const { coordinator, emitted } = setup();
 

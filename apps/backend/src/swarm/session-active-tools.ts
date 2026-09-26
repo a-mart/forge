@@ -25,6 +25,7 @@ export class SessionActiveToolsState {
 
     const existingByKey = this.activeToolsBySessionAgentId.get(sessionAgentId) ?? new Map<string, CliActiveToolSnapshotEntry>();
     const existing = existingByKey.get(key);
+    const executionState = event.executionState ?? existing?.executionState;
     existingByKey.set(key, {
       sessionAgentId,
       actorAgentId: event.actorAgentId,
@@ -35,6 +36,7 @@ export class SessionActiveToolsState {
       startedAt: event.kind === "tool_execution_start" ? event.timestamp : existing?.startedAt ?? event.timestamp,
       updatedAt: event.timestamp,
       ...(event.isError !== undefined ? { isError: event.isError } : {}),
+      ...(executionState ? { executionState } : {}),
     });
     this.activeToolsBySessionAgentId.set(sessionAgentId, existingByKey);
     return this.buildSnapshotEvent(sessionAgentId);

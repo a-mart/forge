@@ -43,6 +43,58 @@ const result = (ids: string[], fields = {}) => ({ type: "result", subtype: "succ
   duration_ms: 5, duration_api_ms: 4, total_cost_usd: 0.1, usage: { input_tokens: 5, output_tokens: 3 }, modelUsage: {}, ...fields });
 
 describe("Claude native lifecycle", () => {
+  it("keeps background work active across replies and completes once after all commands and the follow-on reply", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-background-lifecycle-"));
+    const onEnd = vi.fn(); const f = await fixture(root, { onEnd });
+    try {
+      const first = await f.runtime.sendMessage("work"); await f.input.next();
+      for (const id of ["one", "two"]) {
+        await f.emit({ type: "assistant", user_message_uuids: [first.deliveryId], message: { content: [{ type: "tool_use", id, name: "Bash", input: {} }] } });
+        await f.emit({ type: "system", subtype: "task_started", task_id: id, tool_use_id: id, is_backgrounded: true });
+      }
+      await f.emit(result([first.deliveryId], { result: "Commands still running" }));
+      expect(f.runtime.getStatus()).toBe("streaming");
+      expect(onEnd).not.toHaveBeenCalled();
+      expect(f.events.filter(e => e.type === "agent_end")).toHaveLength(0);
+      // Reply publication remains normal; agent_end, not a text reply, settles work.
+      expect(f.events.filter(e => e.type === "message_end").at(-1)).toMatchObject({ message: { stopReason: "stop" } });
+      await expect(f.runtime.compact()).rejects.toThrow("finish before compacting");
+      const follow = await f.runtime.sendMessage("afterward", "followUp");
+      expect(follow.acceptedMode).toBe("followUp");
+      const steer = await f.runtime.sendMessage("status"); await f.input.next();
+      expect(steer.acceptedMode).toBe("steer");
+      await f.emit(result([steer.deliveryId]));
+      expect(f.runtime.getPendingCount()).toBe(1);
+      for (const [id, status] of [["one", "completed"], ["two", "failed"]]) {
+        await f.emit({ type: "system", subtype: "task_notification", task_id: id, tool_use_id: id, status, summary: status });
+        expect(f.runtime.getStatus()).toBe("streaming");
+        expect(onEnd).not.toHaveBeenCalled();
+      }
+      await f.emit(result([]));
+      expect(onEnd).toHaveBeenCalledOnce();
+      expect(f.events.filter(e => e.type === "agent_end")).toHaveLength(1);
+      expect((await f.input.next()).value.uuid).toBe(follow.deliveryId);
+      await f.emit(result([follow.deliveryId]));
+      expect(f.runtime.getStatus()).toBe("idle");
+      expect(f.runtime.getPendingCount()).toBe(0);
+    } finally { await f.runtime.stopInFlight(); await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("cancels background work on Stop all even after the native reply has ended", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-background-stop-")); const f = await fixture(root);
+    try {
+      const first = await f.runtime.sendMessage("work"); await f.input.next();
+      await f.emit({ type: "assistant", message: { content: [{ type: "tool_use", id: "shell", name: "Bash", input: {} }] } });
+      await f.emit({ type: "system", subtype: "task_started", task_id: "task", tool_use_id: "shell", is_backgrounded: true });
+      await f.emit(result([first.deliveryId]));
+      expect(f.events.filter(e => e.type === "agent_end")).toHaveLength(0);
+      await f.runtime.stopInFlight();
+      expect(f.runtime.getStatus()).toBe("idle");
+      expect(f.events.filter(e => e.type === "agent_end")).toHaveLength(1);
+      expect(f.events).toContainEqual(expect.objectContaining({ type: "tool_execution_end", toolCallId: "shell", result: { status: "cancelled" } }));
+    } finally { await f.runtime.stopInFlight(); await rm(root, { recursive: true, force: true }); }
+  });
+
   it("bounds native command waits without changing Forge MCP timeouts or short explicit waits", async () => {
     const root = await mkdtemp(join(tmpdir(), "forge-command-policy-")); const f = await fixture(root);
     try {

@@ -22,6 +22,16 @@ afterEach(() => {
 })
 
 describe('ManagerToolActivityIndicator', () => {
+  it('shows background commands alongside queued steering and clears them on completion', () => {
+    const activity = { type: 'manager_tool_activity' as const, sessionAgentId: 'manager', revision: 1, toolCount: 0, backgroundCount: 2 }
+    act(() => root.render(createElement(ManagerToolActivityIndicator, { activity, pendingCount: 1 })))
+    expect(container.textContent).toContain('2 commands running in background')
+    expect(container.textContent).toContain('1 message waiting for agent')
+    act(() => root.render(createElement(ManagerToolActivityIndicator, { activity: { ...activity, backgroundCount: 1 } })))
+    expect(container.textContent).toContain('1 command running in background')
+    act(() => root.render(createElement(ManagerToolActivityIndicator, { activity: { ...activity, backgroundCount: 0 } })))
+    expect(container.textContent).toBe('')
+  })
   it('renders the latest count and normalized tool name at the live conversation edge', () => {
     act(() => {
       root.render(createElement(ManagerToolActivityIndicator, {

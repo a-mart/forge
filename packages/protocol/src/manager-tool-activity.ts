@@ -9,6 +9,8 @@ export interface ManagerToolActivityEvent {
   revision: number
   /** Distinct manager-owned tool starts in the active turn. */
   toolCount: number
+  /** Manager-owned commands still running after yielding to the native agent. Absent means zero. */
+  backgroundCount?: number
   /** Normalized, bounded name of the most recently started manager tool. */
   currentToolName?: string
 }
