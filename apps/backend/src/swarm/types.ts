@@ -161,6 +161,8 @@ export interface AgentDescriptor {
    */
   workerParentContext?: WorkerParentContext;
   projectAgent?: ProjectAgentInfo;
+  /** Private manager-only peer links created when the user references another session. */
+  sessionReferenceAgentIds?: string[];
   agentCreatorResult?: AgentCreatorResult;
   webSearch?: boolean;
   externalThread?: ExternalThreadInfo;

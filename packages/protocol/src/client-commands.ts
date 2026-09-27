@@ -74,6 +74,8 @@ export type ClientCommand =
        * entry instead of appending a duplicate (multi-writer dedup).
        */
       clientRequestId?: string
+      /** Manager sessions referenced in the text (dragged in as [@name]); linked as peers. */
+      sessionReferenceAgentIds?: string[]
     }
   | CollaborationBootstrapCommand
   | CollaborationSubscribeChannelCommand

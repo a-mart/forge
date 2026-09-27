@@ -42,6 +42,7 @@ import type {
   RequestedDeliveryMode,
   SendMessageReceipt,
 } from "./types.js";
+import { linkSessionReferences, type SessionReferenceDependencies } from "./session-references.js";
 
 type ManagerDescriptor = AgentDescriptor & { role: "manager"; profileId: string };
 type CodexClassification = CodexUserMessageRoute;
@@ -83,6 +84,8 @@ export interface HandleUserMessageOptions {
   replyTo?: ConversationReplyTargetInput;
   collaborationAuthor?: CollaborationAuthor;
   clientRequestId?: string;
+  /** Manager sessions the user referenced in this message; linked as peers of the target. */
+  sessionReferenceAgentIds?: string[];
 }
 
 export interface PreparedInboundConversationPayload {
@@ -213,6 +216,7 @@ export interface UserMessageCoordinatorOptions {
     "compact" | "maybeRunCortexConsolidationFromIncomingMessage"
   >;
   projectAgents: Pick<ProjectAgentCoordinator, "preflightRuntime">;
+  sessionReferences: SessionReferenceDependencies;
   goals: Pick<SessionGoalCoordinator, "noteUserTurn">;
   turns: Pick<
     TurnContextCoordinator<
@@ -244,6 +248,7 @@ interface RuntimeDispatchInput {
   codexPluginDelegationContext?: CodexPluginDelegationTurnContext;
   codexPluginRetryAuthorizationContext?: CodexPluginRetryAuthorizationContext;
   replyTo?: ConversationReplyTarget;
+  sessionReferenceGuidance?: string;
 }
 
 /**
@@ -378,6 +383,11 @@ export class UserMessageCoordinator {
     // stop operation waiting until its runtime dispatch is durably accepted.
     await this.options.runtime.withRuntimeAdmission(target.agentId, async () => {
       await this.options.goals.noteUserTurn(target);
+      const sessionReferenceGuidance = await linkSessionReferences(
+        this.options.sessionReferences,
+        target,
+        options?.sessionReferenceAgentIds,
+      );
 
       const codexClassification = target.role === "manager"
         ? this.options.codex.plugin.classifyAndPreflightUserTurn(
@@ -422,6 +432,7 @@ export class UserMessageCoordinator {
         codexPluginDelegationContext: preparedCodexTurn.delegationContext,
         codexPluginRetryAuthorizationContext: preparedCodexTurn.retryAuthorizationContext,
         replyTo: resolvedReplyTo,
+        sessionReferenceGuidance,
       });
     });
   }
@@ -585,7 +596,9 @@ export class UserMessageCoordinator {
       input.replyTo,
     );
     const runtimeVisibleMessage = this.options.codex.plugin.appendManagerTurnGuidance(
-      managerVisibleMessage,
+      input.sessionReferenceGuidance
+        ? `${managerVisibleMessage}\n\n${input.sessionReferenceGuidance}`
+        : managerVisibleMessage,
       input.codexPluginDelegationContext,
       input.codexPluginRetryAuthorizationContext,
     );

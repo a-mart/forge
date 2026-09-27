@@ -47,6 +47,16 @@ export function parseConversationCommand(maybe: ClientCommandCandidate): ParsedC
       return fail("user_message.clientRequestId must be a non-empty string of at most 128 characters when provided");
     }
 
+    const sessionReferenceAgentIds = (maybe as { sessionReferenceAgentIds?: unknown }).sessionReferenceAgentIds;
+    if (
+      sessionReferenceAgentIds !== undefined &&
+      (!Array.isArray(sessionReferenceAgentIds) ||
+        sessionReferenceAgentIds.length > 20 ||
+        !sessionReferenceAgentIds.every((id) => typeof id === "string" && id.length > 0 && id.length <= 256))
+    ) {
+      return fail("user_message.sessionReferenceAgentIds must be an array of at most 20 non-empty agent ids when provided");
+    }
+
     return ok({
       type: "user_message",
       text: normalizedText,
@@ -55,6 +65,7 @@ export function parseConversationCommand(maybe: ClientCommandCandidate): ParsedC
       delivery: maybe.delivery,
       replyTo,
       clientRequestId,
+      sessionReferenceAgentIds: sessionReferenceAgentIds?.length ? sessionReferenceAgentIds : undefined,
     });
   }
 

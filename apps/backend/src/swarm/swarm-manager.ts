@@ -77,10 +77,7 @@ import { SessionPlanCoordinator } from "./planning/session-plan-coordinator.js";
 import { SessionActiveToolsState } from "./session-active-tools.js"; import { ManagerToolActivityState } from "./manager-tool-activity.js";
 import { createModelChangeNoticeEvent } from "./runtime/model-change-continuity.js";
 import { ConversationAttachmentService } from "./conversation-attachment-service.js";
-import {
-  InboundConversationAppender,
-  UserMessageCoordinator,
-} from "./user-message-coordinator.js";
+import { InboundConversationAppender, UserMessageCoordinator } from "./user-message-coordinator.js";
 import { AssistantOutputRouter } from "./assistant-output-router.js";
 import type {
   RuntimeAcquisitionRequirements, RuntimeCreationOptions,
@@ -1275,6 +1272,7 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       },
       knowledge: this.knowledgeMemoryCoordinator,
       projectAgents: this.projectAgentCoordinator,
+      sessionReferences: { descriptors: this.descriptors, profiles: this.profiles, saveStore: () => this.descriptorStoreAdapter.saveStore() },
       goals,
       turns: this.turnContextCoordinator,
       observability: this.observabilityCoordinator,

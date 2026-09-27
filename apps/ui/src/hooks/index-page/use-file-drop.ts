@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent, type RefObject } from 'react'
 import type { MessageInputHandle } from '@/components/chat/MessageInput'
+import { hasSessionReferenceDrag, readSessionReferenceDrag } from '@/lib/session-reference-drag'
 import type { ActiveView } from './use-route-state'
 
 interface UseFileDropOptions {
   activeView: ActiveView
   messageInputRef: RefObject<MessageInputHandle | null>
+  /** Accept sidebar session drags as composer references (local manager chats only). */
+  acceptSessionReferences?: boolean
 }
 
 export function useFileDrop({
   activeView,
   messageInputRef,
+  acceptSessionReferences = false,
 }: UseFileDropOptions): {
   isDraggingFiles: boolean
   handleDragEnter: (event: DragEvent<HTMLDivElement>) => void
@@ -29,39 +33,46 @@ export function useFileDrop({
     setIsDraggingFiles(false)
   }, [activeView])
 
+  const isAcceptedDrag = useCallback(
+    (dataTransfer: DataTransfer | null | undefined) =>
+      Boolean(dataTransfer?.types.includes('Files')) ||
+      (acceptSessionReferences && hasSessionReferenceDrag(dataTransfer)),
+    [acceptSessionReferences],
+  )
+
   const handleDragEnter = useCallback((event: DragEvent<HTMLDivElement>) => {
     if (activeView !== 'chat') {
       return
     }
 
-    if (!event.dataTransfer?.types.includes('Files')) {
+    if (!isAcceptedDrag(event.dataTransfer)) {
       return
     }
 
     event.preventDefault()
     dragDepthRef.current += 1
     setIsDraggingFiles(true)
-  }, [activeView])
+  }, [activeView, isAcceptedDrag])
 
   const handleDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
     if (activeView !== 'chat') {
       return
     }
 
-    if (!event.dataTransfer?.types.includes('Files')) {
+    if (!isAcceptedDrag(event.dataTransfer)) {
       return
     }
 
     event.preventDefault()
     event.dataTransfer.dropEffect = 'copy'
-  }, [activeView])
+  }, [activeView, isAcceptedDrag])
 
   const handleDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
     if (activeView !== 'chat') {
       return
     }
 
-    if (!event.dataTransfer?.types.includes('Files')) {
+    if (!isAcceptedDrag(event.dataTransfer)) {
       return
     }
 
@@ -71,14 +82,14 @@ export function useFileDrop({
     if (dragDepthRef.current === 0) {
       setIsDraggingFiles(false)
     }
-  }, [activeView])
+  }, [activeView, isAcceptedDrag])
 
   const handleDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
     if (activeView !== 'chat') {
       return
     }
 
-    if (!event.dataTransfer?.types.includes('Files')) {
+    if (!isAcceptedDrag(event.dataTransfer)) {
       return
     }
 
@@ -86,13 +97,21 @@ export function useFileDrop({
     dragDepthRef.current = 0
     setIsDraggingFiles(false)
 
+    const sessionReference = hasSessionReferenceDrag(event.dataTransfer)
+      ? readSessionReferenceDrag(event.dataTransfer)
+      : null
+    if (sessionReference) {
+      messageInputRef.current?.addSessionReference(sessionReference)
+      return
+    }
+
     const files = Array.from(event.dataTransfer.files ?? [])
     if (files.length === 0) {
       return
     }
 
     void messageInputRef.current?.addFiles(files)
-  }, [activeView, messageInputRef])
+  }, [activeView, isAcceptedDrag, messageInputRef])
 
   return {
     isDraggingFiles,

@@ -18,6 +18,7 @@ import {
   getProjectAgentPublicName,
 } from "./agents/project-agents.js";
 import { normalizeArchetypeId } from "./prompt-registry.js";
+import { areSessionsReferenced } from "./session-references.js";
 import type { ExternalProjectAgentDeliveryAuthorization } from "./project-agent-sharing-service.js";
 import type { PlanStepAssignment } from "./planning/plan-usage-tracker.js";
 import type { SecureWorkerLifecyclePort } from "./secure-sessions/secure-session-lifecycle-port.js";
@@ -260,6 +261,8 @@ export interface AgentMessageDispatcherOptions<TCodexGate> {
 
 interface ProjectAgentDeliveryAuthorization {
   allowCrossProfile: boolean;
+  /** User-created session reference: a trusted peer, never an external project-agent turn. */
+  sessionReference?: boolean;
   allowContactReplyTarget?: boolean;
   externalAuthorization?: ExternalProjectAgentDeliveryAuthorization;
 }
@@ -466,10 +469,11 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
     const target = input.target as AgentDescriptor & { role: "manager" };
     const senderProfileId = sender.profileId ?? sender.agentId;
     const sourceProjectName = this.options.profiles.get(senderProfileId)?.displayName ?? senderProfileId;
+    const external = input.authorization.allowCrossProfile && !input.authorization.sessionReference;
     const projectAgentContext = {
       fromAgentId: sender.agentId,
       fromDisplayName: getProjectAgentPublicName(sender),
-      external: input.authorization.allowCrossProfile,
+      external,
       fromProfileId: senderProfileId,
       fromProjectName: sourceProjectName,
     };
@@ -490,7 +494,7 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       metadata: {
         fromAgentId: sender.agentId,
         targetAgentId: target.agentId,
-        projectAgentExternal: input.authorization.allowCrossProfile,
+        projectAgentExternal: external,
       },
     });
     const { rollback } = await this.options.turns.enqueue(target.agentId, {
@@ -519,7 +523,7 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
           delivery: input.delivery,
           allowCrossProfile: input.authorization.allowCrossProfile,
           allowContactReplyTarget: input.authorization.allowContactReplyTarget,
-          external: input.authorization.allowCrossProfile,
+          external,
           sourceProfileId: senderProfileId,
           sourceProjectName,
           runtimeMessageText: runtimeText,
@@ -535,7 +539,7 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
     this.options.observability.completeRuntimeInput(observabilityInput, receipt, {
       fromAgentId: sender.agentId,
       targetAgentId: target.agentId,
-      projectAgentExternal: input.authorization.allowCrossProfile,
+      projectAgentExternal: external,
     });
     this.options.observability.recordAgentDelivery({
       sender,
@@ -549,7 +553,7 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       source: "project_agent",
       parentTool: this.options.observability.resolveParentTool(input.sendOptions?.observabilityParentTool),
       metadata: {
-        projectAgentExternal: input.authorization.allowCrossProfile,
+        projectAgentExternal: external,
         fromProfileId: senderProfileId,
         targetProfileId: target.profileId,
       },
@@ -1037,6 +1041,13 @@ export class AgentMessageDispatcher<TCodexGate = unknown> {
       (target.projectAgent !== undefined || target.creatorAgentId === sender.agentId);
     if (localDelivery) {
       return { allowCrossProfile: false };
+    }
+    if (areSessionsReferenced(sender, target)) {
+      return {
+        allowCrossProfile: senderProfileId !== targetProfileId,
+        allowContactReplyTarget: true,
+        sessionReference: true,
+      };
     }
     if (senderProfileId === targetProfileId) {
       return null;

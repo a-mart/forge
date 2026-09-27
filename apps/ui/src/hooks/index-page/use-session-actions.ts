@@ -114,7 +114,7 @@ export function useSessionActions({
   const handleSend = (
     text: string,
     attachments?: ConversationAttachment[],
-    options?: { replyTo?: ConversationReplyTargetInput },
+    options?: { replyTo?: ConversationReplyTargetInput; sessionReferenceAgentIds?: string[] },
   ) => {
     if (!activeAgentId) {
       return false
@@ -137,6 +137,7 @@ export function useSessionActions({
       delivery: isActiveManager ? 'steer' : isLoading ? 'steer' : 'auto',
       attachments,
       replyTo: options?.replyTo,
+      sessionReferenceAgentIds: options?.sessionReferenceAgentIds,
     })
     return true
   }

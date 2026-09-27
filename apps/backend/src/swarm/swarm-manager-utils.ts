@@ -465,6 +465,18 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
     return 'internalWorkerKind must be "codex_plugin" when provided';
   }
 
+  if (value.sessionReferenceAgentIds !== undefined) {
+    if (value.role !== "manager") {
+      return "sessionReferenceAgentIds is only supported on manager descriptors";
+    }
+    if (
+      !Array.isArray(value.sessionReferenceAgentIds) ||
+      !value.sessionReferenceAgentIds.every(isNonEmptyString)
+    ) {
+      return "sessionReferenceAgentIds must be an array of non-empty strings";
+    }
+  }
+
   if (value.workerParentContext !== undefined) {
     if (value.role !== "worker") {
       return "workerParentContext is only supported on worker descriptors";

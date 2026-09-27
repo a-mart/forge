@@ -2003,6 +2003,7 @@ export function BuilderSurface({
   } = useFileDrop({
     activeView,
     messageInputRef,
+    acceptSessionReferences: !isRemoteOriginActive && isActiveManager,
   })
 
   useEffect(() => {

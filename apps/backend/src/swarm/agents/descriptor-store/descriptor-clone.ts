@@ -110,6 +110,9 @@ export function cloneDescriptorForPersistence(descriptor: AgentDescriptor): Agen
     cli: cloneCliSessionMetadata(descriptor),
     externalThread: descriptor.externalThread ? cloneExternalThread(descriptor.externalThread) : undefined,
     workerParentContext: cloneWorkerParentContext(descriptor.workerParentContext),
+    sessionReferenceAgentIds: descriptor.sessionReferenceAgentIds
+      ? [...descriptor.sessionReferenceAgentIds]
+      : undefined,
     ...(descriptor.agentCreatorResult !== undefined
       ? {
           agentCreatorResult: {
@@ -135,6 +138,7 @@ export function cloneDescriptorForPublic(descriptor: AgentDescriptor): AgentDesc
     sessionSystemPrompt: _sessionSystemPrompt,
     internalWorkerKind: _internalWorkerKind,
     workerParentContext: _workerParentContext,
+    sessionReferenceAgentIds: _sessionReferenceAgentIds,
     delegationFallbackModel: _delegationFallbackModel,
     delegationCapabilityEscalationRouteId: _delegationCapabilityEscalationRouteId,
     ...publicDescriptor

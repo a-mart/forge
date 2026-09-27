@@ -21,6 +21,8 @@ export type { SecureSessionPickerConfig } from '../secure-session/types'
 
 export interface MessageInputSendOptions {
   replyTo?: ConversationReplyTargetInput
+  /** Manager sessions dropped into the composer whose [@label] tokens remain in the text. */
+  sessionReferenceAgentIds?: string[]
 }
 
 export interface SessionModelPickerConfig {
@@ -122,6 +124,8 @@ export interface MessageInputHandle {
   addTerminalContext: (context: import('@/components/terminal/TerminalViewport').TerminalSelectionContext) => void
   /** Restore the last successfully cleared submission (text + attachments). Returns true if restoration happened. */
   restoreLastSubmission: () => boolean
+  /** Insert a dropped sidebar session as a [@label] mention that links it as a peer on send. */
+  addSessionReference: (reference: import('@/lib/session-reference-drag').SessionReferenceDragData) => void
 }
 
 export const TEXTAREA_MAX_HEIGHT = 186

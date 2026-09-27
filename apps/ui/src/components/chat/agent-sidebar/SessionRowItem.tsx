@@ -11,6 +11,7 @@ import {
 import React from 'react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { isSessionRunning } from '@/lib/agent-hierarchy'
+import { writeSessionReferenceDrag } from '@/lib/session-reference-drag'
 import { cn } from '@/lib/utils'
 import { SessionContextMenu } from './SessionContextMenu'
 import { SessionStatusDot, HighlightedText, SidebarCompactionBadge, SidebarStreamingWorkerBadge } from './shared'
@@ -237,6 +238,9 @@ export const SessionRowItem = React.memo(function SessionRowItem({
                 <TooltipTrigger asChild>
                   <button
                     type="button"
+                    draggable
+                    onDragStart={(event) =>
+                      writeSessionReferenceDrag(event.dataTransfer, { agentId: sessionAgent.agentId, label })}
                     onClick={() => onSelect(sessionAgent.agentId)}
                     className={cn(
                       'flex min-w-0 flex-1 items-center gap-1.5 text-left',

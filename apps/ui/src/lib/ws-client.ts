@@ -711,7 +711,13 @@ export class ManagerWsClient {
 
   sendUserMessage(
     text: string,
-    options?: { agentId?: string; delivery?: DeliveryMode; attachments?: ConversationAttachment[]; replyTo?: ConversationReplyTargetInput },
+    options?: {
+      agentId?: string
+      delivery?: DeliveryMode
+      attachments?: ConversationAttachment[]
+      replyTo?: ConversationReplyTargetInput
+      sessionReferenceAgentIds?: string[]
+    },
   ): void {
     const trimmed = text.trim()
     const attachments = normalizeConversationAttachments(options?.attachments)
@@ -783,6 +789,7 @@ export class ManagerWsClient {
         agentId,
         delivery: options?.delivery,
         clientRequestId,
+        sessionReferenceAgentIds: options?.sessionReferenceAgentIds,
       }),
     )
   }

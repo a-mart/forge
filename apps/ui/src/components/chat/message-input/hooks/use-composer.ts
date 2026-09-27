@@ -22,6 +22,7 @@ interface UseComposerOptions {
   setAttachedFilesWithDraft: (files: PendingAttachment[]) => void
   replyTarget?: ConversationReplyTargetInput | null
   onAccepted?: () => void
+  resolveSessionReferenceAgentIds?: (text: string) => string[]
 }
 
 interface UseComposerReturn {
@@ -54,6 +55,7 @@ export function useComposer({
   setAttachedFilesWithDraft,
   replyTarget,
   onAccepted,
+  resolveSessionReferenceAgentIds,
 }: UseComposerOptions): UseComposerReturn {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const overlayRef = useRef<HTMLDivElement | null>(null)
@@ -155,8 +157,13 @@ export function useComposer({
       : undefined
 
     const shouldAttachReply = !!replyTarget && !trimmed.startsWith('/')
-    const result = shouldAttachReply
-      ? onSend(trimmed, convertedAttachments, { replyTo: replyTarget })
+    const sessionReferenceAgentIds = resolveSessionReferenceAgentIds?.(trimmed) ?? []
+    const sendOptions: MessageInputSendOptions = {
+      ...(shouldAttachReply ? { replyTo: replyTarget } : {}),
+      ...(sessionReferenceAgentIds.length > 0 ? { sessionReferenceAgentIds } : {}),
+    }
+    const result = Object.keys(sendOptions).length > 0
+      ? onSend(trimmed, convertedAttachments, sendOptions)
       : onSend(trimmed, convertedAttachments) as boolean | Promise<boolean> | undefined
 
     // Accept send and clear draft, saving the submission for potential restoration
@@ -192,6 +199,7 @@ export function useComposer({
     onSubmitted,
     onAccepted,
     replyTarget,
+    resolveSessionReferenceAgentIds,
     setInputWithDraft,
     setAttachedFilesWithDraft,
   ])

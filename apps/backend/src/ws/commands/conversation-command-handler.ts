@@ -260,6 +260,7 @@ export async function handleConversationCommand(context: ConversationCommandRout
           }
         : undefined,
       clientRequestId: command.clientRequestId,
+      sessionReferenceAgentIds: command.sessionReferenceAgentIds,
     });
 
     logDebug("user_message:dispatch:complete", {

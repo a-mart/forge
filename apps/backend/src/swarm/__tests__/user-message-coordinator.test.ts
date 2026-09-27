@@ -196,6 +196,11 @@ function createHarness() {
         order.push("project-agent:preflight");
       }),
     },
+    sessionReferences: {
+      descriptors: new Map(),
+      profiles: new Map(),
+      saveStore: vi.fn(async () => {}),
+    },
     goals: {
       noteUserTurn: vi.fn(async () => {
         order.push("goals:user-turn");

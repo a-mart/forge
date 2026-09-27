@@ -185,6 +185,7 @@ export function buildUserMessageCommand(input: {
   attachments?: ConversationAttachment[]
   replyTo?: ConversationReplyTargetInput
   clientRequestId?: string
+  sessionReferenceAgentIds?: string[]
 }): ClientCommand {
   return {
     type: 'user_message',
@@ -194,6 +195,7 @@ export function buildUserMessageCommand(input: {
     agentId: input.agentId,
     delivery: input.delivery,
     clientRequestId: input.clientRequestId,
+    sessionReferenceAgentIds: input.sessionReferenceAgentIds?.length ? input.sessionReferenceAgentIds : undefined,
   }
 }
 

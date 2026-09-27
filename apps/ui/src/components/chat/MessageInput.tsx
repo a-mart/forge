@@ -20,6 +20,7 @@ import { useMentions } from './message-input/hooks/use-mentions'
 import { useVoiceInput } from './message-input/hooks/use-voice-input'
 import { useAttachments } from './message-input/hooks/use-attachments'
 import { useComposer } from './message-input/hooks/use-composer'
+import { useSessionReferences } from './message-input/hooks/use-session-references'
 import { ReplyPreview } from './message-list/ReplyPreview'
 
 // Re-export public types for external consumers
@@ -103,6 +104,13 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   const isRecording = voice.isRecording
   const isTranscribingVoice = voice.isTranscribingVoice
 
+  // --- Session references (sidebar drops) ---
+  const { addSessionReference, resolveSessionReferenceAgentIds } = useSessionReferences({
+    draftKey: draftKey ?? agentId,
+    inputRef,
+    setInputWithDraft,
+  })
+
   // --- Composer (textarea, format mode, submit) ---
   const {
     textareaRef,
@@ -129,6 +137,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     setAttachedFilesWithDraft,
     replyTarget,
     onAccepted: onClearReplyTarget,
+    resolveSessionReferenceAgentIds,
   })
 
   // --- Slash commands ---
@@ -172,8 +181,16 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       addFiles: attachments.addFiles,
       addTerminalContext: attachments.addTerminalContext,
       restoreLastSubmission,
+      addSessionReference: (reference) => addSessionReference(reference, textareaRef.current),
     }),
-    [attachments.addFiles, attachments.addTerminalContext, restoreLastSubmission, setInputWithDraft, textareaRef],
+    [
+      attachments.addFiles,
+      attachments.addTerminalContext,
+      restoreLastSubmission,
+      addSessionReference,
+      setInputWithDraft,
+      textareaRef,
+    ],
   )
 
   // --- Mention cursor snap ---
