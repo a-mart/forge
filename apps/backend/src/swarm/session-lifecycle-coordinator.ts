@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { ManagerExactModelSelection } from "@forge/protocol";
 import {
   ARCHIVED_PROJECT_OPERATION_MESSAGE,
@@ -472,6 +473,7 @@ export class SessionLifecycleCoordinator {
       agentId,
       "delete Builder sessions",
     );
+    await this.deleteSideChatsOf(agentId);
     const descriptor = cloneDescriptor(requiredDescriptor);
     return await this.withSecureLifecycleFence(
       requiredDescriptor.profileId,
@@ -554,6 +556,16 @@ export class SessionLifecycleCoordinator {
       this.getRequiredBuilderSessionDescriptor(sourceAgentId, "fork Builder sessions"),
     );
     this.assertDescriptorNotEffectivelyArchived(source);
+    if (options?.sessionPurpose === "side_chat") {
+      // A side chat is a temporary aside on the source's latest context. Keep at
+      // most one per source so an abandoned panel cannot accumulate hidden sessions.
+      if (options.fromMessageId) throw new Error("Side chats always fork from the latest message.");
+      if (source.sessionPurpose !== undefined) throw new Error("Side chats can only be opened from an ordinary Builder session.");
+      await this.deleteSideChatsOf(sourceAgentId);
+      // A fresh identity per side chat: a replacement must never reuse the ID (and
+      // any open client subscription) of the side chat it replaces.
+      options = { ...options, label: `side-chat-${randomUUID().slice(0, 8)}` };
+    }
     const forked = await this.options.sessions.forkSession(sourceAgentId, options);
     await this.options.extensions.dispatchSessionLifecycle({
       action: "forked",
@@ -860,6 +872,13 @@ export class SessionLifecycleCoordinator {
     const descriptor = this.getRequiredSessionDescriptor(agentId);
     assertCollabSession(descriptor, action);
     return descriptor;
+  }
+
+  private async deleteSideChatsOf(sourceAgentId: string): Promise<void> {
+    const sideChatIds = Array.from(this.options.descriptors.values())
+      .filter((descriptor) => descriptor.sessionPurpose === "side_chat" && descriptor.sideChatSourceAgentId === sourceAgentId)
+      .map((descriptor) => descriptor.agentId);
+    for (const sideChatId of sideChatIds) await this.deleteSession(sideChatId);
   }
 
   private getSessionsForProfile(profileId: string): AgentDescriptor[] {

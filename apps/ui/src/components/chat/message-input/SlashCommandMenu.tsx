@@ -43,7 +43,7 @@ export function SlashCommandMenu({
             }}
           >
             <code className="shrink-0 text-xs font-semibold text-foreground">/{cmd.name}</code>
-            <span className="line-clamp-1 text-xs text-muted-foreground">{cmd.prompt}</span>
+            <span className="line-clamp-1 text-xs text-muted-foreground">{cmd.description ?? cmd.prompt}</span>
           </button>
         ))}
       </div>

@@ -9,6 +9,8 @@ export interface UseDrawerResizeOptions {
   minWidth: number
   /** Maximum allowed width in pixels */
   maxWidth: number
+  /** Optional layout limit read when a drag starts, for panels that share space with other content. */
+  getAvailableWidth?: () => number
 }
 
 function loadWidth(key: string, defaultWidth: number, minWidth: number, maxWidth: number): number {
@@ -40,6 +42,7 @@ export function useDrawerResize({
   defaultWidth,
   minWidth,
   maxWidth,
+  getAvailableWidth,
 }: UseDrawerResizeOptions) {
   const [width, setWidth] = useState(() => loadWidth(storageKey, defaultWidth, minWidth, maxWidth))
   const [isResizing, setIsResizing] = useState(false)
@@ -54,12 +57,13 @@ export function useDrawerResize({
     e.stopPropagation()
     setIsResizing(true)
     const startX = e.clientX
-    const startWidth = widthRef.current
+    const dragMaxWidth = Math.max(minWidth, Math.min(maxWidth, getAvailableWidth?.() ?? maxWidth))
+    const startWidth = Math.min(widthRef.current, dragMaxWidth)
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       // Dragging left = increasing width (handle is on left edge of right-side sheet)
       const delta = startX - moveEvent.clientX
-      const newWidth = Math.min(maxWidth, Math.max(minWidth, startWidth + delta))
+      const newWidth = Math.min(dragMaxWidth, Math.max(minWidth, startWidth + delta))
       setWidth(newWidth)
     }
 
@@ -76,7 +80,7 @@ export function useDrawerResize({
     document.body.style.userSelect = 'none'
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
-  }, [storageKey, minWidth, maxWidth])
+  }, [storageKey, minWidth, maxWidth, getAvailableWidth])
 
   return { width, isResizing, handleResizeStart }
 }

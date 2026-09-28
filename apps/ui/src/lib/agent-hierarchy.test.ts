@@ -10,7 +10,10 @@ import {
   getPrimaryManagerId,
   getProfileRowLastUserMessageAt,
   resolveWorkerFetchManagerId,
+  findSideChatForSource,
 } from './agent-hierarchy'
+import { isUsableActiveTarget } from '@/components/index-page/archive-target-guards'
+import { chooseMostRecentSessionAgentId } from './ws-client/utils'
 import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
 
 function manager(agentId: string, managerId = agentId): AgentDescriptor {
@@ -67,6 +70,39 @@ function profile(profileId: string): ManagerProfile {
 }
 
 describe('agent-hierarchy', () => {
+  describe('side chats', () => {
+    const parent = { ...manager('manager'), profileId: 'manager', sessionLabel: 'Main' }
+    const sideChat: AgentDescriptor = {
+      ...manager('manager--s2'),
+      profileId: 'manager',
+      sessionLabel: 'Side chat',
+      sessionPurpose: 'side_chat',
+      sideChatSourceAgentId: 'manager',
+      createdAt: '2025-12-31T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    }
+
+    it('never lists a side chat as a sidebar session or manager row', () => {
+      const rows = buildProfileTreeRows([parent, sideChat], [profile('manager')])
+      expect(rows[0]?.sessions.map((entry) => entry.sessionAgent.agentId)).toEqual(['manager'])
+      expect(buildManagerTreeRows([parent, sideChat]).managerRows.map((row) => row.manager.agentId)).toEqual(['manager'])
+    })
+
+    it('never selects a side chat as the active or fallback session', () => {
+      expect(getPrimaryManagerId([parent, sideChat])).toBe('manager')
+      expect(chooseFallbackAgentId([parent, sideChat], 'manager--s2')).toBe('manager')
+      expect(chooseFallbackAgentId([sideChat], null)).toBeNull()
+      expect(chooseMostRecentSessionAgentId([parent, sideChat], 'manager', 'missing')).toBe('manager')
+      expect(isUsableActiveTarget('manager--s2', [parent, sideChat], [])).toBe(false)
+    })
+
+    it('finds the side chat owned by a source session', () => {
+      expect(findSideChatForSource([parent, sideChat], 'manager')?.agentId).toBe('manager--s2')
+      expect(findSideChatForSource([parent, sideChat], 'manager--s2')).toBeNull()
+      expect(findSideChatForSource([parent, sideChat], null)).toBeNull()
+    })
+  })
+
   it('groups workers under owning managers', () => {
     const agents: AgentDescriptor[] = [
       manager('manager'),

@@ -16,6 +16,8 @@ import {
 import type { SwarmAgentRuntime } from "./runtime-contracts.js";
 import type { AgentDirectory } from "./agent-directory.js";
 import { CURSOR_SDK_RUNTIME_STATE_ENTRY_TYPE } from "./runtime/cursor-sdk/cursor-sdk-agent-runtime.js";
+import { NATIVE_CLAUDE_STATE } from "./runtime/claude/claude-agent-runtime.js";
+import { NATIVE_CODEX_STATE } from "./runtime/codex/codex-agent-runtime.js";
 import { CURSOR_SDK_USAGE_ENTRY_TYPE } from "../utils/cursor-sdk-usage-records.js";
 import { GENERATION_MEASUREMENT_ENTRY_TYPE } from "../utils/generation-measurement-records.js";
 import { PI_INITIAL_MODEL_INPUT_CAPTURE_ENTRY_TYPE } from "./runtime/initial-model-input-capture.js";
@@ -150,6 +152,10 @@ export function createSwarmManagerSessionComposition(
           CURSOR_SDK_USAGE_ENTRY_TYPE,
           GENERATION_MEASUREMENT_ENTRY_TYPE,
           PI_INITIAL_MODEL_INPUT_CAPTURE_ENTRY_TYPE,
+          // A native thread identity survives only a latest-message fork, where the
+          // runtime forks that thread natively. Native threads cannot end at an
+          // arbitrary Forge message, so bounded forks rebuild from the canonical copy.
+          ...(fromMessageId ? [NATIVE_CLAUDE_STATE, NATIVE_CODEX_STATE] : []),
         ],
       }),
     copyPinnedMessagesForFork: (source, forked) => services.pins.copyPinsForFork(source, forked),

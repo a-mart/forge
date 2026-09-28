@@ -133,12 +133,14 @@ import { useActiveAgent } from '@/hooks/index-page/use-active-agent'
 import { useWorkspacePanels } from '@/hooks/index-page/use-workspace-panels'
 import { useTranscriptController } from '@/hooks/index-page/use-transcript-controller'
 import { useSessionActions } from '@/hooks/index-page/use-session-actions'
+import { useSideChat } from '@/hooks/index-page/use-side-chat'
+import { SideChatPanel } from '@/components/index-page/SideChatPanel'
 import { useFileDrop } from '@/hooks/index-page/use-file-drop'
 import {
   getProjectAgentSuggestions,
   shouldLoadExternalProjectAgentDirectory,
 } from '@/hooks/index-page/project-agent-suggestions'
-import { useSlashCommands } from '@/hooks/index-page/use-slash-commands'
+import { SIDE_SLASH_COMMAND, useSlashCommands } from '@/hooks/index-page/use-slash-commands'
 import { useOnboardingState } from '@/hooks/use-onboarding-state'
 import { useConversationThroughputDisplayPreference } from '@/hooks/use-conversation-throughput-display-preference'
 import { useDynamicFavicon } from '@/hooks/use-dynamic-favicon'
@@ -1030,6 +1032,7 @@ export function BuilderSurface({
     Boolean(onboardingState && onboardingState.status !== 'pending')
 
   const { slashCommands } = useSlashCommands({ wsUrl, activeView })
+  const builderSlashCommands = useMemo(() => [SIDE_SLASH_COMMAND, ...slashCommands], [slashCommands])
 
   const {
     isCreateManagerDialogOpen,
@@ -1086,6 +1089,13 @@ export function BuilderSurface({
     clearPendingResponseForAgent: transcript.clearPendingResponseForAgent,
   })
 
+  const sideChat = useSideChat({
+    clientRef,
+    agents: state.agents,
+    activeAgentId: isActiveManager ? activeAgentId : null,
+    setState,
+  })
+
   // ── Session / sidebar action handlers ──
   const session = useSessionActions({
     clientRef,
@@ -1100,6 +1110,7 @@ export function BuilderSurface({
     visibleMessages: transcript.visibleMessages,
     markPendingResponse: transcript.markPendingResponse,
     handleCompactManager,
+    startSideChat: sideChat.startSideChat,
     messageInputRef,
     messageListRef,
   })
@@ -1989,10 +2000,23 @@ export function BuilderSurface({
     visibleMessages: activeOriginId === LOCAL_ORIGIN_ID ? transcript.visibleMessages : [],
     markPendingResponse: activeOriginId === LOCAL_ORIGIN_ID ? transcript.markPendingResponse : () => {},
     handleCompactManager: async () => {},
+    startSideChat: () => {},
     messageInputRef,
     messageListRef,
   })
   const { replyTarget, setReplyTarget, messageForkTarget, setMessageForkTarget } = session
+  const sideChatPanelProps = {
+    wsUrl,
+    originId: activeOriginId,
+    sideChatAgentId: sideChat.sideChatAgentId,
+    sourceLabel: activeAgentLabel,
+    isExpanded: sideChat.isExpanded,
+    initialMessage: sideChat.initialMessage,
+    onInitialMessageSent: sideChat.clearInitialMessage,
+    onExpand: sideChat.expandSideChat,
+    onCollapse: sideChat.collapseSideChat,
+    onDiscard: sideChat.discardSideChat,
+  }
 
   const {
     isDraggingFiles,
@@ -2663,7 +2687,7 @@ export function BuilderSurface({
                   agentLabel: activeAgentLabel,
                   wsUrl,
                   agentId: activeAgentId ?? undefined,
-                  slashCommands,
+                  slashCommands: isActiveManager ? builderSlashCommands : slashCommands,
                   projectAgents: projectAgentSuggestions,
                   enableCodexMention: shouldEnableCodexMention(activeAgent),
                   managerAgentId: activeAgentId ?? undefined,
@@ -2679,7 +2703,14 @@ export function BuilderSurface({
             {activeView === 'chat' && !panels.isInlineDiffViewerOpen ? (
               <BrowserPreviewSurface hidden={panels.isBrowserOpen} onOpenManagedTab={handleOpenManagedPreviewTab} />
             ) : null}
+            {activeView === 'chat' && !panels.isInlineDiffViewerOpen && sideChat.isOpen && !sideChat.isExpanded ? (
+              <SideChatPanel {...sideChatPanelProps} />
+            ) : null}
           </div>
+
+          {activeView === 'chat' && !panels.isInlineDiffViewerOpen && sideChat.isOpen && sideChat.isExpanded ? (
+            <SideChatPanel {...sideChatPanelProps} />
+          ) : null}
 
           {activeView === 'chat' && !panels.isInlineDiffViewerOpen ? (
             <ChatSidePanels

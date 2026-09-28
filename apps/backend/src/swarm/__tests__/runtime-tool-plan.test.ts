@@ -260,6 +260,17 @@ describe("runtime tool plan", () => {
     expect(names).toContain("spawn_agent");
   });
 
+  it("limits side chats to read-only Forge tools", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-tool-plan-"));
+    const names = toolNames(createManagerDescriptor(rootDir, { sessionPurpose: "side_chat", sideChatSourceAgentId: "parent" }));
+
+    expect(names).toEqual(expect.arrayContaining(["knowledge", "present_choices"]));
+    expect(names.every((name) => ["knowledge", "present_choices", "secure_session_status"].includes(name))).toBe(true);
+    for (const name of ["spawn_agent", "send_message_to_agent", "speak_to_user", "save_learning", "update_plan", "create_goal", "list_agents"]) {
+      expect(names).not.toContain(name);
+    }
+  });
+
   it("uses base swarm tool names for the Forge Pi bridge skip list before wrapping", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-tool-plan-"));
     const descriptor = createManagerDescriptor(rootDir, { sessionPurpose: "agent_creator" });

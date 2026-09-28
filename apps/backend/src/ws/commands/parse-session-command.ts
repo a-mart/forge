@@ -339,10 +339,14 @@ export function parseSessionCommand(maybe: ClientCommandCandidate): ParsedClient
     const sourceAgentId = (maybe as { sourceAgentId?: unknown }).sourceAgentId;
     const label = (maybe as { label?: unknown }).label;
     const fromMessageId = (maybe as { fromMessageId?: unknown }).fromMessageId;
+    const sessionPurpose = (maybe as { sessionPurpose?: unknown }).sessionPurpose;
     const requestId = (maybe as { requestId?: unknown }).requestId;
 
     if (typeof sourceAgentId !== "string" || sourceAgentId.trim().length === 0) {
       return fail("fork_session.sourceAgentId must be a non-empty string");
+    }
+    if (sessionPurpose !== undefined && sessionPurpose !== "side_chat") {
+      return fail('fork_session.sessionPurpose must be "side_chat" when provided');
     }
     if (label !== undefined && typeof label !== "string") {
       return fail("fork_session.label must be a string when provided");
@@ -362,6 +366,7 @@ export function parseSessionCommand(maybe: ClientCommandCandidate): ParsedClient
       sourceAgentId: sourceAgentId.trim(),
       label: normalizedLabel ? normalizedLabel : undefined,
       fromMessageId: normalizedFromMessageId ? normalizedFromMessageId : undefined,
+      ...(sessionPurpose ? { sessionPurpose } : {}),
       requestId
     });
   }

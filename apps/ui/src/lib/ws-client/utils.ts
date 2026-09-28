@@ -4,6 +4,7 @@ import type {
   ModelCacheObservationEntry,
   ManagerWsState,
 } from '../ws-state'
+import { isSideChatAgent } from '../agent-hierarchy'
 import { MAX_CLIENT_CONVERSATION_HISTORY, isAgentActivityEntry } from './runtime-types'
 import type {
   AgentDescriptor,
@@ -40,7 +41,7 @@ export function chooseMostRecentSessionAgentId(
 ): string | null {
   const sessions = agents
     .filter((agent) => {
-      if (agent.role !== 'manager') {
+      if (agent.role !== 'manager' || isSideChatAgent(agent)) {
         return false
       }
 

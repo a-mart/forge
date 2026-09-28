@@ -112,7 +112,32 @@ export function filterAgentsAfterProfileArchive(
   })
 }
 
+export function isSideChatAgent(agent: AgentDescriptor): boolean {
+  return agent.sessionPurpose === 'side_chat'
+}
+
+/** The temporary side chat forked from `sourceAgentId`, if any. */
+export function findSideChatForSource(
+  agents: AgentDescriptor[],
+  sourceAgentId: string | null | undefined,
+): AgentDescriptor | null {
+  if (!sourceAgentId) return null
+  return agents.find((agent) => isSideChatAgent(agent) && agent.sideChatSourceAgentId === sourceAgentId) ?? null
+}
+
+/**
+ * Builder-surface agents a user can list or select. Side chats are excluded:
+ * they live only in their source session's side panel.
+ */
 export function filterBuilderVisibleAgents(agents: AgentDescriptor[]): AgentDescriptor[] {
+  return filterBuilderSurfaceAgents(agents).filter((agent) => !isSideChatAgent(agent))
+}
+
+/**
+ * All Builder-surface agents (collab sessions excluded). WS state keeps hidden
+ * side chats so their panel can read descriptors and statuses.
+ */
+export function filterBuilderSurfaceAgents(agents: AgentDescriptor[]): AgentDescriptor[] {
   const collabManagerIds = new Set(
     agents
       .filter((agent) => agent.role === 'manager' && agent.sessionSurface === 'collab')

@@ -32,6 +32,14 @@ Either way, the fork copies the source session's stored model. Later project-def
 - Historical Codex sidecar display cards are not copied.
 - Workers from the parent session are not duplicated.
 
+## Side chats
+
+Type `/side` in a Builder session's composer to ask a quick side question without interrupting the main conversation. Any text after `/side` becomes the side chat's first message.
+
+A side chat is a temporary fork of the current session from its latest message, so it has the same context. It opens in a panel next to the main chat, which stays usable. Side chats support follow-up messages but cannot delegate to workers, schedule tasks, message other sessions, or write memory.
+
+Side chats never appear in the sidebar. Each session has at most one side chat, so starting a new one replaces the previous one. Choose **Discard** in the panel header to delete it, or hide the panel and reopen it later from the **Side chat** button.
+
 ## When to use it
 
 Fork when you want to try an alternative approach, preserve a checkpoint before a risky change, or branch a conversation into two tracks.

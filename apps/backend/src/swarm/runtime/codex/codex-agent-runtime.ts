@@ -21,7 +21,7 @@ import { readNativeToolContract } from "./codex-tool-contract.js";
 import { ChoiceRequestCancelledError } from "../../swarm-choice-service.js";
 
 export const NATIVE_CODEX_STATE = "swarm_native_codex_state";
-interface ThreadState { version: 1; threadId: string; ownerAgentId: string; cwd: string; promptDigest?: string; hasStartedTurn?: boolean }
+interface ThreadState { version: 1; threadId: string; ownerAgentId: string; cwd: string; promptDigest?: string; hasStartedTurn?: boolean; forkFrom?: string }
 interface QueuedInput {
   message: RuntimeUserMessage;
   deliveryId: string;
@@ -120,22 +120,32 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       // Model switches use Forge's explicit historical recovery block. Ordinary restarts resume.
       // Codex does not persist an unused thread. Recreate that empty allocation
       // after settings recycle; never discard a thread that has accepted a turn.
+      const usable = stored?.version === 1 && !options.creationOptions?.startupRecoveryContext;
+      const owned = usable && stored.ownerAgentId === options.descriptor.agentId;
+      const reuse = owned && stored.hasStartedTurn !== false;
       // Forge can fork at an individual message, while native fork boundaries are
-      // whole turns. Reconstruct forks from the already bounded canonical copy.
-      const reuse = stored?.version === 1 && stored.ownerAgentId === options.descriptor.agentId && !options.creationOptions?.startupRecoveryContext && stored.hasStartedTurn !== false;
-      const method = reuse ? "thread/resume" : "thread/start";
+      // whole turns. Message-bounded forks omit the source identity and rebuild from
+      // the bounded canonical copy; a latest-message fork forks the source thread.
+      // Until the first turn, a restart forks the same source again.
+      const forkFrom = reuse || !usable ? undefined
+        : owned ? stored.forkFrom
+        : stored.hasStartedTurn !== false && stored.cwd === options.descriptor.cwd ? stored.threadId : undefined;
+      const method = reuse ? "thread/resume" : forkFrom ? "thread/fork" : "thread/start";
       const response = await runtime.client.request<any>(method, {
         ...common,
-        ...(reuse ? { threadId: stored.threadId } : { dynamicTools: runtime.bridge.definitions(), ephemeral: false }),
+        ...(reuse ? { threadId: stored.threadId } : forkFrom ? { threadId: forkFrom, ephemeral: false }
+          : { dynamicTools: runtime.bridge.definitions(), ephemeral: false }),
       });
       if (typeof response?.thread?.id !== "string") throw new Error("Codex did not return a native thread identity");
       runtime.threadId = response.thread.id;
       if (response.model && response.model !== options.descriptor.model.modelId) {
         throw new Error(`Codex selected ${response.model} instead of the requested ${options.descriptor.model.modelId}.`);
       }
-      if (reuse) runtime.bridge.restoreContract(await readNativeToolContract(response.thread.path, options.codexHome, runtime.threadId));
+      // A fork inherits the source thread's tool contract; tools this session does
+      // not offer (for example, delegation in a side chat) become unavailable.
+      if (reuse || forkFrom) runtime.bridge.restoreContract(await readNativeToolContract(response.thread.path, options.codexHome, runtime.threadId));
       runtime.hasStartedTurn = Boolean(reuse);
-      if (!reuse) {
+      if (!reuse && !forkFrom) {
         const recovery = options.creationOptions?.startupRecoveryContext?.blockText
           ?? buildModelChangeRecoveryContext({ descriptor: options.descriptor,
             entries: runtime.getCustomEntries("swarm_conversation_entry").filter(isConversationEntryEvent),
@@ -147,16 +157,18 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
         }] });
       }
       const promptDigest = createHash("sha256").update(options.systemPrompt).digest("hex");
-      // A resumed rollout retains earlier developer messages. Make a changed Forge
-      // contract explicit in native history; never silently retain an old posture.
-      if (reuse && stored.promptDigest !== promptDigest) {
+      // A resumed or forked rollout retains earlier developer messages. Make a changed
+      // Forge contract explicit in native history; never silently retain an old posture.
+      // A fork always carries its source's contract, never this session's.
+      if (forkFrom || (reuse && stored.promptDigest !== promptDigest)) {
         await runtime.client.request("thread/inject_items", { threadId: runtime.threadId, items: [{
           type: "message", role: "developer", content: [{ type: "input_text",
             text: `The following is the current Forge integration contract. It replaces earlier Forge integration instructions, including work routing. Native Codex instructions remain in effect.\n\n${options.systemPrompt}` }],
         }] });
       }
       runtime.appendCustomEntry(NATIVE_CODEX_STATE, { version: 1, threadId: runtime.threadId,
-        ownerAgentId: options.descriptor.agentId, cwd: options.descriptor.cwd, promptDigest, hasStartedTurn: runtime.hasStartedTurn } satisfies ThreadState);
+        ownerAgentId: options.descriptor.agentId, cwd: options.descriptor.cwd, promptDigest, hasStartedTurn: runtime.hasStartedTurn,
+        ...(forkFrom ? { forkFrom } : {}) } satisfies ThreadState);
       return runtime;
     } catch (error) {
       runtime.closed = true;

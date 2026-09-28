@@ -1203,10 +1203,11 @@ export class ManagerWsClient {
     sourceAgentId: string,
     label?: string,
     fromMessageId?: string,
+    options?: { sessionPurpose?: 'side_chat' },
   ): Promise<SessionForkedResult> {
     assertReconnectableSocket(this.socket)
     return this.requestDispatcher.enqueueRequest('fork_session', (requestId) =>
-      buildForkSessionCommand(sourceAgentId, label, fromMessageId, requestId),
+      buildForkSessionCommand(sourceAgentId, label, fromMessageId, requestId, options?.sessionPurpose),
     )
   }
 

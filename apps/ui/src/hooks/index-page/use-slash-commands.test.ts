@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseCompactSlashCommand } from './use-slash-commands'
+import { parseCompactSlashCommand, parseSideSlashCommand } from './use-slash-commands'
 
 describe('parseCompactSlashCommand', () => {
   it('accepts /compact with no instructions', () => {
@@ -63,5 +63,25 @@ describe('parseCompactSlashCommand', () => {
     const result = parseCompactSlashCommand('/compact    ')
     expect(result).toEqual({})
     expect(result).not.toHaveProperty('customInstructions')
+  })
+})
+
+describe('parseSideSlashCommand', () => {
+  it('accepts /side with no question', () => {
+    expect(parseSideSlashCommand('/side')).toEqual({})
+    expect(parseSideSlashCommand('  /SIDE  ')).toEqual({})
+  })
+
+  it('returns the trimmed question, preserving internal newlines', () => {
+    expect(parseSideSlashCommand('/side  why did the build fail?\nbe brief  ')).toEqual({
+      initialMessage: 'why did the build fail?\nbe brief',
+    })
+  })
+
+  it('rejects other commands and embedded text', () => {
+    expect(parseSideSlashCommand('/sidebar')).toBeNull()
+    expect(parseSideSlashCommand('/compact')).toBeNull()
+    expect(parseSideSlashCommand('please /side this')).toBeNull()
+    expect(parseSideSlashCommand('')).toBeNull()
   })
 })

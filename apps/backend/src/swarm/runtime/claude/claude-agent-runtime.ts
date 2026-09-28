@@ -20,7 +20,7 @@ import { claudeCommandWaitHook } from "./claude-command-policy.js";
 import { guardSecureRuntimeValue, SECURE_RUNTIME_GUARD_FAILURE_MESSAGE } from "../../secure-sessions/runtime/secure-runtime-binding.js";
 
 export const NATIVE_CLAUDE_STATE = "swarm_native_claude_state";
-interface NativeState { version: 1; sessionId: string; ownerAgentId: string; cwd: string; hasStartedTurn: boolean }
+interface NativeState { version: 1; sessionId: string; ownerAgentId: string; cwd: string; hasStartedTurn: boolean; forkFrom?: string }
 interface Input { id: ReturnType<typeof randomUUID>; message: RuntimeUserMessage; activated: boolean; compact?: { resolve(value: unknown): void; reject(error: Error): void } }
 export interface ClaudeRuntimeOptions {
   descriptor: AgentDescriptor;
@@ -83,19 +83,25 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
   static async create(options: ClaudeRuntimeOptions): Promise<ClaudeAgentRuntime> {
     const runtime = new ClaudeAgentRuntime(options);
     const stored = runtime.getCustomEntries(NATIVE_CLAUDE_STATE).at(-1) as NativeState | undefined;
-    // Forge supports message-bounded forks. Reconstruct those from the bounded
-    // canonical copy; resuming the parent's full native thread would leak later turns.
-    const resume = stored?.version === 1 && stored.ownerAgentId === options.descriptor.agentId
-      && stored.cwd === options.descriptor.cwd && stored.hasStartedTurn && !options.creationOptions?.startupRecoveryContext;
-    runtime.state = resume ? stored : { version: 1, sessionId: randomUUID(), ownerAgentId: options.descriptor.agentId, cwd: options.descriptor.cwd, hasStartedTurn: false };
-    if (!resume) runtime.recovery = options.creationOptions?.startupRecoveryContext?.blockText
+    const usable = stored?.version === 1 && stored.cwd === options.descriptor.cwd && !options.creationOptions?.startupRecoveryContext;
+    const owned = usable && stored.ownerAgentId === options.descriptor.agentId;
+    const resume = owned && stored.hasStartedTurn;
+    // A latest-message fork keeps its source's native identity (message-bounded
+    // forks omit it and rebuild from the bounded canonical copy). Fork that native
+    // thread so the new session starts with the source's full context. Until the
+    // first turn persists the fork, a restart forks the same source again.
+    const forkFrom = resume || !usable ? undefined : owned ? stored.forkFrom : stored.hasStartedTurn ? stored.sessionId : undefined;
+    runtime.state = resume ? stored : { version: 1, sessionId: randomUUID(), ownerAgentId: options.descriptor.agentId, cwd: options.descriptor.cwd, hasStartedTurn: false, ...(forkFrom ? { forkFrom } : {}) };
+    if (!resume && !forkFrom) runtime.recovery = options.creationOptions?.startupRecoveryContext?.blockText
       ?? buildModelChangeRecoveryContext({ descriptor: options.descriptor,
         entries: runtime.getCustomEntries("swarm_conversation_entry").filter(isConversationEntryEvent),
         modelContextWindow: getCatalogContextWindow(options.descriptor.model.modelId, options.descriptor.model.provider), existingPrompt: options.systemPrompt }).blockText;
     const level = options.descriptor.model.thinkingLevel;
     const sdkOptions: QueryOptions = {
       cwd: options.descriptor.cwd, env: options.env, pathToClaudeCodeExecutable: options.executable,
-      ...(resume ? { resume: runtime.state.sessionId } : { sessionId: runtime.state.sessionId }),
+      ...(resume ? { resume: runtime.state.sessionId }
+        : forkFrom ? { resume: forkFrom, forkSession: true, sessionId: runtime.state.sessionId }
+        : { sessionId: runtime.state.sessionId }),
       model: options.descriptor.model.modelId,
       effort: level as QueryOptions["effort"],
       systemPrompt: { type: "preset", preset: "claude_code", append: options.systemPrompt },
@@ -103,7 +109,8 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
       settings: { autoMemoryEnabled: false },
       permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true,
       persistSession: true, includePartialMessages: true,
-      disallowedTools: ["Agent", "Task", "Workflow", "SendMessage", "ListAgents", "TeamCreate", "TeamDelete", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TodoWrite", "CronCreate", "CronDelete", "CronList", "EnterWorktree", "ExitWorktree", "EnterPlanMode", "ExitPlanMode"],
+      disallowedTools: ["Agent", "Task", "Workflow", "SendMessage", "ListAgents", "TeamCreate", "TeamDelete", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TodoWrite", "CronCreate", "CronDelete", "CronList", "EnterWorktree", "ExitWorktree", "EnterPlanMode", "ExitPlanMode",
+        ...(options.descriptor.sessionPurpose === "side_chat" ? ["ScheduleWakeup", "RemoteTrigger"] : [])],
       mcpServers: { forge: runtime.bridge.server }, strictMcpConfig: true,
       canUseTool: runtime.bridge.canUseTool,
       hooks: { Stop: [{ hooks: [async event => {

@@ -19,7 +19,7 @@ import {
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import type { BrowserAutomationService } from "../swarm/browser-automation/index.js";
 import { isBuilderRuntimeTarget } from "../runtime-target.js";
-import { filterBuilderVisibleAgents, filterBuilderVisibleProfiles } from "./builder-visibility.js";
+import { filterBuilderVisibleAgents, filterBuilderVisibleProfiles, isBuilderInventorySession } from "./builder-visibility.js";
 import { MAX_WS_EVENT_BYTES } from "./ws-send.js";
 import { warnWsThrottled } from "./ws-log-throttle.js";
 import { WebSocket } from "ws";
@@ -95,7 +95,7 @@ export function buildInventorySnapshot(
   const allProfiles = swarmManager.listProfiles();
   const systemProfileIds = new Set(allProfiles.filter(isSystemProfile).map((profile) => profile.profileId));
   const agents = filterBuilderVisibleAgents(swarmManager.listBootstrapAgents(), systemProfileIds)
-    .filter((agent) => agent.role === "manager");
+    .filter(isBuilderInventorySession);
   const visibleIds = new Set(agents.map((agent) => agent.agentId));
   const attention = swarmManager.getSessionAttentionSnapshot();
   return {

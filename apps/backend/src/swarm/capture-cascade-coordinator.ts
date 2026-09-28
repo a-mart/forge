@@ -64,7 +64,8 @@ export class CaptureCascadeCoordinator {
       !descriptor ||
       descriptor.role !== "manager" ||
       !descriptor.profileId ||
-      descriptor.sessionPurpose === "capture_check"
+      descriptor.sessionPurpose === "capture_check" ||
+      descriptor.sessionPurpose === "side_chat"
     ) {
       return;
     }

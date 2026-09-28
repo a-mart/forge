@@ -26,6 +26,7 @@ import type { ManagerWsState } from '@/lib/ws-state'
 import {
   chooseFallbackAgentId,
   isAgentEffectivelyArchived,
+  isSideChatAgent,
 } from '@/lib/agent-hierarchy'
 import { isUsableActiveTarget } from '@/components/index-page/archive-target-guards'
 import {
@@ -183,6 +184,15 @@ export function useActiveAgent({
 
     const coordinator = fileEditorCoordinatorRef.current
     if (!coordinator) return
+
+    // Side chats live only in their source session's panel; never as the main chat.
+    const routedSideChat = state.agents.find(
+      (agent) => agent.agentId === routeState.agentId && isSideChatAgent(agent),
+    )
+    if (routedSideChat?.sideChatSourceAgentId) {
+      navigateToRoute({ view: 'chat', agentId: routedSideChat.sideChatSourceAgentId }, true)
+      return
+    }
 
     const currentAgentId = state.targetAgentId ?? state.subscribedAgentId
     const hasExplicitRouteSelection = routeState.agentId !== DEFAULT_MANAGER_AGENT_ID

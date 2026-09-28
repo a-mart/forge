@@ -308,6 +308,9 @@ export class AgentDirectory {
     if (descriptor.sessionPurpose === "agent_creator") {
       throw new Error("Agent creator sessions cannot be promoted to project agents");
     }
+    if (descriptor.sessionPurpose === "side_chat") {
+      throw new Error("Side chats cannot be promoted to project agents");
+    }
   }
 
   assertSessionIsDeletable(descriptor: AgentDescriptor): void {

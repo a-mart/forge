@@ -80,7 +80,7 @@ export interface AgentContextUsage {
   percent: number;
 }
 
-export type AgentSessionPurpose = "cortex_review" | "agent_creator" | "capture_check";
+export type AgentSessionPurpose = "cortex_review" | "agent_creator" | "capture_check" | "side_chat";
 
 export type InternalWorkerKind = "codex_plugin";
 
@@ -127,6 +127,8 @@ export interface AgentDescriptor {
   profileId?: string;
   sessionLabel?: string;
   sessionPurpose?: AgentSessionPurpose;
+  /** Parent Builder session of a temporary `side_chat` fork. */
+  sideChatSourceAgentId?: string;
   sessionSurface?: AgentSessionSurface;
   collab?: AgentCollaborationLink;
   cli?: CliSessionMetadata;

@@ -576,3 +576,41 @@ describe('reduceAgentStatus', () => {
     expect(updatedManager!.activeWorkerCount).toBe(1)
   })
 })
+
+describe('reduceAgentsSnapshot side chats', () => {
+  const parent = makeManager({ agentId: 'parent', profileId: 'parent', workerCount: undefined })
+  const sideChat = makeManager({
+    agentId: 'parent--s2',
+    profileId: 'parent',
+    workerCount: undefined,
+    sessionPurpose: 'side_chat',
+    sideChatSourceAgentId: 'parent',
+  })
+
+  it('keeps the hidden side chat descriptor in state without retargeting the main client', () => {
+    const state = { ...createInitialManagerWsState('parent'), subscribedAgentId: 'parent' }
+    const result = reduceAgentsSnapshot({
+      state,
+      desiredAgentId: 'parent',
+      explicitAgentSelectionAgentId: null,
+      agents: [parent, sideChat],
+    })
+    expect(result.patch.agents?.map((agent) => agent.agentId)).toEqual(['parent', 'parent--s2'])
+    expect(result.patch.statuses?.['parent--s2']).toBeDefined()
+    expect(result.nextDesiredAgentId).toBe('parent')
+    expect(result.subscribeToAgentId).toBeNull()
+  })
+
+  it('keeps a side-chat-scoped client subscribed to the side chat', () => {
+    const state = { ...createInitialManagerWsState('parent--s2'), subscribedAgentId: 'parent--s2' }
+    const result = reduceAgentsSnapshot({
+      state,
+      desiredAgentId: 'parent--s2',
+      explicitAgentSelectionAgentId: null,
+      agents: [parent, sideChat],
+    })
+    expect(result.nextDesiredAgentId).toBe('parent--s2')
+    expect(result.subscribeToAgentId).toBeNull()
+    expect(result.patch.subscribedAgentId).toBeUndefined()
+  })
+})

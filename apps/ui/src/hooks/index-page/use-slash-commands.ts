@@ -30,6 +30,16 @@ export function useSlashCommands({ wsUrl, activeView }: UseSlashCommandsOptions)
   return { slashCommands }
 }
 
+/** Built-in `/side` menu entry; selecting it inserts the command for an optional question. */
+export const SIDE_SLASH_COMMAND: SlashCommand = {
+  id: 'builtin:side',
+  name: 'side',
+  prompt: '/side ',
+  description: 'Ask a side question in a temporary fork of this session',
+  createdAt: '',
+  updatedAt: '',
+}
+
 export function parseCompactSlashCommand(
   text: string,
 ): { customInstructions?: string } | null {
@@ -44,4 +54,16 @@ export function parseCompactSlashCommand(
   }
 
   return { customInstructions }
+}
+
+export function parseSideSlashCommand(
+  text: string,
+): { initialMessage?: string } | null {
+  const match = text.trim().match(/^\/side(?:\s+([\s\S]+))?$/i)
+  if (!match) {
+    return null
+  }
+
+  const initialMessage = match[1]?.trim()
+  return initialMessage ? { initialMessage } : {}
 }

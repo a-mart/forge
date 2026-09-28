@@ -762,7 +762,8 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
 
       const forked = await swarmManager.forkSession(command.sourceAgentId, {
         label: command.label,
-        fromMessageId: command.fromMessageId
+        fromMessageId: command.fromMessageId,
+        sessionPurpose: command.sessionPurpose
       });
 
       send(socket, {

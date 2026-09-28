@@ -45,6 +45,11 @@ async function fixture(options: { root?: string; agentId?: string; rejectResume?
       if (method === "thread/start") await writeFile(nativePath, `${JSON.stringify({ type: "session_meta", payload: {
         id: threadId, dynamic_tools: params.dynamicTools,
       } })}\n`);
+      // A native fork inherits the source thread's history and tool contract.
+      if (method === "thread/fork") {
+        const source = JSON.parse((await readFile(join(codexHome, "native-test.jsonl"), "utf8")).split("\n")[0]!);
+        await writeFile(nativePath, `${JSON.stringify({ type: "session_meta", payload: { ...source.payload, id: threadId } })}\n`);
+      }
       if (["thread/start", "thread/resume", "thread/fork"].includes(method)) return { thread: { id: threadId, path: nativePath } };
       if (method === "turn/start") return { turn: { id: "turn-1" } };
       if (method === "turn/steer") return { turnId: params.expectedTurnId };
@@ -426,21 +431,46 @@ describe("Native Codex manager", () => {
     expect(f.client.shutdown).toHaveBeenCalledOnce();
   });
 
-  it("persists identity immediately, resumes it, and reconstructs bounded copied sessions independently", async () => {
-    const f = await fixture();
+  it("persists identity immediately, resumes it, natively forks latest copies, and reconstructs bounded copies", async () => {
+    const f = await fixture({ extraTool: true });
     f.runtime.appendCustomEntry("swarm_conversation_entry", { type: "conversation_message", agentId: "native-test", role: "user", text: "Selected fork boundary", source: "user_input", timestamp: new Date().toISOString() });
     await f.runtime.sendMessage("Create a persisted native turn");
     await f.runtime.terminate();
     const resumed = await fixture({ root: f.root });
     expect(resumed.client.request).toHaveBeenCalledWith("thread/resume", expect.objectContaining({ threadId: "native-thread" }));
     await resumed.runtime.terminate();
+    // A latest-message fork keeps the source identity and forks that native thread
+    // with full context. Its narrower tool set leaves the source's extra tool unavailable.
     await cp(f.descriptor.sessionFile, join(f.root, "child.jsonl"));
-    const fork = await fixture({ root: f.root, agentId: "child" });
-    expect(fork.client.request).toHaveBeenCalledWith("thread/start", expect.not.objectContaining({ threadId: "native-thread" }));
-    expect(fork.client.request.mock.calls.some(([method]) => method === "thread/fork")).toBe(false);
-    expect(fork.client.request.mock.calls.find(([method]) => method === "thread/inject_items")?.[1].items[0].content[0].text).toContain("Selected fork boundary");
-    expect(fork.runtime.getCustomEntries(NATIVE_CODEX_STATE).at(-1)).toMatchObject({ threadId: "forked", ownerAgentId: "child" });
+    const fork = await fixture({ root: f.root, agentId: "child", prompt: "Side chat contract" });
+    expect(fork.client.request).toHaveBeenCalledWith("thread/fork", expect.objectContaining({ threadId: "native-thread", developerInstructions: "Side chat contract" }));
+    expect(fork.client.request.mock.calls.some(([method]) => method === "thread/start")).toBe(false);
+    const injected = fork.client.request.mock.calls.filter(([method]) => method === "thread/inject_items").map(([, params]) => params.items[0]);
+    expect(injected).toHaveLength(1);
+    expect(injected[0]).toMatchObject({ role: "developer" });
+    expect(injected[0].content[0].text).toContain("Side chat contract");
+    expect(fork.runtime.getCustomEntries(NATIVE_CODEX_STATE).at(-1)).toMatchObject({ threadId: "forked", ownerAgentId: "child", forkFrom: "native-thread", hasStartedTurn: false });
+    await fork.runtime.sendMessage("Side question");
+    const base = { threadId: "forked", turnId: "turn-1" };
+    expect(await fork.serverRequest("item/tool/call", { ...base, namespace: "forge", tool: "extra_tool", callId: "extra", arguments: { value: "x" } }))
+      .toMatchObject({ success: false });
+    expect(await fork.serverRequest("item/tool/call", { ...base, namespace: "forge", tool: "fixture_tool", callId: "ok", arguments: { value: "ok" } }))
+      .toMatchObject({ success: true });
+    await fork.notify("turn/completed", { threadId: "forked", turn: { id: "turn-1", status: "completed" } });
     await fork.runtime.terminate();
+    const resumedFork = await fixture({ root: f.root, agentId: "child", prompt: "Side chat contract" });
+    expect(resumedFork.client.request).toHaveBeenCalledWith("thread/resume", expect.objectContaining({ threadId: "forked" }));
+    await resumedFork.runtime.terminate();
+
+    // A message-bounded fork omits the source identity and rebuilds from the bounded canonical copy.
+    const bounded = (await readFile(f.descriptor.sessionFile, "utf8")).split("\n").filter(line => !line.includes(NATIVE_CODEX_STATE)).join("\n");
+    await writeFile(join(f.root, "child.jsonl"), bounded);
+    const rebuilt = await fixture({ root: f.root, agentId: "child" });
+    expect(rebuilt.client.request).toHaveBeenCalledWith("thread/start", expect.not.objectContaining({ threadId: "native-thread" }));
+    expect(rebuilt.client.request.mock.calls.some(([method]) => method === "thread/fork")).toBe(false);
+    expect(rebuilt.client.request.mock.calls.find(([method]) => method === "thread/inject_items")?.[1].items[0].content[0].text).toContain("Selected fork boundary");
+    expect(rebuilt.runtime.getCustomEntries(NATIVE_CODEX_STATE).at(-1)).toMatchObject({ threadId: "forked", ownerAgentId: "child" });
+    await rebuilt.runtime.terminate();
     await expect(fixture({ root: f.root, rejectResume: true })).rejects.toThrow("Missing native thread");
   });
 

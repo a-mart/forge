@@ -1,5 +1,5 @@
 import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
-import { isAgentEffectivelyArchived } from '@/lib/agent-hierarchy'
+import { isAgentEffectivelyArchived, isSideChatAgent } from '@/lib/agent-hierarchy'
 
 export function chooseMostRecentSessionFallbackForDeletedTarget(
   agents: AgentDescriptor[],
@@ -17,7 +17,7 @@ export function chooseMostRecentSessionFallbackForDeletedTarget(
 
   const profileSessions = agents
     .filter((agent) => {
-      if (agent.role !== 'manager') {
+      if (agent.role !== 'manager' || isSideChatAgent(agent)) {
         return false
       }
 

@@ -719,12 +719,14 @@ export function buildForkSessionCommand(
   label: string | undefined,
   fromMessageId: string | undefined,
   requestId: string,
+  sessionPurpose?: 'side_chat',
 ): ClientCommand {
   return {
     type: 'fork_session',
     sourceAgentId: requireTrimmedValue(sourceAgentId, 'Source agent id is required.'),
     label: label?.trim() || undefined,
     fromMessageId: fromMessageId?.trim() || undefined,
+    ...(sessionPurpose ? { sessionPurpose } : {}),
     requestId,
   }
 }

@@ -196,6 +196,8 @@ export type ClientCommand =
       sourceAgentId: string
       label?: string
       fromMessageId?: string
+      /** `side_chat` forks from the latest message and replaces the source's previous side chat. */
+      sessionPurpose?: 'side_chat'
       requestId?: string
     }
   | { type: 'clear_session'; agentId: string; requestId?: string }

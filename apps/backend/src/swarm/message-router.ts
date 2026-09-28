@@ -1,4 +1,4 @@
-import type { MessageSourceContext } from "./types.js";
+import type { AgentDescriptor, MessageSourceContext } from "./types.js";
 
 export type MessageRouteOrigin = "user" | "internal" | "scheduled" | "worker_result";
 
@@ -45,7 +45,7 @@ export interface MessageRouteProvenance {
   origin: MessageRouteOrigin;
   internalDeliveryKind?: MessageRouteInternalDeliveryKind;
   sourceContext?: MessageSourceContext;
-  sessionPurpose?: "cortex_review" | "agent_creator" | "capture_check";
+  sessionPurpose?: AgentDescriptor["sessionPurpose"];
   archetypeId?: string;
   targetKind: MessageRouteTargetKind;
   role: MessageRouteRole;

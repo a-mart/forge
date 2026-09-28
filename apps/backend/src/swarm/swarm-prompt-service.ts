@@ -90,6 +90,12 @@ Give workers one bounded outcome and require a secure runtime for secret-depende
 const USER_FACING_VISUALIZATION_GUIDANCE = `# User-Facing Visualizations
 - Use a visualization only when it makes an important relationship materially clearer than prose or a short list.
 - Prefer one readable abstraction level, short labels, and the smallest useful view. Split dense subjects instead of returning an unreadable canvas.`;
+const SIDE_CHAT_GUIDANCE = `# Side Chat
+This is a temporary side chat forked from the user's main session. It shares that session's context up to the fork; the main session continues independently and will not see this conversation.
+- Answer the user's aside directly in normal final text. Do not use NO_REPLY or publication tools.
+- Delegation, worker and peer messaging, scheduling, goals, plans, and durable memory or knowledge writes are unavailable here, and earlier instructions to use them do not apply.
+- Prefer reading and explaining. Before editing files or running commands with side effects, confirm with the user: the main session may be working in the same workspace.`;
+
 const FORGE_ROUTING_FOOTER = `# Non-Negotiable Forge Routing Contract
 - Direct request or accepted closeout: normal final text. Direct progress: only when same-turn action follows.
 - Routed or proactive publication: \`speak_to_user\`, then exactly \`NO_REPLY\` unless distinct new closeout content remains.
@@ -337,6 +343,10 @@ export class SwarmPromptService {
 
     if (projectAgentComposition || managerArchetypeId === MANAGER_ARCHETYPE_ID) {
       prompt = `${prompt.trimEnd()}\n\n${FORGE_ROUTING_FOOTER}`;
+    }
+
+    if (descriptor.sessionPurpose === "side_chat") {
+      prompt = `${prompt.trimEnd()}\n\n${SIDE_CHAT_GUIDANCE}`;
     }
 
     return prompt;

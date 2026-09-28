@@ -1,4 +1,4 @@
-import { chooseFallbackAgentId, filterBuilderVisibleAgents, isAgentEffectivelyArchived } from '../agent-hierarchy'
+import { chooseFallbackAgentId, filterBuilderSurfaceAgents, isAgentEffectivelyArchived } from '../agent-hierarchy'
 import type { ManagerWsState } from '../ws-state'
 import { clearGenerationThroughputForIneligibleAgents } from './generation-throughput-state'
 import { isManagerAgent, isWorkerAgent } from './runtime-types'
@@ -49,7 +49,7 @@ export function reduceAgentsSnapshot(input: {
   agents: AgentDescriptor[]
 }): AgentsSnapshotReduction {
   const { state, desiredAgentId, explicitAgentSelectionAgentId, agents } = input
-  const visibleAgents = filterBuilderVisibleAgents(agents)
+  const visibleAgents = filterBuilderSurfaceAgents(agents)
   const incomingAgentIds = new Set(visibleAgents.map((agent) => agent.agentId))
   const managersById = new Map(
     [...state.agents, ...visibleAgents]

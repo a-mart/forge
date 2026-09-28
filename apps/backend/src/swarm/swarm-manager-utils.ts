@@ -287,9 +287,14 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
   if (
     value.sessionPurpose !== undefined &&
     value.sessionPurpose !== "cortex_review" &&
-    value.sessionPurpose !== "agent_creator"
+    value.sessionPurpose !== "agent_creator" &&
+    value.sessionPurpose !== "side_chat"
   ) {
-    return 'sessionPurpose must be "cortex_review" or "agent_creator" when provided';
+    return 'sessionPurpose must be "cortex_review", "agent_creator", or "side_chat" when provided';
+  }
+
+  if (value.sideChatSourceAgentId !== undefined && typeof value.sideChatSourceAgentId !== "string") {
+    return "sideChatSourceAgentId must be a string when provided";
   }
 
   if (

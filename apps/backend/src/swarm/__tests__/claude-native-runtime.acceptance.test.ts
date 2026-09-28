@@ -153,14 +153,27 @@ describe("Claude native process acceptance", () => {
       expect(latestUsage().nativeSessionId).toBe(beforeResume.nativeSessionId);
       expect(latestUsage().usage.total).toBe(beforeResume.usage.total + 130);
       expect(requests.at(-1)!.raw).toContain("CASE_READ");
-      // Forked Forge files carry parent state. They must never resume the parent's writer.
       await runtime.stopInFlight({ shutdownTimeoutMs: 10_000 });
+      // A message-bounded fork omits the parent's native identity: a new native
+      // session that never sees the parent's later native turns.
+      const ownerLines = (await readFile(descriptor("owner").sessionFile, "utf8")).split("\n");
+      await writeFile(descriptor("bounded").sessionFile, ownerLines.filter(line => !line.includes(NATIVE_CLAUDE_STATE)).join("\n"));
+      runtime = await create("bounded");
+      const boundedRequest = requests.length;
+      await send("CASE_BOUNDED New bounded fork work.");
+      expect(latestUsage().nativeSessionId).not.toBe(beforeResume.nativeSessionId);
+      expect(requests.slice(boundedRequest).some(r => r.raw.includes("CASE_RESUME"))).toBe(false);
+      await runtime.stopInFlight({ shutdownTimeoutMs: 10_000 });
+      // A latest-message fork keeps the parent's identity and forks that native
+      // thread: full parent context under a new native session, never the parent's writer.
       await cp(descriptor("owner").sessionFile, descriptor("fork").sessionFile);
       runtime = await create("fork");
-      expect(runtime.getCustomEntries(NATIVE_CLAUDE_STATE).at(-1)).not.toMatchObject(state as object);
+      expect(runtime.getCustomEntries(NATIVE_CLAUDE_STATE).at(-1)).toMatchObject({ ownerAgentId: "fork", forkFrom: beforeResume.nativeSessionId, hasStartedTurn: false });
+      const forkRequest = requests.length;
       await send("CASE_FORK New fork work.");
       expect(latestUsage().nativeSessionId).not.toBe(beforeResume.nativeSessionId);
-      expect(latestUsage().usage.total).toBe(130);
+      expect(requests[forkRequest]!.raw).toContain("CASE_RESUME");
+      expect(requests[forkRequest]!.raw).not.toContain("Recovered Forge Conversation Context");
       await runtime.sendMessage("CASE_STOP Start a long shell command.");
       await waitFor(() => existsSync(join(cwd, "stop-started")), "stop tool starts");
       await runtime.sendMessage("CASE_STEER accepted steering must not run after Stop all");
@@ -176,7 +189,14 @@ describe("Claude native process acceptance", () => {
       runtime = await create("fork");
       await send("CASE_AFTERSTOP Follow the new user instruction.");
       expect(requests.at(-1)!.raw).not.toContain("CASE_CANCELLED");
-      expect(runtime.getCustomEntries(NATIVE_CLAUDE_STATE).at(-1)).toMatchObject({ ownerAgentId: "fork" });
+      expect(runtime.getCustomEntries(NATIVE_CLAUDE_STATE).at(-1)).toMatchObject({ ownerAgentId: "fork", hasStartedTurn: true });
+      expect(requests.at(-1)!.raw).toContain("CASE_FORK");
+      await runtime.stopInFlight({ shutdownTimeoutMs: 10_000 });
+      // The parent's native session is unchanged by the fork's turns.
+      runtime = await create();
+      await send("CASE_PARENT Continue the parent.");
+      expect(latestUsage().nativeSessionId).toBe(beforeResume.nativeSessionId);
+      expect(requests.at(-1)!.raw).not.toContain("CASE_FORK");
       expect(events.map(extractCleanManagerAssistantFinalMessage).filter(Boolean).some(m => m!.text.startsWith("DONE_CASE_READ"))).toBe(true);
       for (const file of await jsonlFiles(root)) expect(await readFile(file, "utf8")).not.toContain(canary);
     } finally {

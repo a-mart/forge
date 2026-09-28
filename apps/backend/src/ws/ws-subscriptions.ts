@@ -16,7 +16,7 @@ import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { isEligibleLocalBuilderManager, type BrowserAutomationService } from "../swarm/browser-automation/index.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
-import { filterBuilderVisibleAgents, filterBuilderVisibleProfiles } from "./builder-visibility.js";
+import { filterBuilderVisibleAgents, filterBuilderVisibleProfiles, isBuilderInventorySession } from "./builder-visibility.js";
 import { resolveSessionAgentIdForUnread } from "./unread-utils.js";
 import {
   isConversationEntryServerEvent,
@@ -243,11 +243,11 @@ export class WsSubscriptions {
     const systemIds = new Set(profiles.filter(isSystemProfile).map((profile) => profile.profileId));
     const visible = (id: string): boolean => {
       const agent = this.swarmManager.getAgent(id);
-      return !!agent && agent.role === "manager" && filterBuilderVisibleAgents([agent], systemIds).length > 0;
+      return !!agent && isBuilderInventorySession(agent) && filterBuilderVisibleAgents([agent], systemIds).length > 0;
     };
     switch (event.type) {
       case "agents_snapshot":
-        return { ...event, agents: filterBuilderVisibleAgents(event.agents, systemIds).filter((agent) => agent.role === "manager") };
+        return { ...event, agents: filterBuilderVisibleAgents(event.agents, systemIds).filter(isBuilderInventorySession) };
       case "agent_status":
       case "unread_count_update":
         return visible(event.agentId) ? event : null;

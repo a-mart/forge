@@ -49,7 +49,7 @@ import {
 } from '@/lib/agent-hierarchy'
 import { requestGuardedAgentTransition } from '@/components/index-page/builder-file-editor-guard-actions'
 import { isReplyTargetLoadedInMessages } from '@/components/index-page/reply-target-utils'
-import { parseCompactSlashCommand } from '@/hooks/index-page/use-slash-commands'
+import { parseCompactSlashCommand, parseSideSlashCommand } from '@/hooks/index-page/use-slash-commands'
 import { useFileEditorCoordinator } from '@/components/file-browser/use-file-editor-coordinator'
 import type { TerminalSelectionContext } from '@/components/terminal/TerminalViewport'
 
@@ -73,6 +73,7 @@ export interface UseSessionActionsOptions {
   visibleMessages: ConversationEntry[]
   markPendingResponse: (agentId: string, messageCount: number) => void
   handleCompactManager: (customInstructions?: string) => Promise<void>
+  startSideChat: (sourceAgentId: string, initialMessage?: string) => void
   messageInputRef: MutableRefObject<MessageInputHandle | null>
   messageListRef: MutableRefObject<MessageListHandle | null>
 }
@@ -90,6 +91,7 @@ export function useSessionActions({
   visibleMessages,
   markPendingResponse,
   handleCompactManager,
+  startSideChat,
   messageInputRef,
   messageListRef,
 }: UseSessionActionsOptions) {
@@ -120,13 +122,17 @@ export function useSessionActions({
       return false
     }
 
-    const compactCommand =
-      isActiveManager && (!attachments || attachments.length === 0)
-        ? parseCompactSlashCommand(text)
-        : null
+    const isBuiltInCommandTarget = isActiveManager && (!attachments || attachments.length === 0)
+    const compactCommand = isBuiltInCommandTarget ? parseCompactSlashCommand(text) : null
 
     if (compactCommand) {
       void handleCompactManager(compactCommand.customInstructions)
+      return true
+    }
+
+    const sideCommand = isBuiltInCommandTarget ? parseSideSlashCommand(text) : null
+    if (sideCommand) {
+      startSideChat(activeAgentId, sideCommand.initialMessage)
       return true
     }
 

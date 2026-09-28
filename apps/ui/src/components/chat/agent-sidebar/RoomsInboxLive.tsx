@@ -2,7 +2,7 @@ import type React from 'react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { SESSION_ATTENTION_MAX_DISMISS_IDS } from '@forge/protocol'
 import { LOCAL_ORIGIN_ID, originRegistry, useAllOrigins } from '@/lib/origin-store'
-import type { ProfileTreeRow } from '@/lib/agent-hierarchy'
+import { isSideChatAgent, type ProfileTreeRow } from '@/lib/agent-hierarchy'
 import type { ManagerWsState } from '@/lib/ws-state'
 import { RoomsInbox } from './RoomsInbox'
 import { RoomsModeSwitch, type RoomsMode } from './RoomsModeSwitch'
@@ -47,6 +47,7 @@ function selectInboxOriginSnapshot(state: ManagerWsState): InboxOriginSnapshot {
       || agent.archivedAt
       || agent.agentCreatorResult
       || agent.sessionSurface === 'collab'
+      || isSideChatAgent(agent)
     ) return []
     const profile = profilesById.get(profileId)
     if (!profile) return []

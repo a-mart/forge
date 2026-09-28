@@ -391,6 +391,9 @@ export class SwarmSessionService {
       sessionPurpose: options?.sessionPurpose
     });
     const forkedDescriptor = prepared.sessionDescriptor as ProvisionedSessionDescriptor;
+    if (options?.sessionPurpose === "side_chat") {
+      forkedDescriptor.sideChatSourceAgentId = sourceDescriptor.agentId;
+    }
     forkedDescriptor.model = { ...sourceDescriptor.model };
     forkedDescriptor.modelOrigin = sourceDescriptor.modelOrigin;
     forkedDescriptor.managerPosture = sourceDescriptor.managerPosture ?? DEFAULT_MANAGER_POSTURE;

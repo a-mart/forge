@@ -3594,6 +3594,34 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+  it('sends side-chat fork_session commands without a fork point', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    void client.forkSession('source', undefined, undefined, { sessionPurpose: 'side_chat' }).catch(() => {})
+    const forkPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    expect(forkPayload).toMatchObject({
+      type: 'fork_session',
+      sourceAgentId: 'source',
+      sessionPurpose: 'side_chat',
+    })
+    expect(forkPayload).not.toHaveProperty('fromMessageId')
+
+    client.destroy()
+  })
+
   it('rejects fork_session via fallback error hints from the shared request contract', async () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 

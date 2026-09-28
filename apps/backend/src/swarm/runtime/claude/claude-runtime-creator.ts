@@ -7,7 +7,7 @@ import type { RuntimeCreationOptions, SwarmAgentRuntime, SwarmRuntimeCallbacks }
 import type { SwarmToolHost } from "../../swarm-tool-host.js";
 import type { AgentDescriptor, SwarmConfig } from "../../types.js";
 import type { SkillMetadata } from "../../skills/skill-metadata-service.js";
-import { planRuntimeTools } from "../runtime-tool-plan.js";
+import { isInternalSessionPurpose, planRuntimeTools } from "../runtime-tool-plan.js";
 import { assertClaudeSetup, claudeRuntimeEnvironment, resolveClaudeExecutable } from "./claude-runtime-environment.js";
 import { ClaudeAgentRuntime } from "./claude-agent-runtime.js";
 import { TaskNotesStore } from "../../task-notes-store.js";
@@ -35,8 +35,8 @@ export class ClaudeRuntimeCreator {
     const { descriptor } = options;
     const sessionDescriptor = descriptor.role === "manager" ? descriptor : options.sessionDescriptor;
     if (!sessionDescriptor || sessionDescriptor.sessionSurface === "collab" || sessionDescriptor.collab
-      || sessionDescriptor.sessionPurpose || sessionDescriptor.internalWorkerKind
-      || descriptor.sessionSurface === "collab" || descriptor.collab || descriptor.sessionPurpose || descriptor.internalWorkerKind) {
+      || isInternalSessionPurpose(sessionDescriptor) || sessionDescriptor.internalWorkerKind
+      || descriptor.sessionSurface === "collab" || descriptor.collab || isInternalSessionPurpose(descriptor) || descriptor.internalWorkerKind) {
       throw new Error("Claude native is available for ordinary local Builder sessions and their roster workers.");
     }
     const trust = await this.deps.resolveProjectExecutableTrustPlan({ descriptor, sessionDescriptor });

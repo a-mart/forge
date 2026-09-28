@@ -14,6 +14,15 @@ export function filterBuilderVisibleProfiles(profiles: ManagerProfile[]): Manage
   return profiles.filter((profile) => !isSystemProfile(profile) || isBuilderVisibleSystemProfileId(profile.profileId));
 }
 
+/**
+ * A session listed in the Builder inventory (sidebar Inbox, attention, unread).
+ * Temporary side chats stay in conversation agent snapshots, where their panel
+ * reads them, but are never listed as sessions.
+ */
+export function isBuilderInventorySession(agent: AgentDescriptor): boolean {
+  return agent.role === "manager" && agent.sessionPurpose !== "side_chat";
+}
+
 export function filterBuilderVisibleAgents(
   agents: AgentDescriptor[],
   systemProfileIds: Set<string>,

@@ -1,5 +1,5 @@
 import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
-import { isAgentEffectivelyArchived } from '@/lib/agent-hierarchy'
+import { isAgentEffectivelyArchived, isSideChatAgent } from '@/lib/agent-hierarchy'
 
 export function isUsableActiveTarget(
   agentId: string,
@@ -7,7 +7,7 @@ export function isUsableActiveTarget(
   profiles: ManagerProfile[],
 ): boolean {
   const agent = agents.find((entry) => entry.agentId === agentId)
-  if (!agent) return false
+  if (!agent || isSideChatAgent(agent)) return false
   if (agent.role === 'manager') {
     return !isAgentEffectivelyArchived(agent, profiles)
   }

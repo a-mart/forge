@@ -5,6 +5,8 @@ export interface SlashCommand {
   id: string
   name: string
   prompt: string
+  /** Menu description for built-in commands; saved commands show their prompt. */
+  description?: string
   createdAt: string
   updatedAt: string
 }

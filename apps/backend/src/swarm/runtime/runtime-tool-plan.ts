@@ -94,6 +94,10 @@ export function buildBaseRuntimeTools(host: SwarmToolHost, descriptor: AgentDesc
     return swarmTools.filter((tool) => CAPTURE_CHECK_TOOL_NAMES.has(tool.name));
   }
 
+  if (descriptor.sessionPurpose === "side_chat") {
+    return swarmTools.filter((tool) => SIDE_CHAT_TOOL_NAMES.has(tool.name));
+  }
+
   if (normalizeArchetypeId(descriptor.archetypeId ?? "") !== CORTEX_ARCHETYPE_ID) {
     return swarmTools;
   }
@@ -192,6 +196,11 @@ function previewForLog(text: string, maxLength = 160): string {
   return `${normalized.slice(0, maxLength)}...`;
 }
 
+/** Internal purposes (Cortex review, agent creation, capture checks). A side chat is an ordinary conversation. */
+export function isInternalSessionPurpose(descriptor: Pick<AgentDescriptor, "sessionPurpose">): boolean {
+  return descriptor.sessionPurpose !== undefined && descriptor.sessionPurpose !== "side_chat";
+}
+
 export function isBrowserAutomationEligible(descriptor: AgentDescriptor): boolean {
   return descriptor.role === "manager"
     && typeof descriptor.profileId === "string"
@@ -228,3 +237,6 @@ const CORTEX_DISABLED_TOOL_NAMES = new Set([
   "retry_codex_plugin_worker",
 ]);
 const CAPTURE_CHECK_TOOL_NAMES = new Set(["knowledge", "save_learning"]);
+// A side chat is a temporary aside: no delegation, scheduling, peer messaging,
+// user publication, new secret requests, or durable memory/knowledge writes.
+const SIDE_CHAT_TOOL_NAMES = new Set(["knowledge", "present_choices", "secure_session_status"]);

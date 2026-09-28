@@ -96,6 +96,28 @@ function renderActiveAgent(input: {
 }
 
 describe('useActiveAgent route subscription', () => {
+  it('redirects a side chat route to its source session instead of subscribing to it', () => {
+    const source = makeManager('main')
+    const sideChat = { ...makeManager('main--s2', 'main'), sessionPurpose: 'side_chat' as const, sideChatSourceAgentId: 'main' }
+    const state = {
+      ...createInitialManagerWsState('main--s2'),
+      connected: true,
+      hasReceivedAgentsSnapshot: true,
+      hasReceivedProfilesSnapshot: true,
+      agents: [source, sideChat],
+      profiles: [makeProfile(source)],
+    }
+
+    const { navigateToRoute, subscribeToAgent } = renderActiveAgent({
+      state,
+      routeAgentId: 'main--s2',
+      explicitSelectionAgentId: 'main--s2',
+    })
+
+    expect(navigateToRoute).toHaveBeenCalledWith({ view: 'chat', agentId: 'main' }, true)
+    expect(subscribeToAgent).not.toHaveBeenCalled()
+  })
+
   it('subscribes a cold explicit worker route before the agents snapshot arrives', () => {
     const state = {
       ...createInitialManagerWsState(null),
