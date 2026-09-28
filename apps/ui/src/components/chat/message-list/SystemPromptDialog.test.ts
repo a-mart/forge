@@ -40,6 +40,13 @@ async function flushFetch() {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
+async function waitForText(text: string, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs
+  while (!document.body.textContent?.includes(text) && Date.now() < deadline) {
+    await flushFetch()
+  }
+}
+
 function renderDialog({
   open = true,
   agentId = 'agent-1',
@@ -263,7 +270,7 @@ describe('SystemPromptDialog', () => {
     })
 
     renderDialog()
-    await flushFetch()
+    await waitForText('Tool 2')
 
     expect(document.body.textContent).toContain('Project-specific instructions and guidelines:')
     expect(document.body.textContent).toContain('Current date: user-authored value')
