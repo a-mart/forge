@@ -189,6 +189,21 @@ export class DebuggerIdentityLossError extends Error {
   }
 }
 
+/**
+ * Chrome refuses (and force-detaches) an extension debugger while any frame in the tab belongs to a
+ * different extension, such as a password manager's inline autofill menu.
+ */
+export class DebuggerForeignExtensionFrameError extends Error {
+  constructor() {
+    super('Another Chrome extension has a frame in this page, such as a password manager autofill menu. Chrome blocks debugger control while that frame is present.')
+    this.name = 'DebuggerForeignExtensionFrameError'
+  }
+}
+
+function isForeignExtensionFrameRefusal(error: unknown): boolean {
+  return (error instanceof Error ? error.message : String(error)) === 'Cannot access a chrome-extension:// URL of different extension'
+}
+
 function isDebuggerAttachConflict(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
   return /^Another debugger is already attached(?: to the tab with id: [0-9]+)?\.?$/u.test(message)
@@ -295,6 +310,7 @@ export class DebuggerController {
         if (isDebuggerAttachConflict(error)) {
           throw new DebuggerAttachConflictError(error instanceof Error ? error.message : String(error))
         }
+        if (isForeignExtensionFrameRefusal(error)) throw new DebuggerForeignExtensionFrameError()
         throw error
       }
       didAttach = true

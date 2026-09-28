@@ -18,6 +18,7 @@ import {
   DebuggerAttachConflictError,
   DebuggerAttachmentLimitError,
   DebuggerController,
+  DebuggerForeignExtensionFrameError,
   DebuggerIdentityLossError,
 } from '../../runtime/debugger-controller.js'
 import {
@@ -44,6 +45,7 @@ const TRANSPORT_GRACE_DELAY_MINUTES = 0.5
 const MAX_CONTENT_BRIDGES = 512
 const MAX_CONTENT_BRIDGES_PER_TAB = 64
 const MAX_PENDING_CLOSED_TAB_RECEIPTS = 128
+const FOREIGN_FRAME_DISMISS_WINDOW_MS = 2_000
 
 type ContentPort = ChromeRuntimePort & { sender?: ChromeRuntimeSender }
 
@@ -579,8 +581,17 @@ export class Runtime implements ServiceWorkerPayload {
         }
 
         try {
-          await this.controlSessions.ensure(params.tabId, params.leaseId, params.leaseEpoch)
+          await this.ensureControlSession(params)
         } catch (error) {
+          if (error instanceof DebuggerForeignExtensionFrameError) {
+            return this.executeFailure(
+              params,
+              'debugger-unavailable',
+              `${error.message} Forge moved focus off the page field, but the frame stayed. Ask the user to close it, or to turn off that extension's inline menu or site access for this site.`,
+              true,
+              { reason: 'foreign-extension-frame' },
+            )
+          }
           if (error instanceof DebuggerAttachConflictError) {
             return this.executeFailure(params, 'debugger-unavailable', error.message, true, EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS)
           }
@@ -789,6 +800,35 @@ export class Runtime implements ServiceWorkerPayload {
   }
 
   private executeResponse(params: ExternalChromeExecuteParams, ok: true, result: unknown): Record<string, unknown> { return { protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, tabId: params.tabId, operation: params.operation, ok, result } }
+
+  /**
+   * Inline autofill menus are the common foreign-extension frame, and they close when their field
+   * loses focus. Blur once in the top document, then retry the attach while Chrome removes the frame.
+   */
+  private async ensureControlSession(params: ExternalChromeExecuteParams): Promise<void> {
+    try {
+      await this.controlSessions.ensure(params.tabId, params.leaseId, params.leaseEpoch)
+      return
+    } catch (error) {
+      if (!(error instanceof DebuggerForeignExtensionFrameError)) throw error
+    }
+    await this.chrome.scripting.executeScript({
+      target: { tabId: params.tabId },
+      func: () => { (document.activeElement as HTMLElement | null)?.blur?.() },
+    }).catch(() => undefined)
+    const retryUntil = Math.min(Date.parse(params.deadlineAt), this.now() + FOREIGN_FRAME_DISMISS_WINDOW_MS)
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      this.authorities.assertScope(params.leaseId, params.leaseEpoch, params.tabId)
+      try {
+        await this.controlSessions.ensure(params.tabId, params.leaseId, params.leaseEpoch)
+        return
+      } catch (error) {
+        if (!(error instanceof DebuggerForeignExtensionFrameError) || this.now() >= retryUntil) throw error
+      }
+    }
+  }
+
   private executeFailure(params: ExternalChromeExecuteParams, code: string, message: string, retryable: boolean, details?: Record<string, string | number | boolean | null>): Record<string, unknown> { return { protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, tabId: params.tabId, operation: params.operation, ok: false, error: { code, message: message.slice(0, 1_024), retryable, ...(details ? { details } : {}) } } }
 
   private browserTab(tab: ChromeTab, authority: TabAuthorityRecord): BrowserTabSnapshot {

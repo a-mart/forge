@@ -93,9 +93,8 @@ export interface ChromeApi {
   scripting: {
     executeScript(injection: {
       target: { tabId: number; allFrames?: boolean; frameIds?: number[] }
-      files: string[]
       world?: 'ISOLATED' | 'MAIN'
-    }): Promise<unknown[]>
+    } & ({ files: string[] } | { func: () => void })): Promise<unknown[]>
   }
   debugger: ChromeDebuggerApi
   alarms: {

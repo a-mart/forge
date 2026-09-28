@@ -90,7 +90,7 @@ export function fakeChrome(options: FakeChromeOptions = {}): ChromeApi & {
       },
     },
     storage: { local, session },
-    scripting: { executeScript: async (injection) => { injections.push(structuredClone(injection)); return [] } },
+    scripting: { executeScript: async (injection) => { if ('files' in injection) injections.push(structuredClone(injection)); return [] } },
     debugger: {
       getTargets: async () => structuredClone(options.debuggerTargets ?? tabs.flatMap((tab) => tab.id === undefined ? [] : [{ tabId: tab.id, attached: attached.has(tab.id), extensionId: 'fcchfcnadajoejfbiclihglkmbcfhajd' }])),
       attach: async (target) => {
