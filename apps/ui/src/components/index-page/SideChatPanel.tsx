@@ -1,9 +1,19 @@
-import { useCallback, useEffect, useRef, type CSSProperties } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Loader2, MessageSquareDashed, PanelRightClose, Trash2 } from 'lucide-react'
 import type { ConversationAttachment } from '@forge/protocol'
 import { MessageInput, type MessageInputHandle } from '@/components/chat/MessageInput'
 import type { MessageInputSendOptions } from '@/components/chat/message-input/types'
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { usePendingResponse } from '@/hooks/index-page/use-pending-response'
 import { useSideChatConnection } from '@/hooks/index-page/use-side-chat-connection'
@@ -53,6 +63,7 @@ export function SideChatPanel({
     agentId: isExpanded ? sideChatAgentId : null,
   })
   const asideRef = useRef<HTMLElement | null>(null)
+  const [isConfirmingDiscard, setIsConfirmingDiscard] = useState(false)
   const getAvailableWidth = useCallback(() => {
     const container = asideRef.current?.parentElement
     if (!container) return MAX_SIDE_CHAT_WIDTH
@@ -179,12 +190,31 @@ export function SideChatPanel({
           variant="ghost"
           size="sm"
           className="h-7 shrink-0 gap-1.5 px-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-          onClick={onDiscard}
+          onClick={() => setIsConfirmingDiscard(true)}
           aria-label="Discard side chat"
         >
           <Trash2 className="size-3.5" aria-hidden="true" />
           Discard
         </Button>
+        <AlertDialog open={isConfirmingDiscard} onOpenChange={setIsConfirmingDiscard}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Discard this side chat?</AlertDialogTitle>
+              <AlertDialogDescription>
+                The side chat and its conversation will be deleted. The main session is not affected.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={onDiscard}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Discard
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
 
       {scopedState?.lastError ? (

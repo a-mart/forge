@@ -135,7 +135,17 @@ describe('SideChatPanel', () => {
     expect(clients[0]).toMatchObject({ url: 'ws://remote.example/ws', initialAgentId: 'main--s2', options: { originId: 'remote-1' } })
     expect(clients[0]?.start).toHaveBeenCalledTimes(1)
 
-    act(() => (container.querySelector('[aria-label="Discard side chat"]') as HTMLButtonElement).click())
+    const openDiscard = () => act(() => (container.querySelector('[aria-label="Discard side chat"]') as HTMLButtonElement).click())
+    const dialogButton = (label: string) => [...document.body.querySelectorAll('[role="alertdialog"] button')]
+      .find((button) => button.textContent === label) as HTMLButtonElement
+    // Discard asks for confirmation; cancelling keeps the side chat.
+    openDiscard()
+    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain('Discard this side chat?')
+    act(() => dialogButton('Cancel').click())
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(props.onDiscard).not.toHaveBeenCalled()
+    openDiscard()
+    act(() => dialogButton('Discard').click())
     expect(props.onDiscard).toHaveBeenCalledTimes(1)
 
     rerender({ sideChatAgentId: null })
