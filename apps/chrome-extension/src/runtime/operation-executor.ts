@@ -27,7 +27,7 @@ import {
   type ExternalChromeExecuteParams,
 } from '@forge/protocol'
 import type { ChromeTab } from './chrome-api.js'
-import { DebuggerController, type DebuggerRoute } from './debugger-controller.js'
+import { DebuggerController, DebuggerForeignExtensionFrameError, type DebuggerRoute } from './debugger-controller.js'
 import type { SyntheticTrustedEventSignature } from './human-control.js'
 
 const POLL_MS = 50
@@ -678,6 +678,9 @@ export class ExternalChromeOperationExecutor {
       return error.code === 'control-interrupted' && authority.wasHumanInterrupted()
         ? collaborativeCollision(authority)
         : error
+    }
+    if (error instanceof DebuggerForeignExtensionFrameError) {
+      return new ExternalChromeOperationError('debugger-unavailable', error.message, true, { reason: 'foreign-extension-frame' })
     }
     if (!authority.isCurrent()) return authority.wasHumanInterrupted()
       ? collaborativeCollision(authority)

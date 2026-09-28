@@ -3,6 +3,7 @@ import type { ChromeDebuggerApi, ChromeDebuggerSession, ChromeDebuggerTarget } f
 export type DebuggerState = 'UNATTACHED' | 'ATTACHING' | 'ATTACHED' | 'DETACHING' | 'LOST'
 
 export const DEFAULT_MAX_SIMULTANEOUS_DEBUGGER_ATTACHMENTS = 8
+const FOREIGN_FRAME_RECOVERY_WINDOW_MS = 2_000
 
 interface TargetNode {
   targetId: string
@@ -194,8 +195,11 @@ export class DebuggerIdentityLossError extends Error {
  * different extension, such as a password manager's inline autofill menu.
  */
 export class DebuggerForeignExtensionFrameError extends Error {
-  constructor() {
-    super('Another Chrome extension has a frame in this page, such as a password manager autofill menu. Chrome blocks debugger control while that frame is present.')
+  constructor(extensionIds: readonly string[] = []) {
+    const owner = extensionIds.length === 0
+      ? 'Another Chrome extension'
+      : `Another Chrome extension (${extensionIds.map((id) => `chrome-extension://${id}`).join(', ')})`
+    super(`${owner} keeps a frame in this page, such as a password manager autofill menu, and Chrome blocks debugger control while it is present. Forge removed it, but it came back or could not be reached. Ask the user to turn off that extension's inline menu or site access for this site; its ID is listed in chrome://extensions with Developer mode on.`)
     this.name = 'DebuggerForeignExtensionFrameError'
   }
 }
@@ -230,6 +234,8 @@ export class DebuggerController {
     private readonly debuggerApi: ChromeDebuggerApi,
     private readonly maximumAttachments = DEFAULT_MAX_SIMULTANEOUS_DEBUGGER_ATTACHMENTS,
     private readonly now: () => number = Date.now,
+    /** Removes other extensions' frames from the tab and returns their extension IDs. */
+    private readonly removeForeignFrames?: (tabId: number) => Promise<string[]>,
   ) {
     if (!Number.isSafeInteger(maximumAttachments) || maximumAttachments < 1 || maximumAttachments > 32) {
       throw new Error('debugger attachment bound is invalid')
@@ -303,14 +309,13 @@ export class DebuggerController {
     let didAttach = false
     try {
       try {
-        const physicalAttach = this.debuggerApi.attach(target, '1.3')
+        const physicalAttach = this.withForeignFrameRecovery(tabId, () => this.debuggerApi.attach(target, '1.3'))
         this.physicalAttaches.set(tabId, physicalAttach.then(() => true, () => false))
         await physicalAttach
       } catch (error) {
         if (isDebuggerAttachConflict(error)) {
           throw new DebuggerAttachConflictError(error instanceof Error ? error.message : String(error))
         }
-        if (isForeignExtensionFrameRefusal(error)) throw new DebuggerForeignExtensionFrameError()
         throw error
       }
       didAttach = true
@@ -574,7 +579,7 @@ export class DebuggerController {
     if (state === 'UNATTACHED') return
     this.states.set(tabId, 'DETACHING')
     try {
-      await this.debuggerApi.detach({ tabId })
+      await this.withForeignFrameRecovery(tabId, () => this.debuggerApi.detach({ tabId }))
     } catch (error) {
       // onDetach may positively acknowledge release before the API promise rejects. Only restore
       // ownership when no such physical acknowledgement reached us.
@@ -586,6 +591,27 @@ export class DebuggerController {
     this.states.delete(tabId)
     this.trackers.delete(tabId)
     this.navigationGenerations.delete(tabId)
+  }
+
+  /**
+   * Chrome refuses attach, detach, and commands while another extension's frame is in the tab.
+   * Remove those frames and retry briefly in case the extension is mid-insertion.
+   */
+  private async withForeignFrameRecovery<Value>(tabId: number, action: () => Promise<Value>): Promise<Value> {
+    const extensionIds = new Set<string>()
+    const retryUntil = this.now() + FOREIGN_FRAME_RECOVERY_WINDOW_MS
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await action()
+      } catch (error) {
+        if (!isForeignExtensionFrameRefusal(error)) throw error
+        if (this.removeForeignFrames === undefined || attempt > 0 && this.now() >= retryUntil) {
+          throw new DebuggerForeignExtensionFrameError([...extensionIds])
+        }
+      }
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 100))
+      for (const id of await this.removeForeignFrames(tabId).catch(() => [])) extensionIds.add(id)
+    }
   }
 
   private assertAttachContinuing(tabId: number): void {
@@ -612,7 +638,12 @@ export class DebuggerController {
     await attach.catch(() => undefined)
   }
 
-  private trackCommand(tabId: number, command: Promise<unknown>): Promise<unknown> {
+  private trackCommand(tabId: number, sent: Promise<unknown>): Promise<unknown> {
+    const command = sent.catch(async (error: unknown) => {
+      if (!isForeignExtensionFrameRefusal(error)) throw error
+      // Commands are never replayed; clear the frame so the next operation can proceed.
+      throw new DebuggerForeignExtensionFrameError(await this.removeForeignFrames?.(tabId).catch(() => []) ?? [])
+    })
     const pending = this.pendingCommands.get(tabId) ?? new Set<Promise<unknown>>()
     pending.add(command)
     this.pendingCommands.set(tabId, pending)

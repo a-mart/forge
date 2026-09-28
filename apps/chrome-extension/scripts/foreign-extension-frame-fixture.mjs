@@ -1,7 +1,9 @@
 // Real-Chrome regression: a password manager's inline autofill menu is a chrome-extension:// iframe
 // that appears while a form field is focused. Chrome force-detaches the Forge debugger when that
 // frame appears and refuses every reattach while it remains. After the lease is lost and
-// re-acquired, the next operation must dismiss the focus-bound overlay and regain control.
+// re-acquired, the next operation must remove the foreign frame and regain control, including when
+// the page keeps focus in the field, hides the frame in a closed shadow root, or nests it in a child
+// frame. A frame its extension keeps re-adding must fail specifically and name that extension.
 import { spawn, spawnSync } from 'node:child_process'
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -44,44 +46,63 @@ await writeFile(bootstrapPath, bootstrap
   .replace(nativeConnect, 'connect: (_host) => { throw new Error("isolated fixture blocks native messaging") },')
   .replace(activation, `${activation}\n        Object.defineProperty(globalThis, '__forgeIsolatedFixtureRequest', { value: (request) => payload.handleIsolatedFixtureRequest(request) });\n        Object.defineProperty(globalThis, '__forgeIsolatedFixtureDiagnostics', { value: () => payload.diagnostics() });`))
 
-// Minimal stand-in for Bitwarden/1Password inline menus: a focus-bound extension iframe.
+// Stand-in for Bitwarden/1Password inline menus. Page paths select the menu behavior.
 const autofillRoot = path.join(profile, 'autofill-extension')
 await mkdir(autofillRoot)
 await writeFile(path.join(autofillRoot, 'manifest.json'), JSON.stringify({
   manifest_version: 3,
   name: 'Fixture autofill menu',
   version: '1.0.0',
-  content_scripts: [{ matches: ['http://127.0.0.1/*'], js: ['content.js'], run_at: 'document_idle' }],
+  content_scripts: [{ matches: ['http://127.0.0.1/*'], js: ['content.js'], run_at: 'document_idle', all_frames: true }],
   web_accessible_resources: [{ resources: ['menu.html'], matches: ['http://127.0.0.1/*'] }],
 }))
 await writeFile(path.join(autofillRoot, 'menu.html'), '<!doctype html><p>Autofill menu</p>')
 await writeFile(path.join(autofillRoot, 'content.js'), `
+  const menuFrame = () => {
+    const frame = document.createElement('iframe')
+    frame.src = chrome.runtime.getURL('menu.html')
+    return frame
+  }
   let menu = null
-  let pending = null
-  // Real inline menus open after an async round trip to their extension, so typing completes first.
   document.addEventListener('focusin', (event) => {
     if (!(event.target instanceof HTMLInputElement) || menu !== null) return
-    pending = setTimeout(() => {
-      menu = document.createElement('iframe')
-      menu.src = chrome.runtime.getURL('menu.html')
-      menu.style.cssText = 'position:fixed;top:0;right:0;width:200px;height:80px;border:0'
+    // Real inline menus open after an async round trip to their extension, so typing completes first.
+    setTimeout(() => {
+      if (location.pathname === '/shadow') {
+        // Bitwarden-style: a hidden frame inside a closed shadow root that stays after blur.
+        menu = document.createElement('fixture-menu')
+        const frame = menuFrame()
+        frame.style.display = 'none'
+        menu.attachShadow({ mode: 'closed' }).append(frame)
+      } else {
+        menu = menuFrame()
+      }
       document.documentElement.append(menu)
+      if (location.pathname === '/sticky') {
+        // An extension that re-adds its frame whenever it is removed cannot be recovered.
+        new MutationObserver(() => { if (!menu.isConnected) document.documentElement.append(menu = menuFrame()) })
+          .observe(document.documentElement, { childList: true })
+      }
     }, 150)
   })
-  document.addEventListener('focusout', () => { clearTimeout(pending); menu?.remove(); menu = null })
-  // A persistent frame (not focus-bound) cannot be dismissed and must produce the specific refusal.
-  new MutationObserver(() => {
-    if (document.body?.dataset.persistentMenu !== '1' || document.getElementById('persistent-menu')) return
-    const frame = document.createElement('iframe')
-    frame.id = 'persistent-menu'
-    frame.src = chrome.runtime.getURL('menu.html')
-    document.documentElement.append(frame)
-  }).observe(document.documentElement, { attributes: true, subtree: true })
+  document.addEventListener('focusout', () => {
+    if (location.pathname !== '/' || menu === null) return
+    menu.remove()
+    menu = null
+  })
 `)
 
-const server = createServer((_request, response) => {
+const pages = {
+  '/': '<input id="name">',
+  // Cloudflare-style form: focus returns to the field whenever it leaves.
+  '/shadow': '<input id="name"><script>name.addEventListener("blur", () => setTimeout(() => name.focus()))</script>',
+  '/nested': '<iframe id="child" src="/child"></iframe>',
+  '/child': '<input id="name">',
+  '/sticky': '<input id="name">',
+}
+const server = createServer((request, response) => {
   response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
-  response.end('<!doctype html><title>Forge foreign frame fixture</title><label>Name <input id="name"></label>')
+  response.end(`<!doctype html><title>Forge foreign frame fixture</title>${pages[new URL(request.url, 'http://127.0.0.1').pathname] ?? ''}`)
 })
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
 const fixtureUrl = `http://127.0.0.1:${server.address().port}/`
@@ -135,8 +156,14 @@ try {
     const evaluation = await worker.send('Runtime.evaluate', {
       expression: `(async () => {
         const call = async (method, params) => (await globalThis.__forgeIsolatedFixtureRequest({ jsonrpc: '2.0', id: crypto.randomUUID(), method, params })).parsed;
-        const execute = async (leaseId, leaseEpoch, tabId, operation, input) => (await call('forge.browser.execute', { protocolVersion: 1, requestId: crypto.randomUUID(), leaseId, leaseEpoch, tabId, operation, input, deadlineAt: new Date(Date.now() + 10000).toISOString() })).result;
-        const acquire = async (leaseId, leaseEpoch, tabId) => (await call('forge.browser.acquire', { protocolVersion: 1, sessionAgentId: 'fixture', leaseId, leaseEpoch, tabId, createIfNeeded: false })).result;
+        const execute = async (leaseId, leaseEpoch, tabId, operation, input) => {
+          try { return (await call('forge.browser.execute', { protocolVersion: 1, requestId: crypto.randomUUID(), leaseId, leaseEpoch, tabId, operation, input, deadlineAt: new Date(Date.now() + 10000).toISOString() })).result }
+          catch (error) { return { ok: false, error: { code: 'thrown', message: error.message } } }
+        };
+        const acquire = async (leaseId, leaseEpoch, tabId) => {
+          try { return (await call('forge.browser.acquire', { protocolVersion: 1, sessionAgentId: 'fixture', leaseId, leaseEpoch, tabId, createIfNeeded: false })).result }
+          catch (error) { throw new Error(leaseId + ': ' + error.message + ' ' + JSON.stringify(globalThis.__forgeIsolatedFixtureDiagnostics().authorities)) }
+        };
         ${body}
       })()`,
       awaitPromise: true,
@@ -150,7 +177,7 @@ try {
       const inventory = (await call('forge.browser.inventory', { protocolVersion: 1, sessionAgentId: 'fixture' })).result
       const candidate = inventory.tabs.find((tab) => tab.url === ${JSON.stringify(fixtureUrl)})
       if (candidate) {
-        const acquired = await acquire('first-lease', 1, candidate.tabId)
+        const acquired = await acquire('lease-1', 1, candidate.tabId)
         if (!acquired) throw new Error('acquire failed')
         return acquired.tab.tabId
       }
@@ -159,37 +186,62 @@ try {
     throw new Error('fixture tab did not enter inventory')`)
 
   const state = await inWorker(`
-    const summarize = (outcome) => outcome?.ok ? { ok: true } : { ok: false, code: outcome?.error?.code, message: outcome?.error?.message }
-    // Focusing the field makes the stand-in autofill extension inject its frame.
-    const typed = summarize(await execute('first-lease', 1, ${tabId}, 'type', { selector: '#name', text: 'workcomp', clear: true, timeoutMs: 5000 }))
-    await new Promise((resolve) => setTimeout(resolve, 500))
-    const afterOverlay = summarize(await execute('first-lease', 1, ${tabId}, 'evaluate', { expression: 'document.title', awaitPromise: false, returnByValue: true }))
-    // The agent's documented recovery: re-open the same tab under a fresh lease and continue.
-    const reacquired = await acquire('second-lease', 2, ${tabId})
-    const recovered = await execute('second-lease', 2, ${tabId}, 'evaluate', { expression: '({ value: document.querySelector("#name").value, overlayFrames: document.querySelectorAll("iframe").length })', awaitPromise: false, returnByValue: true })
-    await execute('second-lease', 2, ${tabId}, 'evaluate', { expression: 'document.body.dataset.persistentMenu = "1"', awaitPromise: false, returnByValue: true })
-    await new Promise((resolve) => setTimeout(resolve, 500))
-    await acquire('third-lease', 3, ${tabId})
-    const persistentStartedAt = Date.now()
-    const persistent = summarize(await execute('third-lease', 3, ${tabId}, 'snapshot', {}))
-    const persistentMs = Date.now() - persistentStartedAt
+    const summarize = (outcome) => outcome?.ok ? { ok: true, value: outcome.result?.value } : { ok: false, code: outcome?.error?.code, message: outcome?.error?.message }
+    const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    const fieldState = (inChild) => inChild
+      ? '({ value: child.contentDocument.querySelector("#name").value, focused: child.contentDocument.activeElement?.id ?? null })'
+      : '({ value: document.querySelector("#name").value, focused: document.activeElement?.id ?? null })'
+    let epoch = 1
+    const scenario = async (pathname, typeTarget, inChild = false) => {
+      const lease = 'lease-' + epoch
+      if (epoch > 1 && !(await acquire(lease, epoch, ${tabId}))) throw new Error('acquire failed for ' + pathname)
+      // Navigation also runs the recovery when the previous page still holds a foreign frame.
+      const navigated = summarize(await execute(lease, epoch, ${tabId}, 'navigate', { url: ${JSON.stringify(fixtureUrl)}.replace(/\\/$/, pathname), readiness: 'load', timeoutMs: 5000 }))
+      const typed = summarize(await execute(lease, epoch, ${tabId}, typeTarget.operation, typeTarget.input))
+      await pause(500)
+      const afterMenu = summarize(await execute(lease, epoch, ${tabId}, 'evaluate', { expression: 'document.title', awaitPromise: false, returnByValue: true }))
+      await call('forge.browser.release', { protocolVersion: 1, leaseId: lease, leaseEpoch: epoch, reason: 'operation-failed' }).catch(() => undefined)
+      epoch += 1
+      // The agent's documented recovery: re-open the same tab under a fresh lease and continue.
+      const reopened = 'lease-' + epoch
+      if (!(await acquire(reopened, epoch, ${tabId}))) throw new Error('re-acquire failed for ' + pathname)
+      const startedAt = Date.now()
+      const recovered = summarize(await execute(reopened, epoch, ${tabId}, 'evaluate', { expression: fieldState(inChild), awaitPromise: false, returnByValue: true }))
+      const recoveryMs = Date.now() - startedAt
+      const released = await call('forge.browser.release', { protocolVersion: 1, leaseId: reopened, leaseEpoch: epoch, reason: 'operation-failed' })
+        .then((response) => response.error ? response.error.message : 'released', (error) => 'threw: ' + error.message)
+      const diagnostics = globalThis.__forgeIsolatedFixtureDiagnostics()
+      epoch += 1
+      return { navigated, typed, afterMenu, recovered, recoveryMs, released, authorities: diagnostics.authorities }
+    }
+    const typeInto = { operation: 'type', input: { selector: '#name', text: 'workcomp', clear: true, timeoutMs: 5000 } }
+    // A same-origin child frame is focused through the page, as a user click would.
+    const focusChild = { operation: 'evaluate', input: { expression: 'child.contentDocument.querySelector("#name").value = "workcomp"; child.contentDocument.querySelector("#name").focus(); true', awaitPromise: false, returnByValue: true } }
     return {
-      persistent,
-      persistentMs,
-      typed,
-      afterOverlay,
-      reacquired: reacquired?.tab?.tabId === ${tabId},
-      recovered: summarize(recovered),
-      recoveredValue: recovered?.ok ? recovered.result.value : null,
+      focusBound: await scenario('/', typeInto),
+      focusTrappedShadow: await scenario('/shadow', typeInto),
+      nestedChild: await scenario('/nested', focusChild, true),
+      sticky: await scenario('/sticky', typeInto),
       detachReasons: globalThis.__forgeIsolatedFixtureDiagnostics().debuggerMetrics.detachReasons,
     }`)
   worker.close()
   evidence = { executable: path.basename(executable), version: spawnSync(executable, ['--version'], { encoding: 'utf8' }).stdout.trim(), ...state }
-  // Production sequence: type succeeds, Chrome detaches when the menu appears, re-open recovers.
-  if (!state.typed.ok || state.afterOverlay.code !== 'lease-lost' || !state.reacquired || !state.recovered.ok || state.recoveredValue?.value !== 'workcomp' || state.recoveredValue?.overlayFrames !== 0 ||
-    // A frame that survives the dismissal is reported specifically instead of as an opaque failure.
-    state.persistent.code !== 'debugger-unavailable' || !/password manager autofill menu/u.test(state.persistent.message ?? '')) {
-    throw new Error(`foreign-extension-frame recovery proof failed: ${JSON.stringify(evidence)}`)
+  const recoveredField = (result, focused) => result.navigated.ok && result.typed.ok && result.afterMenu.code === 'lease-lost' &&
+    result.recovered.ok && result.recovered.value?.value === 'workcomp' && result.recovered.value?.focused === focused
+  const failures = [
+    // Production sequence: the step succeeds, Chrome detaches when the menu appears, re-open recovers.
+    !recoveredField(state.focusBound, 'name') && 'focus-bound menu',
+    // Focus stays in the field; removing the frame, not blurring, is what restores control.
+    !recoveredField(state.focusTrappedShadow, 'name') && 'focus-trapped closed-shadow frame',
+    !recoveredField(state.nestedChild, 'name') && 'same-origin child frame',
+    // A frame that keeps coming back fails specifically and names the extension to disable.
+    !(state.sticky.recovered.code === 'debugger-unavailable' && /chrome-extension:\/\/[a-p]{32}/u.test(state.sticky.recovered.message ?? '')) && 'sticky frame refusal',
+    // Chrome also refuses detach while the frame exists; release must still complete.
+    ...['focusBound', 'focusTrappedShadow', 'nestedChild', 'sticky'].map((name) =>
+      (state[name].released !== 'released' || state[name].authorities.length !== 0) && `${name} release`),
+  ].filter(Boolean)
+  if (failures.length > 0) {
+    throw new Error(`foreign-extension-frame recovery proof failed (${failures.join(', ')}): ${JSON.stringify(evidence)}`)
   }
 } finally {
   try { process.platform === 'win32' ? child.kill('SIGKILL') : process.kill(-child.pid, 'SIGKILL') } catch { /* already stopped */ }

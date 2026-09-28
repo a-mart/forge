@@ -45,7 +45,6 @@ const TRANSPORT_GRACE_DELAY_MINUTES = 0.5
 const MAX_CONTENT_BRIDGES = 512
 const MAX_CONTENT_BRIDGES_PER_TAB = 64
 const MAX_PENDING_CLOSED_TAB_RECEIPTS = 128
-const FOREIGN_FRAME_DISMISS_WINDOW_MS = 2_000
 
 type ContentPort = ChromeRuntimePort & { sender?: ChromeRuntimeSender }
 
@@ -126,6 +125,33 @@ function acquiredTab(tab: ChromeTab): Record<string, unknown> {
   }
 }
 
+/**
+ * Injected into every frame Chrome lets this extension script. Removes iframes owned by other
+ * extensions and returns their extension IDs. Must stay self-contained: Chrome serializes it.
+ */
+function removeForeignExtensionFrames(): string[] {
+  const { chrome } = globalThis as unknown as {
+    chrome: { runtime: { id: string }; dom?: { openOrClosedShadowRoot(element: Element): ShadowRoot | null } }
+  }
+  const removed: string[] = []
+  const visit = (root: Document | ShadowRoot): void => {
+    for (const element of root.querySelectorAll('*')) {
+      if (element instanceof HTMLIFrameElement || element instanceof HTMLFrameElement) {
+        const match = /^chrome-extension:\/\/([a-p]{32})\//u.exec(element.src)
+        if (match !== null && match[1] !== chrome.runtime.id) {
+          element.remove()
+          removed.push(match[1] as string)
+          continue
+        }
+      }
+      const shadow = chrome.dom?.openOrClosedShadowRoot(element) ?? element.shadowRoot
+      if (shadow !== null) visit(shadow)
+    }
+  }
+  visit(document)
+  return removed
+}
+
 export class Runtime implements ServiceWorkerPayload {
   private readonly chrome: ChromeApi
   private readonly now: () => number
@@ -170,7 +196,13 @@ export class Runtime implements ServiceWorkerPayload {
     this.chrome = options.chrome ?? installedChrome()
     this.now = options.now ?? Date.now
     this.authorities = new LeaseManager(this.chrome, PAYLOAD_VERSION, this.now)
-    this.debuggers = new DebuggerController(this.chrome.debugger, options.maximumDebuggerAttachments, this.now)
+    this.debuggers = new DebuggerController(this.chrome.debugger, options.maximumDebuggerAttachments, this.now, async (tabId) => {
+      const results = await this.chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: removeForeignExtensionFrames })
+      return results.flatMap((entry) => {
+        const removed = (entry as { result?: unknown }).result
+        return Array.isArray(removed) ? removed.filter((id): id is string => typeof id === 'string') : []
+      })
+    })
     this.operations = new ExternalChromeOperationExecutor(this.debuggers, (tabId) => this.chrome.tabs.get(tabId), this.now)
     this.controlSessions = new ControlSessionManager(this.debuggers, {
       now: this.now,
@@ -581,16 +613,10 @@ export class Runtime implements ServiceWorkerPayload {
         }
 
         try {
-          await this.ensureControlSession(params)
+          await this.controlSessions.ensure(params.tabId, params.leaseId, params.leaseEpoch)
         } catch (error) {
           if (error instanceof DebuggerForeignExtensionFrameError) {
-            return this.executeFailure(
-              params,
-              'debugger-unavailable',
-              `${error.message} Forge moved focus off the page field, but the frame stayed. Ask the user to close it, or to turn off that extension's inline menu or site access for this site.`,
-              true,
-              { reason: 'foreign-extension-frame' },
-            )
+            return this.executeFailure(params, 'debugger-unavailable', error.message, true, { reason: 'foreign-extension-frame' })
           }
           if (error instanceof DebuggerAttachConflictError) {
             return this.executeFailure(params, 'debugger-unavailable', error.message, true, EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS)
@@ -800,34 +826,6 @@ export class Runtime implements ServiceWorkerPayload {
   }
 
   private executeResponse(params: ExternalChromeExecuteParams, ok: true, result: unknown): Record<string, unknown> { return { protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, tabId: params.tabId, operation: params.operation, ok, result } }
-
-  /**
-   * Inline autofill menus are the common foreign-extension frame, and they close when their field
-   * loses focus. Blur once in the top document, then retry the attach while Chrome removes the frame.
-   */
-  private async ensureControlSession(params: ExternalChromeExecuteParams): Promise<void> {
-    try {
-      await this.controlSessions.ensure(params.tabId, params.leaseId, params.leaseEpoch)
-      return
-    } catch (error) {
-      if (!(error instanceof DebuggerForeignExtensionFrameError)) throw error
-    }
-    await this.chrome.scripting.executeScript({
-      target: { tabId: params.tabId },
-      func: () => { (document.activeElement as HTMLElement | null)?.blur?.() },
-    }).catch(() => undefined)
-    const retryUntil = Math.min(Date.parse(params.deadlineAt), this.now() + FOREIGN_FRAME_DISMISS_WINDOW_MS)
-    for (;;) {
-      await new Promise((resolve) => setTimeout(resolve, 100))
-      this.authorities.assertScope(params.leaseId, params.leaseEpoch, params.tabId)
-      try {
-        await this.controlSessions.ensure(params.tabId, params.leaseId, params.leaseEpoch)
-        return
-      } catch (error) {
-        if (!(error instanceof DebuggerForeignExtensionFrameError) || this.now() >= retryUntil) throw error
-      }
-    }
-  }
 
   private executeFailure(params: ExternalChromeExecuteParams, code: string, message: string, retryable: boolean, details?: Record<string, string | number | boolean | null>): Record<string, unknown> { return { protocolVersion: 1, requestId: params.requestId, leaseId: params.leaseId, leaseEpoch: params.leaseEpoch, tabId: params.tabId, operation: params.operation, ok: false, error: { code, message: message.slice(0, 1_024), retryable, ...(details ? { details } : {}) } } }
 
