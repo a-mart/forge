@@ -22,6 +22,19 @@ afterEach(() => {
 })
 
 describe('ManagerToolActivityIndicator', () => {
+  it('shows scheduled follow-up waiting with commands and steering in live or bootstrap activity', () => {
+    const activity = { type: 'manager_tool_activity' as const, sessionAgentId: 'manager', revision: 1, toolCount: 0, scheduledWakeupCount: 1 }
+    act(() => root.render(createElement(ManagerToolActivityIndicator, { activity })))
+    expect(container.textContent).toContain('Waiting for scheduled follow-up')
+    expect(container.textContent).not.toContain('command')
+    act(() => root.render(createElement(ManagerToolActivityIndicator, { activity: { ...activity, backgroundCount: 1 }, pendingCount: 2 })))
+    expect(container.textContent).toContain('Waiting for scheduled follow-up')
+    expect(container.textContent).toContain('1 command running in background')
+    expect(container.textContent).toContain('2 messages waiting for agent')
+    act(() => root.render(createElement(ManagerToolActivityIndicator, { activity: { ...activity, scheduledWakeupCount: 0 } })))
+    expect(container.textContent).toBe('')
+  })
+
   it('shows background commands alongside queued steering and clears them on completion', () => {
     const activity = { type: 'manager_tool_activity' as const, sessionAgentId: 'manager', revision: 1, toolCount: 0, backgroundCount: 2 }
     act(() => root.render(createElement(ManagerToolActivityIndicator, { activity, pendingCount: 1 })))

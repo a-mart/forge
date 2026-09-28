@@ -43,6 +43,59 @@ const result = (ids: string[], fields = {}) => ({ type: "result", subtype: "succ
   duration_ms: 5, duration_api_ms: 4, total_cost_usd: 0.1, usage: { input_tokens: 5, output_tokens: 3 }, modelUsage: {}, ...fields });
 
 describe("Claude native lifecycle", () => {
+  it("keeps one-shot native wakeups active across replies, steering, and replacement until the resumed work ends", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-wakeup-lifecycle-"));
+    const onEnd = vi.fn(); const f = await fixture(root, { onEnd });
+    const snapshot = async (ids: string[]) => {
+      const hook = f.setup.hooks?.Stop?.[0].hooks[0];
+      expect(hook).toBeDefined();
+      await hook!({ hook_event_name: "Stop", session_id: "fixture", cwd: root, transcript_path: "unused", stop_hook_active: false,
+        session_crons: ids.map(id => ({ id, schedule: "0 12 * * *", recurring: false, prompt: "private follow-up context" })) }, undefined, { signal: new AbortController().signal });
+    };
+    try {
+      const first = await f.runtime.sendMessage("work"); await f.input.next();
+      await f.emit({ type: "assistant", user_message_uuids: [first.deliveryId], message: { content: [{ type: "text", text: "Waiting for verification" }] } });
+      await snapshot(["first"]); await snapshot(["first"]);
+      await f.emit(result([first.deliveryId]));
+      expect(f.runtime.getStatus()).toBe("streaming"); expect(onEnd).not.toHaveBeenCalled();
+      const updates = f.events.filter(e => e.type === "tool_execution_update");
+      expect(updates).toHaveLength(1);
+      expect(updates[0]).toMatchObject({ toolName: "ScheduleWakeup", executionState: "background" });
+      expect(JSON.stringify(updates)).not.toContain("private follow-up");
+      const steer = await f.runtime.sendMessage("status"); await f.input.next();
+      expect(steer.acceptedMode).toBe("steer");
+      await snapshot(["replacement"]); await f.emit(result([steer.deliveryId]));
+      expect(onEnd).not.toHaveBeenCalled();
+      await snapshot([]);
+      // Clearing the timer alone does not prematurely finish the follow-on reply.
+      expect(f.runtime.getStatus()).toBe("streaming");
+      await f.emit(result([], { result: "Verified and finished" }));
+      expect(f.runtime.getStatus()).toBe("idle"); expect(onEnd).toHaveBeenCalledTimes(1);
+      expect(f.events.filter(e => e.type === "agent_end")).toHaveLength(1);
+    } finally { await f.runtime.stopInFlight(); await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("clears scheduled activity on Stop all and does not keep recurring schedules active", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-wakeup-stop-")); const f = await fixture(root);
+    const hook = () => f.setup.hooks?.Stop?.[0].hooks[0];
+    const snapshot = async (recurring: boolean) => {
+      expect(hook()).toBeDefined();
+      await hook()!({ hook_event_name: "Stop", session_id: "fixture", cwd: root, transcript_path: "unused", stop_hook_active: false,
+        session_crons: [{ id: "timer", recurring, schedule: "0 * * * *", prompt: "private" }] }, undefined, { signal: new AbortController().signal });
+    };
+    try {
+      const first = await f.runtime.sendMessage("work"); await f.input.next();
+      await snapshot(true); await f.emit(result([first.deliveryId]));
+      expect(f.runtime.getStatus()).toBe("idle");
+      const second = await f.runtime.sendMessage("wait"); await f.input.next();
+      await snapshot(false); await f.emit(result([second.deliveryId]));
+      expect(f.runtime.getStatus()).toBe("streaming");
+      await f.runtime.stopInFlight();
+      expect(f.events.filter(e => e.type === "tool_execution_end" && e.toolName === "ScheduleWakeup").at(-1)).toMatchObject({ result: { status: "cancelled" } });
+      expect(f.runtime.getStatus()).toBe("idle");
+    } finally { await f.runtime.stopInFlight(); await rm(root, { recursive: true, force: true }); }
+  });
+
   it("keeps background work active across replies and completes once after all commands and the follow-on reply", async () => {
     const root = await mkdtemp(join(tmpdir(), "forge-background-lifecycle-"));
     const onEnd = vi.fn(); const f = await fixture(root, { onEnd });

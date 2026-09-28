@@ -146,9 +146,11 @@ export class SwarmEventCoordinator {
   emitSessionActiveToolsSnapshot(snapshot: SessionActiveToolsSnapshotEvent | null): void {
     if (snapshot) {
       this.options.host.emit("session_active_tools_snapshot", snapshot);
+      const pending = snapshot.activeTools.filter(tool => tool.actorAgentId === snapshot.sessionAgentId && tool.executionState === "background");
       this.emitManagerToolActivity(this.options.managerToolActivity.setBackgroundCount(
         snapshot.sessionAgentId,
-        snapshot.activeTools.filter(tool => tool.actorAgentId === snapshot.sessionAgentId && tool.executionState === "background").length,
+        pending.filter(tool => tool.toolName !== "ScheduleWakeup").length,
+        pending.filter(tool => tool.toolName === "ScheduleWakeup").length,
       ));
     }
   }

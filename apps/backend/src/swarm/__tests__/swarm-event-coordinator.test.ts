@@ -60,6 +60,19 @@ function setup(initialDescriptors: AgentDescriptor[] = [manager()]) {
 }
 
 describe("SwarmEventCoordinator", () => {
+  it("projects scheduled wakeups separately from commands and removes both from the reconnect snapshot", () => {
+    const { coordinator, emitted } = setup();
+    coordinator.activateManagerToolActivity("manager-1", "turn");
+    coordinator.emitSessionActiveToolsSnapshot({ type: "session_active_tools_snapshot", sessionAgentId: "manager-1", activeTools: [
+      { sessionAgentId: "manager-1", actorAgentId: "manager-1", toolName: "ScheduleWakeup", executionState: "background" },
+      { sessionAgentId: "manager-1", actorAgentId: "manager-1", toolName: "Bash", executionState: "background" },
+      { sessionAgentId: "manager-1", actorAgentId: "worker-1", toolName: "ScheduleWakeup", executionState: "background" },
+    ] });
+    expect(emitted.filter(e => e.name === "manager_tool_activity").at(-1)?.event).toMatchObject({ backgroundCount: 1, scheduledWakeupCount: 1 });
+    coordinator.emitSessionActiveToolsSnapshot({ type: "session_active_tools_snapshot", sessionAgentId: "manager-1", activeTools: [] });
+    expect(emitted.filter(e => e.name === "manager_tool_activity").at(-1)?.event).not.toHaveProperty("scheduledWakeupCount");
+  });
+
   it("projects background work into Builder counts without another actor's tasks or raw tool detail", () => {
     const { coordinator, emitted } = setup();
     coordinator.activateManagerToolActivity("manager-1", "turn");

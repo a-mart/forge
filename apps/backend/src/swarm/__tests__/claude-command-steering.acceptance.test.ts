@@ -13,6 +13,48 @@ import type { RuntimeSessionEvent } from "../runtime-contracts.js";
 // Real persistent SDK/CLI, shell, and process cleanup. Only the remote model is a
 // deterministic local HTTP fixture. No account credentials or user workloads.
 describe("Claude command steering acceptance", () => {
+  it("keeps a real scheduled wakeup active until its automatic follow-up finishes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-wakeup-acceptance-"));
+    const config = join(root, "claude"); await mkdir(config);
+    const events: RuntimeSessionEvent[] = []; const errors: unknown[] = [];
+    const onEnd = vi.fn(); let calls = 0; let runtime: ClaudeAgentRuntime | undefined;
+    const server = createServer(async (request, response) => {
+      request.resume();
+      if (request.url?.includes("count_tokens")) { response.end('{"input_tokens":100}'); return; }
+      if (!request.url?.startsWith("/v1/messages")) { response.end("{}"); return; }
+      calls++;
+      respond(response, calls === 1 ? [{ type: "tool_use", id: "toolu_schedule", name: "ScheduleWakeup",
+        input: { delaySeconds: 60, reason: "Isolated timer acceptance", prompt: "WAKEUP_COMPLETE", noop: false } }]
+        : [{ type: "text", text: calls === 2 ? "Waiting for the scheduled check" : "Scheduled check completed" }], calls);
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as { port: number }).port;
+    const descriptor = { agentId: "wakeup", role: "manager", managerId: "wakeup", profileId: "fixture", cwd: root,
+      status: "idle", sessionFile: join(root, "session.jsonl"), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      model: { provider: "claude-native", modelId: "claude-sonnet-5", thinkingLevel: "high" } } as AgentDescriptor;
+    try {
+      runtime = await ClaudeAgentRuntime.create({ descriptor, systemPrompt: "Complete the scheduled check.", executable: await resolveClaudeExecutable({}),
+        env: { PATH: process.env.PATH, HOME: root, USERPROFILE: root, TMPDIR: tmpdir(), CLAUDE_CONFIG_DIR: config,
+          ANTHROPIC_API_KEY: "sk-ant-fake-fixture", ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" },
+        projectTrusted: false, tools: [], host: { requestUserChoice: vi.fn() },
+        callbacks: { onStatusChange: vi.fn(), onAgentEnd: onEnd, onRuntimeError: (_id, error) => { errors.push(error); },
+          onSessionEvent: (_id, event) => { events.push(event); } },
+      });
+      await runtime.sendMessage("Schedule a check");
+      await waitFor(() => events.some(e => e.type === "turn_end"), "first reply");
+      expect(runtime.getStatus()).toBe("streaming"); expect(onEnd).not.toHaveBeenCalled();
+      expect(events.some(e => e.type === "tool_execution_update" && e.toolName === "ScheduleWakeup" && e.executionState === "background")).toBe(true);
+      await waitFor(() => onEnd.mock.calls.length > 0, "automatic wakeup and final reply", 145_000);
+      expect(calls).toBe(3); expect(onEnd).toHaveBeenCalledTimes(1); expect(runtime.getStatus()).toBe("idle");
+      expect(errors).toEqual([]);
+      console.log(JSON.stringify({ scheduledWakeup: true, activeWhileWaiting: true, automaticFollowUp: true, completedOnce: true }));
+    } finally {
+      await runtime?.stopInFlight({ shutdownTimeoutMs: 10_000 });
+      server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 170_000);
+
   it.each(["silent", "output"])("answers steering while a %s command continues and receives its completion", async kind => {
     const root = await mkdtemp(join(tmpdir(), "forge-steering-"));
     const cwd = join(root, "workspace");
@@ -92,8 +134,8 @@ describe("Claude command steering acceptance", () => {
   }, 30_000);
 });
 
-async function waitFor(predicate: () => boolean, label: string) {
-  const end = Date.now() + 15_000;
+async function waitFor(predicate: () => boolean, label: string, timeoutMs = 15_000) {
+  const end = Date.now() + timeoutMs;
   while (!predicate()) { if (Date.now() > end) throw new Error(`Timed out: ${label}`); await new Promise(resolve => setTimeout(resolve, 20)); }
 }
 function respond(response: ServerResponse, blocks: any[], index: number) {

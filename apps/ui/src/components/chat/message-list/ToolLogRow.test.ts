@@ -52,6 +52,13 @@ function makeActorDisplay(overrides: Partial<AgentDisplayMeta> = {}): AgentDispl
 }
 
 describe('ToolLogRow actor metadata rendering', () => {
+  it('labels a scheduled native follow-up without claiming a command is running', () => {
+    const entry = makeToolEntry({ toolName: 'ScheduleWakeup', latestKind: 'tool_execution_update', executionState: 'background' })
+    act(() => root.render(createElement(ToolLogRow, { type: 'tool_execution', entry })))
+    expect(container.textContent).toContain('Waiting for scheduled follow-up')
+    expect(container.textContent).not.toContain('Command running')
+  })
+
   it('labels a live or replayed background update as running until actual completion', () => {
     const entry = makeToolEntry({ latestKind: 'tool_execution_update', executionState: 'background', latestPayload: '[Raw activity payload omitted from Builder timeline.]' })
     act(() => root.render(createElement(ToolLogRow, { type: 'tool_execution', entry })))

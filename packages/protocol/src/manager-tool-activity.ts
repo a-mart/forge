@@ -11,6 +11,8 @@ export interface ManagerToolActivityEvent {
   toolCount: number
   /** Manager-owned commands still running after yielding to the native agent. Absent means zero. */
   backgroundCount?: number
+  /** Pending one-shot native follow-ups. Absent means zero; excludes running commands. */
+  scheduledWakeupCount?: number
   /** Normalized, bounded name of the most recently started manager tool. */
   currentToolName?: string
 }

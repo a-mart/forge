@@ -106,7 +106,15 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
       disallowedTools: ["Agent", "Task", "Workflow", "SendMessage", "ListAgents", "TeamCreate", "TeamDelete", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TodoWrite", "CronCreate", "CronDelete", "CronList", "EnterWorktree", "ExitWorktree", "EnterPlanMode", "ExitPlanMode"],
       mcpServers: { forge: runtime.bridge.server }, strictMcpConfig: true,
       canUseTool: runtime.bridge.canUseTool,
-      hooks: { PreToolUse: [{ hooks: [claudeCommandWaitHook] }], PostToolUse: [{ hooks: [async event => event.hook_event_name === "PostToolUse"
+      hooks: { Stop: [{ hooks: [async event => {
+        if (event.hook_event_name === "Stop" && !event.agent_id && event.session_crons) {
+          await runtime.serialize(async () => {
+            if (runtime.stopping) return;
+            for (const activity of runtime.mapper.syncScheduledWakeups(event.session_crons!)) await runtime.emit(activity);
+          });
+        }
+        return {};
+      }] }], PreToolUse: [{ hooks: [claudeCommandWaitHook] }], PostToolUse: [{ hooks: [async event => event.hook_event_name === "PostToolUse"
         ? { hookSpecificOutput: { hookEventName: "PostToolUse", updatedToolOutput: runtime.guard(event.tool_response) } } : {}] }] },
       spawnClaudeCodeProcess(spawnOptions) {
         const child = spawn(spawnOptions.command, spawnOptions.args, { cwd: spawnOptions.cwd, env: spawnOptions.env,
@@ -311,9 +319,9 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     } else compaction?.resolve({});
     this.turnError = undefined;
     // Claude's result closes a model reply, not necessarily the work. Keep the
-    // Forge turn active until tracked commands settle and Claude handles their
+    // Forge turn active until tracked commands/wakeups settle and Claude handles their
     // notifications. Steering stays available; worker completion must wait too.
-    if (this.mapper.hasBackgroundCommands()) {
+    if (this.mapper.hasBackgroundWork()) {
       await this.publishStatus();
       return;
     }

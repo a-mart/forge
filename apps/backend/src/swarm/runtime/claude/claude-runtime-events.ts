@@ -1,4 +1,4 @@
-import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKMessage, SessionCronSummary } from "@anthropic-ai/claude-agent-sdk";
 import type { RuntimeSessionEvent, RuntimeSessionMessage } from "../../runtime-contracts.js";
 
 /** Claude emits completed blocks, not Codex commentary/final phases. Hold only the
@@ -10,7 +10,27 @@ export class ClaudeRuntimeEvents {
   private readonly background = new Map<string, string>();
   private readonly taskTools = new Map<string, string>();
 
-  hasBackgroundCommands(): boolean { return this.background.size > 0; }
+  hasBackgroundWork(): boolean { return this.background.size > 0; }
+
+  /** Native Stop supplies the authoritative pending one-shot schedules. Reuse the
+   * active-tool projection; Forge neither runs timers nor persists another scheduler. */
+  syncScheduledWakeups(crons: SessionCronSummary[]): RuntimeSessionEvent[] {
+    const pending = new Set(crons.filter(cron => !cron.recurring).map(cron => `claude-wakeup:${cron.id}`));
+    const events: RuntimeSessionEvent[] = [];
+    for (const [id, name] of this.tools) {
+      if (!id.startsWith("claude-wakeup:") || pending.has(id)) continue;
+      events.push({ type: "tool_execution_end", toolName: name, toolCallId: id, result: { status: "settled" }, isError: false });
+      this.tools.delete(id); this.background.delete(id);
+    }
+    for (const id of pending) {
+      if (this.tools.has(id)) continue;
+      this.tools.set(id, "ScheduleWakeup"); this.background.set(id, id);
+      // An update can introduce active activity without counting a fabricated tool call.
+      events.push({ type: "tool_execution_update", toolName: "ScheduleWakeup", toolCallId: id,
+        executionState: "background", partialResult: { status: "scheduled" } });
+    }
+    return events;
+  }
 
   foregroundCommands(): string[] {
     return [...this.tools].filter(([id, name]) => name === "Bash" && !this.background.has(id)).map(([id]) => id);

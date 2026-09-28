@@ -358,7 +358,7 @@ function ToolExecutionLogRow({
   const displayStatus = mapToolStatus(entry)
   const inputRecord = parseJsonRecord(entry.inputPayload ?? entry.latestPayload)
   const runningInBackground = displayStatus === 'pending' && entry.executionState === 'background'
-  const friendlyMessage = runningInBackground ? 'Command running in background' : entry.displaySummary ?? getFriendlyToolMessage(
+  const friendlyMessage = runningInBackground ? (entry.toolName === 'ScheduleWakeup' ? 'Waiting for scheduled follow-up' : 'Command running in background') : entry.displaySummary ?? getFriendlyToolMessage(
     entry.toolName,
     inputRecord,
     displayStatus,

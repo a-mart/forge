@@ -8,6 +8,7 @@ interface SessionManagerToolActivityState {
   startedToolKeys: Set<string>;
   toolCount: number;
   backgroundCount: number;
+  scheduledWakeupCount: number;
   currentToolName?: string;
 }
 
@@ -71,17 +72,18 @@ export class ManagerToolActivityState {
   }
 
   /** Count-only projection of SessionActiveToolsState, also retained across steering. */
-  setBackgroundCount(sessionAgentId: string, count: number): ManagerToolActivityEvent | null {
+  setBackgroundCount(sessionAgentId: string, count: number, scheduledWakeupCount = 0): ManagerToolActivityEvent | null {
     const state = this.getOrCreate(sessionAgentId);
-    if (state.backgroundCount === count) return null;
+    if (state.backgroundCount === count && state.scheduledWakeupCount === scheduledWakeupCount) return null;
     state.backgroundCount = count;
+    state.scheduledWakeupCount = scheduledWakeupCount;
     state.revision += 1;
     return this.toEvent(sessionAgentId, state);
   }
 
   clear(sessionAgentId: string): ManagerToolActivityEvent | null {
     const state = this.bySessionAgentId.get(sessionAgentId);
-    if (!state || (!state.activeTurnId && state.toolCount === 0 && state.backgroundCount === 0)) {
+    if (!state || (!state.activeTurnId && state.toolCount === 0 && state.backgroundCount === 0 && state.scheduledWakeupCount === 0)) {
       return null;
     }
 
@@ -90,6 +92,7 @@ export class ManagerToolActivityState {
     resolved.startedToolKeys.clear();
     resolved.toolCount = 0;
     resolved.backgroundCount = 0;
+    resolved.scheduledWakeupCount = 0;
     resolved.currentToolName = undefined;
     resolved.revision += 1;
     return this.toEvent(sessionAgentId, resolved);
@@ -110,6 +113,7 @@ export class ManagerToolActivityState {
       startedToolKeys: new Set(),
       toolCount: 0,
       backgroundCount: 0,
+      scheduledWakeupCount: 0,
     };
     this.bySessionAgentId.set(sessionAgentId, created);
     return created;
@@ -122,6 +126,7 @@ export class ManagerToolActivityState {
       revision: state.revision,
       toolCount: state.toolCount,
       ...(state.backgroundCount > 0 ? { backgroundCount: state.backgroundCount } : {}),
+      ...(state.scheduledWakeupCount > 0 ? { scheduledWakeupCount: state.scheduledWakeupCount } : {}),
       ...(state.currentToolName ? { currentToolName: state.currentToolName } : {}),
     };
   }
