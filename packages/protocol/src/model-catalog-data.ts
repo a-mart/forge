@@ -597,6 +597,34 @@ export const FORGE_MODEL_CATALOG: ForgeModelCatalog = {
   },
   models: {
     ...BASE_MODEL_CATALOG.models,
+    // Native-only addition; https://developers.openai.com/api/docs/models/gpt-6.1-sol
+    // Codex efforts (including Ultra): https://learn.chatgpt.com/docs/models
+    'codex-native/gpt-6.1-sol': {
+      catalogId: 'codex-native/gpt-6.1-sol',
+      modelId: 'gpt-6.1-sol',
+      provider: 'codex-native',
+      familyId: 'codex-native',
+      displayName: 'GPT-6.1 Sol (Codex native)',
+      isFamilyDefault: false,
+      supportsReasoning: true,
+      supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+      defaultReasoningLevel: 'medium',
+      contextWindow: 1_050_000,
+      maxOutputTokens: 128_000,
+      inputModes: ['text', 'image'],
+      outputModes: ['text'],
+      supportsTools: true,
+      supportsStructuredOutput: true,
+      webSearchCapability: 'native',
+      piCost: {
+        input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5,
+        tiers: [{ inputTokensAbove: 272_000, input: 4, output: 15, cacheRead: 0.2, cacheWrite: 5 }],
+      },
+      enabledByDefault: true,
+      piUpstreamId: null,
+      intentionalDivergenceNotes:
+        'Native Codex app-server runtime only; no Pi projection. Context is the published model limit; the Codex client controls its effective context window. Ultra is a Codex orchestration mode.',
+    },
     ...Object.fromEntries(Object.values(BASE_MODEL_CATALOG.models)
       .filter(model => model.provider === 'anthropic')
       .map(model => [`claude-native/${model.modelId}`, {

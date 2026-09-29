@@ -681,3 +681,20 @@ it('keeps native Claude on Builder managers and preserves existing Pi selections
   expect(getCatalogModel('claude-opus-5-5', 'anthropic')).toMatchObject({ provider: 'anthropic', familyId: 'pi-opus' })
   expect(isCompactionProviderSupported('claude-native')).toBe(false)
 })
+
+
+it('adds GPT-6.1 Sol exclusively to native Codex with published capabilities', () => {
+  expect(getCatalogModel('gpt-6.1-sol', 'codex-native')).toMatchObject({
+    catalogId: 'codex-native/gpt-6.1-sol', modelId: 'gpt-6.1-sol',
+    familyId: 'codex-native', provider: 'codex-native', isFamilyDefault: false,
+    supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    defaultReasoningLevel: 'medium', contextWindow: 1_050_000, maxOutputTokens: 128_000,
+    inputModes: ['text', 'image'], outputModes: ['text'], supportsTools: true,
+    supportsStructuredOutput: true, webSearchCapability: 'native', piUpstreamId: null,
+    enabledByDefault: true,
+    piCost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5,
+      tiers: [{ inputTokensAbove: 272_000, input: 4, output: 15, cacheRead: 0.2, cacheWrite: 5 }] },
+  })
+  expect(getCatalogModel('gpt-6.1-sol', 'openai-codex')).toBeUndefined()
+  expect(getCatalogFamily('codex-native')?.defaultModelId).toBe('gpt-6-sol')
+})

@@ -7,7 +7,7 @@ import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 import type { SessionModelPickerConfig } from './types'
-import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
+import { getCatalogModel, type AgentDescriptor, type ManagerProfile } from '@forge/protocol'
 import {
   FUTURE_MODEL,
   OPENROUTER_GLM,
@@ -443,4 +443,30 @@ describe('SessionModelPicker compact menu', () => {
     expect(current.getAttribute('data-disabled')).toBe('')
     expect(current.textContent).toContain('Current')
   })
+})
+
+
+it('selects native GPT-6.1 Sol and exposes Ultra without an Off option', async () => {
+  const model = getCatalogModel('gpt-6.1-sol', 'codex-native')!
+  expect(model).toBeDefined()
+  catalogApiMock.fetchManagerSelectionCatalog.mockResolvedValue(makeManagerSelectionCatalog({
+    models: [{ provider: model.provider, providerLabel: 'Codex native (Preferred)', modelId: model.modelId,
+      label: model.displayName, familyId: model.familyId, familyLabel: 'Codex native',
+      reasoningOptions: model.supportedReasoningLevels.map(id => ({ id,
+        label: id === 'xhigh' ? 'Extra High' : id.charAt(0).toUpperCase() + id.slice(1) })),
+      defaultReasoningId: model.defaultReasoningLevel,
+      surfaces: { create: { selectable: true }, change: { selectable: true } } }],
+  }))
+  const onUpdate = vi.fn(async () => {})
+  renderPicker(onUpdate)
+  await openPicker()
+  await openSubmenu(/Model/)
+  flushSync(() => { fireEvent.click(getByRole(document.body, 'menuitemradio', { name: 'GPT-6.1 Sol (Codex native)' })) })
+  await flushAsyncWork()
+  expect(onUpdate).toHaveBeenCalledWith('manager-1', 'override', { provider: 'codex-native', modelId: 'gpt-6.1-sol' }, 'medium')
+  rerenderPicker(onUpdate, { currentModel: { provider: 'codex-native', modelId: 'gpt-6.1-sol', thinkingLevel: 'medium' } })
+  await flushAsyncWork()
+  await openSubmenu(/Reasoning/)
+  expect(getByRole(document.body, 'menuitemradio', { name: 'Ultra' })).toBeTruthy()
+  expect(queryByRole(document.body, 'menuitemradio', { name: 'Off' })).toBeNull()
 })

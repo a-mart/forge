@@ -193,3 +193,21 @@ Legacy saved `pi-5.6` presets resolve to GPT-6 Sol at max; the current `pi-6`
 preset retains Astra at high. The native manager default is GPT-6 Sol at high.
 The capacity fallback chain is now GPT-6 Sol → GPT-6 Luna → GPT-5.5.
 Historical transcript model labels are retained.
+
+
+### GPT-6.1 Sol (native Codex)
+
+`codex-native/gpt-6.1-sol` is an additional native Codex option for managers and
+specialists. It supports low, medium (default), high, xhigh, max, and Ultra
+reasoning. The catalog records the published 1.05M context limit and 128K output
+limit; the Codex client controls its effective context window. Native web search
+uses the existing Codex runtime. Account and client rollout determine access.
+
+The entry is native-only and has no Pi projection. Existing manager defaults,
+rosters, and saved selections remain unchanged. API reference pricing is $2 input,
+$10 output, $0.10 cache reads, and $2.50 cache writes per million tokens; above 272K
+input tokens, input/cache rates double and output rates increase by 1.5x for the
+whole request. Codex plan billing is separate.
+
+Sources: [OpenAI model specification](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
+and [Codex model guide](https://learn.chatgpt.com/docs/models).

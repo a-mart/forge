@@ -2,6 +2,8 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildManagerSelectionCatalog } from "../catalog/manager-selection-catalog.js";
+import { resolveExactManagerModelSelection } from "../catalog/manager-model-selection.js";
 import { Type } from "@sinclair/typebox";
 import { CodexAgentRuntime, NATIVE_CODEX_STATE } from "../runtime/codex/codex-agent-runtime.js";
 import { ChoiceRequestCancelledError, SwarmChoiceService } from "../swarm-choice-service.js";
@@ -17,7 +19,7 @@ import type { ChoiceAnswer, ChoiceQuestion, ChoiceRequestEvent } from "@forge/pr
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
-async function fixture(options: { root?: string; agentId?: string; rejectResume?: boolean; prompt?: string;
+async function fixture(options: { model?: AgentDescriptor["model"]; root?: string; agentId?: string; rejectResume?: boolean; prompt?: string;
   onEvent?: (event: RuntimeSessionEvent) => void; onAgentEnd?: () => Promise<void>; extraTool?: boolean;
   choiceHandler?: (agentId: string, questions: ChoiceQuestion[]) => Promise<ChoiceAnswer[]> } = {}) {
   const root = options.root ?? await mkdtemp(join(tmpdir(), "forge-native-codex-test-"));
@@ -28,7 +30,7 @@ async function fixture(options: { root?: string; agentId?: string; rejectResume?
   await mkdir(codexHome, { recursive: true });
   const descriptor = { agentId, role: "manager", managerId: agentId, profileId: "test", cwd: root,
     status: "idle", sessionFile: join(root, `${agentId}.jsonl`), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-    model: { provider: "codex-native", modelId: "gpt-6-astra", thinkingLevel: "high" },
+    model: options.model ?? { provider: "codex-native", modelId: "gpt-6-astra", thinkingLevel: "high" },
   } as AgentDescriptor;
   let handlers!: CodexAppServerClientHandlers;
   let disposed = false;
@@ -614,4 +616,25 @@ it("persists cumulative native usage once per observation, including interrupted
   await resumed.notify("thread/tokenUsage/updated", params);
   expect(resumed.runtime.getCustomEntries("swarm_native_usage")).toHaveLength(1);
   await resumed.runtime.stopInFlight();
+});
+
+
+describe("GPT-6.1 Sol native selection and dispatch", () => {
+  it.each(["low", "medium", "high", "xhigh", "max", "ultra"] as const)("dispatches the exact model at %s reasoning", async (reasoningLevel) => {
+    const providerAvailability = new Map([["codex-native", true]]);
+    const catalog = buildManagerSelectionCatalog(providerAvailability);
+    const option = catalog.models.find((model) => model.provider === "codex-native" && model.modelId === "gpt-6.1-sol");
+    expect(option).toMatchObject({ defaultReasoningId: "medium", surfaces: { create: { selectable: true }, change: { selectable: true } } });
+    expect(option?.reasoningOptions.map((reasoning) => reasoning.id)).toContain(reasoningLevel);
+    const model = resolveExactManagerModelSelection({ provider: "codex-native", modelId: "gpt-6.1-sol" },
+      { surface: "change", providerAvailability, reasoningLevel });
+    const f = await fixture({ model });
+    try {
+      await f.runtime.sendMessage("Verify selected model dispatch");
+      expect(f.client.request).toHaveBeenCalledWith("thread/start", expect.objectContaining({ model: "gpt-6.1-sol" }));
+      expect(f.client.request).toHaveBeenCalledWith("turn/start", expect.objectContaining({ model: "gpt-6.1-sol", effort: reasoningLevel }));
+    } finally {
+      await f.runtime.terminate();
+    }
+  });
 });
