@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -14,6 +14,7 @@ import type { WorkerActivityStateLike, WorkerStallStateLike } from "../runtime/w
 import { RuntimeRecoveryState } from "../runtime/runtime-recovery-state.js";
 import type { AgentDescriptor } from "../types.js";
 import { getMessageRoutingReceiptsPath } from "../session/message-routing-receipts.js";
+import { ConversationProjector } from "../session/conversation-projector.js";
 
 function baseDescriptor(overrides: Partial<AgentDescriptor> & Pick<AgentDescriptor, "agentId" | "role" | "managerId">): AgentDescriptor {
   const now = "2026-05-06T00:00:00.000Z";
@@ -1026,6 +1027,82 @@ describe("RuntimeEventProjector", () => {
       text: "Done.",
     }));
     expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { priorProgress: false, streamed: false },
+    { priorProgress: true, streamed: false },
+    { priorProgress: false, streamed: true },
+    { priorProgress: true, streamed: true },
+  ])("publishes a clean final once with background work open ($priorProgress prior progress, $streamed streamed), live and after restart", async ({ priorProgress, streamed }) => {
+    const root = await mkdtemp(join(tmpdir(), "forge-background-final-"));
+    try {
+      const { projector, deps, descriptors } = createHarness();
+      const manager = baseDescriptor({
+        agentId: "manager-background", role: "manager", managerId: "manager-background",
+        cwd: root, sessionFile: join(root, "session.jsonl"),
+      });
+      descriptors.set(manager.agentId, manager);
+      const emitServerEvent = vi.fn();
+      const createConversation = () => new ConversationProjector({
+        descriptors, runtimes: new Map(), conversationEntriesByAgentId: new Map(),
+        now: deps.now, emitServerEvent, logDebug: vi.fn(),
+      });
+      const conversation = createConversation();
+      deps.conversationProjector = conversation;
+      projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "session_transcript", channel: "web" });
+      await projector.projectEvent({ agentId: manager.agentId, event: {
+        type: "tool_execution_start", toolName: "Bash", toolCallId: "background-1", args: {},
+      } });
+      await projector.projectEvent({ agentId: manager.agentId, event: {
+        type: "tool_execution_update", toolName: "Bash", toolCallId: "background-1",
+        executionState: "background", partialResult: { status: "running_in_background" },
+      } });
+      if (priorProgress) {
+        await projector.projectEvent({ agentId: manager.agentId, event: assistantEnd("Checking the background task.", { stopReason: "toolUse" }) });
+      }
+      const final = assistantEnd("The check is continuing in the background.", { stopReason: "stop" });
+      if (streamed) {
+        await projector.projectEvent({ agentId: manager.agentId, event: {
+          type: "message_update", message: { role: "assistant", stopReason: "toolUse", content: "The check is continuing" },
+        } });
+        await projector.projectEvent({ agentId: manager.agentId, event: {
+          type: "message_update", message: { role: "assistant", stopReason: "toolUse", content: "The check is continuing in the background." },
+        } });
+      }
+      await projector.projectEvent({ agentId: manager.agentId, event: final });
+      const expected = [
+        ...(priorProgress ? [{ source: "assistant_progress", text: "Checking the background task." }] : []),
+        { source: "assistant_output", text: "The check is continuing in the background." },
+      ];
+      const messages = () => conversation.getConversationHistory(manager.agentId)
+        .filter(entry => entry.type === "conversation_message" && entry.role === "assistant")
+        .map(entry => ({ source: entry.source, text: entry.text }));
+      expect(messages()).toEqual(expected);
+      await projector.projectEvent({ agentId: manager.agentId, event: { type: "turn_end", toolResults: [] } });
+      await projector.projectEvent({ agentId: manager.agentId, event: {
+        type: "tool_execution_end", toolName: "Bash", toolCallId: "background-1", result: { status: "completed" }, isError: false,
+      } });
+      await projector.projectEvent({ agentId: manager.agentId, event: { type: "agent_end", settledAssistantMessage: final.message } });
+      expect(messages()).toEqual(expected);
+      const live = emitServerEvent.mock.calls
+        .filter(([name, event]) => name === "conversation_message" && event.role === "assistant")
+        .map(([, event]) => ({ source: event.source, text: event.text }));
+      expect(live).toEqual(expected);
+      // Identical content in a subsequent turn is a new reply, not a duplicate.
+      projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "session_transcript", channel: "web" });
+      await projector.projectEvent({ agentId: manager.agentId, event: final });
+      expected.push({ source: "assistant_output", text: "The check is continuing in the background." });
+      expect(messages()).toEqual(expected);
+      await conversation.flushPendingHistoryCacheWrites();
+      const restarted = createConversation();
+      expect(restarted.getConversationHistory(manager.agentId)
+        .filter(entry => entry.type === "conversation_message" && entry.role === "assistant")
+        .map(entry => ({ source: entry.source, text: entry.text }))).toEqual(expected);
+      await restarted.flushPendingHistoryCacheWrites();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("projects a post-tool clean final immediately even when no later turn_end arrives", async () => {

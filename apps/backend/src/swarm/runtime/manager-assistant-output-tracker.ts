@@ -10,6 +10,7 @@ import type { MessageRouteDecision } from "../message-router.js";
 import {
   getToolLikeMessageBlocks,
   hasNoReplySentinelLine,
+  isCleanManagerAssistantFinalMessage,
   isToolUseStopReason,
   messageHasIneligibleStopOrError,
 } from "./manager-assistant-final-message.js";
@@ -152,6 +153,12 @@ export class ManagerAssistantOutputTracker {
 
     activeTurn.candidate = undefined;
 
+    // Clean finals belong to the final projector, even when background tools
+    // keep the turn active. Do not publish the same message as progress too.
+    if (isCleanManagerAssistantFinalMessage(event)) {
+      return;
+    }
+
     if (activeTurn.target.kind !== "session_transcript") {
       return;
     }
@@ -198,7 +205,11 @@ export class ManagerAssistantOutputTracker {
         kind: "progress",
         sourceContext: activeTurn.target.sourceContext ?? { channel: activeTurn.target.channel },
       };
-      this.emitProgressCandidateIfEligible(agentId, activeTurn, { allowOpenToolCalls: true });
+      // A text-only stream may still become a clean final. Wait for its
+      // message boundary (or attached tool work) before publishing progress.
+      if (!options?.provisional) {
+        this.emitProgressCandidateIfEligible(agentId, activeTurn, { allowOpenToolCalls: true });
+      }
       return;
     }
 
