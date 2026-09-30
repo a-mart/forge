@@ -26,8 +26,8 @@ describe('Pi package identity gate', () => {
     expect(result.patches).toEqual([
       expect.objectContaining({
         key: '@earendil-works/pi-ai@0.80.6',
-        sha256: '25adff3dd83f972966c1fdf251b11b28fb2f74b1bea2fa811cbe70acc7910e25',
-        lockHash: '25adff3dd83f972966c1fdf251b11b28fb2f74b1bea2fa811cbe70acc7910e25',
+        sha256: 'b7d32b9a0353a182d1a3097259a41acfbe61c3d5aa13580f78fa39d74fd3a101',
+        lockHash: 'b7d32b9a0353a182d1a3097259a41acfbe61c3d5aa13580f78fa39d74fd3a101',
       }),
       expect.objectContaining({
         key: '@earendil-works/pi-coding-agent@0.80.6',
