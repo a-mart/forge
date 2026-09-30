@@ -71,7 +71,7 @@ export class ClaudeRuntimeCreator {
     ].filter(Boolean).join("\n\n");
     const env = await claudeRuntimeEnvironment(this.deps.config);
     const executable = await resolveClaudeExecutable();
-    await assertClaudeSetup(executable, env);
+    await assertClaudeSetup(executable, env, descriptor.cwd);
     const runtime = await ClaudeAgentRuntime.create({ descriptor, callbacks: options.callbacks,
       systemPrompt, env, executable, projectTrusted: trust.trusted, tools, host: this.deps.host,
       creationOptions: options.creationOptions });

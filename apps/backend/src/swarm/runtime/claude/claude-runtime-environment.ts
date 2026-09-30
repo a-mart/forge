@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, win32 } from "node:path";
-import { access } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import { ensureCanonicalAuthFilePath } from "../../auth-storage-paths.js";
@@ -55,7 +55,11 @@ export async function claudeRuntimeEnvironment(config: SwarmConfig, source = pro
   return env;
 }
 
-export async function assertClaudeSetup(executable: string, env: NodeJS.ProcessEnv): Promise<void> {
+export async function assertClaudeSetup(executable: string, env: NodeJS.ProcessEnv, cwd: string): Promise<void> {
+  // Spawning in a missing cwd reports ENOENT, which the SDK misreports as a binary/libc mismatch.
+  if (!(await stat(cwd).catch(() => undefined))?.isDirectory()) {
+    throw new Error(`Claude native cannot start because this session's working folder does not exist on this computer: ${cwd}. Change the project's working directory to an existing folder, then retry.`);
+  }
   let version: string;
   try { version = (await execute(executable, ["--version"], { env, timeout: 10_000, windowsHide: true })).stdout.trim(); }
   catch { throw new Error("Claude native could not launch its executable. Check CLAUDE_BIN, file permissions, and the installed platform/architecture. Remove CLAUDE_BIN to use the bundled runtime."); }

@@ -35,8 +35,8 @@ describe("Claude native setup", () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
   it("requests in-app sign-in without exposing an executable path", async () => {
-    await expect(assertClaudeSetup("/path with space/claude", {})).rejects.toThrow("Connect your Claude account");
-    exec.loggedIn = true; await expect(assertClaudeSetup("/fixture/claude", {})).resolves.toBeUndefined();
+    await expect(assertClaudeSetup("/path with space/claude", {}, tmpdir())).rejects.toThrow("Connect your Claude account");
+    exec.loggedIn = true; await expect(assertClaudeSetup("/fixture/claude", {}, tmpdir())).resolves.toBeUndefined();
   });
   it("recognizes the CLI signed-out exit code without disguising process errors as missing login", async () => {
     exec.failure = { code: 1, stdout: '{"loggedIn":false}', stderr: "PRIVATE_CANARY" };
@@ -48,9 +48,14 @@ describe("Claude native setup", () => {
   });
   it("provides bundled-runtime recovery and an update command for old overrides", async () => {
     exec.version = "2.1.259 (Claude Code)";
-    await expect(assertClaudeSetup("/fixture/claude", {})).rejects.toThrow("claude update");
+    await expect(assertClaudeSetup("/fixture/claude", {}, tmpdir())).rejects.toThrow("claude update");
     exec.version = "unexpected version";
-    await expect(assertClaudeSetup("/fixture/claude", {})).rejects.toThrow("unrecognized version response");
+    await expect(assertClaudeSetup("/fixture/claude", {}, tmpdir())).rejects.toThrow("unrecognized version response");
+  });
+  it("names a missing session folder instead of the SDK's misleading launch failure", async () => {
+    exec.loggedIn = true;
+    const missing = join(tmpdir(), "forge-claude-missing-cwd", "project");
+    await expect(assertClaudeSetup("/fixture/claude", {}, missing)).rejects.toThrow(`working folder does not exist on this computer: ${missing}`);
   });
   it.each(["C:\\Users\\Adam\\claude.cmd", "C:\\tools\\claude.ps1", "claude.exe"])("rejects an unsafe or ambiguous Windows override: %s", async path => {
     await expect(resolveClaudeExecutable({ CLAUDE_BIN: path }, "win32", "x64")).rejects.toThrow("absolute path to the native Claude executable");
