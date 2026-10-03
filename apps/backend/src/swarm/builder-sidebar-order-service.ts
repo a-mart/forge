@@ -13,7 +13,7 @@ import { isEnoentError } from "../utils/fs-errors.js";
 import { getBuilderSidebarOrderPath } from "./storage/data-paths.js";
 
 export const MAX_BUILDER_SIDEBAR_ORDER_REFS = BUILDER_SIDEBAR_ORDER_MAX_REFS;
-export const MAX_BUILDER_SIDEBAR_ORDER_ID_LENGTH = BUILDER_SIDEBAR_ORDER_MAX_ID_CODE_POINTS;
+const MAX_BUILDER_SIDEBAR_ORDER_ID_LENGTH = BUILDER_SIDEBAR_ORDER_MAX_ID_CODE_POINTS;
 /** Maximum compact UTF-8 bytes for the `order` array itself. */
 export const MAX_BUILDER_SIDEBAR_ORDER_SERIALIZED_BYTES =
   BUILDER_SIDEBAR_ORDER_MAX_SERIALIZED_BYTES;
@@ -114,7 +114,7 @@ export class BuilderSidebarOrderService {
   }
 }
 
-export function createDefaultBuilderSidebarOrder(): BuilderSidebarOrderState {
+function createDefaultBuilderSidebarOrder(): BuilderSidebarOrderState {
   return {
     version: BUILDER_SIDEBAR_ORDER_VERSION,
     revision: 0,

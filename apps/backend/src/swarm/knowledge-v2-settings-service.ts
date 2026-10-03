@@ -14,8 +14,8 @@ import {
 } from "./knowledge-v2-migration-lock.js";
 
 const SETTINGS_FILE_VERSION = 1;
-export const DEFAULT_GLOBAL_INDEX_TOKEN_CAP = 1_500;
-export const DEFAULT_PROFILE_INDEX_TOKEN_CAP = 800;
+const DEFAULT_GLOBAL_INDEX_TOKEN_CAP = 1_500;
+const DEFAULT_PROFILE_INDEX_TOKEN_CAP = 800;
 const MIN_INDEX_TOKEN_CAP = 100;
 const MAX_INDEX_TOKEN_CAP = 10_000;
 
@@ -160,7 +160,7 @@ export class KnowledgeV2SettingsService {
   }
 }
 
-export function createDefaultKnowledgeV2Settings(): KnowledgeV2Settings {
+function createDefaultKnowledgeV2Settings(): KnowledgeV2Settings {
   return {
     enabled: false,
     legacyCleanupConfirmed: false,

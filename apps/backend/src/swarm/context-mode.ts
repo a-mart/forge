@@ -19,7 +19,7 @@ export const FRESH_CONTEXT_UNSUPPORTED_COLLAB =
   "Context v2 is not supported for Collaboration sessions.";
 export const FRESH_CONTEXT_UNSUPPORTED_SPECIAL_PURPOSE =
   "Context v2 is only supported for ordinary Builder manager compaction runtimes.";
-export const FRESH_CONTEXT_UNSUPPORTED_PLUGIN =
+const FRESH_CONTEXT_UNSUPPORTED_PLUGIN =
   "Context v2 is not supported for plugin workers.";
 export const FRESH_CONTEXT_UNSUPPORTED_EXTERNAL_THREAD =
   "Context v2 is not supported for external-thread runtimes.";
@@ -29,7 +29,7 @@ export const FRESH_CONTEXT_UNSUPPORTED_SYSTEM_PROFILE =
   "Context v2 is not supported for system-managed profiles.";
 export const FRESH_CONTEXT_UNSUPPORTED_CURSOR_SDK =
   "Context v2 is not supported for Cursor SDK runtimes.";
-export const FRESH_CONTEXT_UNSUPPORTED_NON_PI =
+const FRESH_CONTEXT_UNSUPPORTED_NON_PI =
   "Context v2 is currently limited to Pi-backed Builder manager compaction runtimes.";
 export const FRESH_CONTEXT_UNSUPPORTED_PROVIDER =
   "Context v2 is only supported for existing Pi-backed compaction providers.";

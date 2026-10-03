@@ -184,7 +184,7 @@ export function createDefaultCompactionSettings(): CompactionSettings {
   };
 }
 
-export function getCompactionSettingsConstraints(): {
+function getCompactionSettingsConstraints(): {
   timeoutMs: { min: number; max: number; default: number };
 } {
   return {
