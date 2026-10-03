@@ -1,11 +1,11 @@
 import {
-  isTerminalAssistantConversationMessage,
   MOBILE_PUSH_ANDROID_CHANNEL_ID,
   MOBILE_PUSH_DATA_VERSION,
   type MobilePushDevice,
   type ServerEvent,
+  type SessionAttention,
+  type SessionAttentionReason,
 } from "@forge/protocol";
-import { isNonRunningAgentStatus } from "../swarm/agent-state-machine.js";
 import {
   NotificationSettingsService,
   shouldMuteCliOriginatedNotifications,
@@ -25,8 +25,14 @@ const DEFAULT_PUSH_TITLE = "Forge";
 const DEFAULT_TEST_BODY = "Forge push notifications are configured.";
 const MAX_PUSH_TITLE_LENGTH = 64;
 
-type PushNotificationType = "unread" | "choice_request" | "agent_status" | "error" | "test";
-type UnreadNotificationReason = "message" | "choice_request";
+const ATTENTION_PUSH_BODY: Record<SessionAttentionReason, string> = {
+  work_settled: "Finished — ready for you",
+  plan_completed: "Plan complete — ready for you",
+  work_graph_completed: "All delegated work is complete",
+  awaiting_review: "Ready for your review",
+  decision_waiting: "Waiting on your decision",
+  work_failed: "Work failed — needs your attention",
+};
 
 interface AgentRoutingContext {
   sessionAgentId: string;
@@ -55,35 +61,19 @@ export class MobilePushService {
   private receiptTimer: NodeJS.Timeout | null = null;
   private receiptPollingInFlight = false;
   private readonly pendingReceipts = new Map<string, PendingReceiptRecord>();
-  private readonly lastSeenStatusByAgentId = new Map<string, string>();
+  /**
+   * Attention IDs already visible. Only IDs absent from the previous snapshot
+   * push; the first snapshot observed is a baseline so restarts never replay.
+   */
+  private knownAttentionIds: Set<string> | null = null;
 
-  private readonly onConversationMessage = (event: ServerEvent): void => {
-    if (event.type !== "conversation_message") {
+  private readonly onSessionAttentionSnapshot = (event: ServerEvent): void => {
+    if (event.type !== "session_attention_snapshot") {
       return;
     }
 
-    void this.handleConversationMessage(event).catch((error) => {
-      this.logError("conversation_message", error);
-    });
-  };
-
-  private readonly onAgentStatus = (event: ServerEvent): void => {
-    if (event.type !== "agent_status") {
-      return;
-    }
-
-    void this.handleAgentStatus(event).catch((error) => {
-      this.logError("agent_status", error);
-    });
-  };
-
-  private readonly onChoiceRequest = (event: ServerEvent): void => {
-    if (event.type !== "choice_request") {
-      return;
-    }
-
-    void this.handleChoiceRequest(event).catch((error) => {
-      this.logError("choice_request", error);
+    void this.handleSessionAttentionSnapshot(event.attentions).catch((error) => {
+      this.logError("session_attention_snapshot", error);
     });
   };
 
@@ -118,9 +108,8 @@ export class MobilePushService {
     await this.notificationSettingsService.load();
 
     this.started = true;
-    this.swarmManager.on("conversation_message", this.onConversationMessage);
-    this.swarmManager.on("agent_status", this.onAgentStatus);
-    this.swarmManager.on("choice_request", this.onChoiceRequest);
+    this.knownAttentionIds = this.readBaselineAttentionIds();
+    this.swarmManager.on("session_attention_snapshot", this.onSessionAttentionSnapshot);
 
     this.receiptTimer = setInterval(() => {
       void this.pollReceipts().catch((error) => {
@@ -136,9 +125,8 @@ export class MobilePushService {
     }
 
     this.started = false;
-    this.swarmManager.off("conversation_message", this.onConversationMessage);
-    this.swarmManager.off("agent_status", this.onAgentStatus);
-    this.swarmManager.off("choice_request", this.onChoiceRequest);
+    this.knownAttentionIds = null;
+    this.swarmManager.off("session_attention_snapshot", this.onSessionAttentionSnapshot);
 
     if (this.receiptTimer) {
       clearInterval(this.receiptTimer);
@@ -253,72 +241,38 @@ export class MobilePushService {
     };
   }
 
-  private async handleConversationMessage(
-    event: Extract<ServerEvent, { type: "conversation_message" }>
-  ): Promise<void> {
-    if (!isTerminalAssistantConversationMessage(event)) {
-      return;
+  private readBaselineAttentionIds(): Set<string> | null {
+    try {
+      return new Set(this.swarmManager.getSessionAttentionSnapshot().attentions.map((entry) => entry.attentionId));
+    } catch {
+      // Not initialized yet: the first emitted snapshot becomes the baseline.
+      return null;
     }
-
-    await this.dispatchNotification({
-      type: "unread",
-      reason: "message",
-      agentId: event.agentId,
-      body: truncateText(event.text, 180)
-    });
   }
 
-  private async handleAgentStatus(event: Extract<ServerEvent, { type: "agent_status" }>): Promise<void> {
-    const previous = this.lastSeenStatusByAgentId.get(event.agentId);
-    if (previous === event.status) {
+  private async handleSessionAttentionSnapshot(attentions: readonly SessionAttention[]): Promise<void> {
+    const previous = this.knownAttentionIds;
+    this.knownAttentionIds = new Set(attentions.map((entry) => entry.attentionId));
+    if (!previous) {
       return;
     }
 
-    this.lastSeenStatusByAgentId.set(event.agentId, event.status);
+    for (const entry of attentions) {
+      if (previous.has(entry.attentionId)) {
+        continue;
+      }
 
-    if (!isNonRunningAgentStatus(event.status)) {
-      return;
+      await this.dispatchNotification({
+        agentId: entry.sessionAgentId,
+        eventId: entry.attentionId,
+        body: ATTENTION_PUSH_BODY[entry.reason] ?? "Needs you",
+      });
     }
-
-    const context = this.resolveAgentRoutingContext(event.agentId);
-    const statusLabel = event.status.toUpperCase();
-    const notificationType = this.isTerminalSessionFailureStatus(event.agentId, event.status)
-      ? "error"
-      : "agent_status";
-
-    await this.dispatchNotification({
-      type: notificationType,
-      agentId: event.agentId,
-      title: `${context.agentDisplayName} status update`,
-      body: `${context.agentDisplayName} is now ${statusLabel}.`
-    });
-  }
-
-  private async handleChoiceRequest(event: Extract<ServerEvent, { type: "choice_request" }>): Promise<void> {
-    if (event.status !== "pending") {
-      return;
-    }
-
-    const context = this.resolveAgentRoutingContext(event.agentId);
-    const { title, body } = buildChoiceRequestNotificationContent({
-      agentDisplayName: context.agentDisplayName,
-      questions: event.questions
-    });
-
-    await this.dispatchNotification({
-      type: "choice_request",
-      reason: "choice_request",
-      agentId: event.agentId,
-      title,
-      body
-    });
   }
 
   private async dispatchNotification(notification: {
-    type: PushNotificationType;
-    reason?: UnreadNotificationReason;
     agentId: string;
-    title?: string;
+    eventId: string;
     body: string;
   }): Promise<void> {
     if (!this.started) {
@@ -326,7 +280,7 @@ export class MobilePushService {
     }
 
     const preferences = await this.store.getPreferences();
-    if (!isNotificationTypeEnabled(preferences, notification.type)) {
+    if (!preferences.enabled) {
       return;
     }
 
@@ -344,25 +298,19 @@ export class MobilePushService {
       return;
     }
 
-    const eventId = buildPushEventId({
-      type: notification.type,
-      agentId: notification.agentId,
-      sessionAgentId: context.sessionAgentId,
-    });
     const payload: Omit<ExpoPushMessage, "to"> = {
-      title: notification.title ?? buildMessageNotificationTitle(context),
+      title: buildMessageNotificationTitle(context),
       body: notification.body,
       sound: "default",
       channelId: MOBILE_PUSH_ANDROID_CHANNEL_ID,
       data: {
         v: MOBILE_PUSH_DATA_VERSION,
-        type: notification.type,
-        reason: notification.reason ?? (notification.type === "choice_request" ? "choice_request" : "message"),
+        type: "attention",
         agentId: notification.agentId,
         sessionAgentId: context.sessionAgentId,
         profileId: context.profileId,
         route: context.route,
-        eventId,
+        eventId: notification.eventId,
       }
     };
 
@@ -545,42 +493,9 @@ export class MobilePushService {
     });
   }
 
-  private isTerminalSessionFailureStatus(agentId: string, status: string): boolean {
-    if (status !== "error") {
-      return false;
-    }
-
-    const descriptor = this.swarmManager.getAgent(agentId);
-    return descriptor?.role === "manager" && isNonRunningAgentStatus(descriptor.status);
-  }
-
   private logError(scope: string, error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`[mobile-push] ${scope}: ${message}`);
-  }
-}
-
-function isNotificationTypeEnabled(
-  preferences: MobileNotificationPreferences,
-  type: PushNotificationType
-): boolean {
-  if (!preferences.enabled) {
-    return false;
-  }
-
-  switch (type) {
-    case "unread":
-      return preferences.unreadMessages;
-    case "choice_request":
-      return preferences.unreadMessages;
-    case "agent_status":
-      return preferences.agentStatusChanges;
-    case "error":
-      return preferences.errors;
-    case "test":
-      return true;
-    default:
-      return false;
   }
 }
 
@@ -602,41 +517,8 @@ function getSessionDisplayName(descriptor: { agentId: string; displayName: strin
   return normalizeOptionalString(descriptor.sessionLabel) ?? normalizeOptionalString(descriptor.displayName) ?? descriptor.agentId;
 }
 
-function buildChoiceRequestNotificationContent(options: {
-  agentDisplayName: string;
-  questions: Array<{ header?: string; question: string }>;
-}): { title: string; body: string } {
-  const { agentDisplayName, questions } = options;
-  const primaryQuestion = questions[0]
-    ? normalizeOptionalString(questions[0].header) ?? normalizeOptionalString(questions[0].question)
-    : undefined;
-
-  const title = `${agentDisplayName} needs your answer`;
-
-  if (!primaryQuestion) {
-    return {
-      title,
-      body: "Open Forge Mobile to review the pending question."
-    };
-  }
-
-  const suffix = questions.length > 1 ? ` (+${questions.length - 1} more)` : "";
-  return {
-    title,
-    body: truncateText(`${primaryQuestion}${suffix}`, 180)
-  };
-}
-
 function buildSessionRoute(options: { profileId: string; sessionAgentId: string }): string {
   return `/profiles/${encodeURIComponent(options.profileId)}/sessions/${encodeURIComponent(options.sessionAgentId)}`;
-}
-
-function buildPushEventId(options: {
-  type: PushNotificationType;
-  agentId: string;
-  sessionAgentId: string;
-}): string {
-  return `${options.type}:${options.sessionAgentId}:${options.agentId}:${Date.now()}`;
 }
 
 function normalizeRequiredString(value: unknown, fieldName: string): string {

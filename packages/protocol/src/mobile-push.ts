@@ -13,7 +13,12 @@ export const MOBILE_PUSH_ANDROID_CHANNEL_ID = 'agent-updates'
 export const MOBILE_PUSH_PLATFORMS = ['ios', 'android', 'unknown'] as const
 export type MobilePushPlatform = (typeof MOBILE_PUSH_PLATFORMS)[number]
 
+/**
+ * Current servers push only `attention` (a session newly entered Needs you;
+ * `eventId` is its attentionId). The other types remain for older servers.
+ */
 export const MOBILE_PUSH_NOTIFICATION_TYPES = [
+  'attention',
   'unread',
   'choice_request',
   'agent_status',

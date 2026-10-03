@@ -3,6 +3,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { SessionAttention } from '@forge/protocol'
 import type { AgentDescriptor, ManagerProfile } from '../swarm/types.js'
 import type { SwarmManager } from '../swarm/swarm-manager.js'
 import { getSharedMobileDevicesPath } from '../swarm/data-paths.js'
@@ -31,6 +32,36 @@ class FakeSwarmManager extends EventEmitter {
   listProfiles(): ManagerProfile[] {
     return Array.from(this.profiles.values())
   }
+
+  initialAttentions: SessionAttention[] = []
+
+  getSessionAttentionSnapshot(): { revision: number; attentions: SessionAttention[] } {
+    return { revision: 0, attentions: this.initialAttentions }
+  }
+}
+
+let attentionSequence = 0
+let attentionRevision = 0
+
+function attention(
+  sessionAgentId: string,
+  reason: SessionAttention['reason'] = 'work_settled',
+  attentionId = `attention-${++attentionSequence}`,
+): SessionAttention {
+  return { attentionId, sessionAgentId, profileId: 'profile-a', reason, raisedAt: new Date().toISOString() }
+}
+
+function emitAttentionSnapshot(manager: FakeSwarmManager, attentions: SessionAttention[]): void {
+  manager.emit('session_attention_snapshot', {
+    type: 'session_attention_snapshot',
+    revision: ++attentionRevision,
+    attentions,
+  })
+}
+
+/** Raises one new Needs-you attention for the session. */
+function emitAttention(manager: FakeSwarmManager, sessionAgentId: string): void {
+  emitAttentionSnapshot(manager, [attention(sessionAgentId)])
 }
 
 function createManagerDescriptor(
@@ -135,7 +166,7 @@ afterEach(() => {
 })
 
 describe('MobilePushService', () => {
-  it('dispatches unread notifications with contextual session titles and routing data', async () => {
+  it('pushes a Needs-you attention with contextual session titles, reason copy and routing data', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'mobile-push-service-'))
     const manager = new FakeSwarmManager(
       [
@@ -168,14 +199,7 @@ describe('MobilePushService', () => {
     })
 
     await service.start()
-    manager.emit('conversation_message', {
-      type: 'conversation_message',
-      agentId: 'manager',
-      role: 'assistant',
-      text: 'hello from manager',
-      timestamp: new Date().toISOString(),
-      source: 'speak_to_user',
-    })
+    emitAttention(manager, 'manager')
 
     await waitForCondition(() => sendMock.mock.calls.length === 1)
     await service.stop()
@@ -187,10 +211,13 @@ describe('MobilePushService', () => {
     expect(calls[0]).toBeDefined()
     expect(payload.to).toBe('ExpoPushToken[test-device]')
     expect(payload.title).toBe('Forge / Release Notes')
+    expect(payload.body).toBe('Finished — ready for you')
+    const data = payload.data as Record<string, unknown>
+    expect(data.reason).toBeUndefined()
+    expect(data.eventId).toMatch(/^attention-/)
     expect(payload.data).toMatchObject({
       v: 1,
-      type: 'unread',
-      reason: 'message',
+      type: 'attention',
       agentId: 'manager',
       sessionAgentId: 'manager',
       profileId: 'profile-a',
@@ -230,14 +257,7 @@ describe('MobilePushService', () => {
     })
 
     await service.start()
-    manager.emit('conversation_message', {
-      type: 'conversation_message',
-      agentId: 'manager',
-      role: 'assistant',
-      text: 'hello from manager',
-      timestamp: new Date().toISOString(),
-      source: 'speak_to_user',
-    })
+    emitAttention(manager, 'manager')
 
     await waitForCondition(() => sendMock.mock.calls.length === 1)
     await service.stop()
@@ -245,87 +265,6 @@ describe('MobilePushService', () => {
     const calls = sendMock.mock.calls as unknown as Array<Array<unknown>>
     const payload = (calls[0]?.[0] as Record<string, unknown> | undefined) ?? {}
     expect(payload.title).toBe('Mobile QA')
-  })
-
-  it('sends unread pushes for projected assistant_output messages', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'mobile-push-service-'))
-    const manager = new FakeSwarmManager([createManagerDescriptor('profile-a', 'manager', undefined)])
-    const sendMock = vi.fn(async () => ({ ok: true, retryable: false, ticketId: 'ticket-projected-1' }))
-
-    const service = new MobilePushService({
-      swarmManager: manager as unknown as SwarmManager,
-      dataDir,
-      expoPushClient: {
-        send: sendMock,
-        getReceipts: vi.fn(async () => ({})),
-      } as unknown as ExpoPushClient,
-      isSessionActive: () => false,
-      receiptPollIntervalMs: 60_000,
-    })
-
-    await service.registerDevice({
-      token: 'ExpoPushToken[test-device]',
-      platform: 'ios',
-      deviceName: 'iPhone',
-    })
-
-    await service.start()
-    manager.emit('conversation_message', {
-      type: 'conversation_message',
-      agentId: 'manager',
-      role: 'assistant',
-      text: 'projected answer',
-      timestamp: new Date().toISOString(),
-      source: 'assistant_output',
-      sourceContext: { channel: 'web' },
-    })
-
-    await waitForCondition(() => sendMock.mock.calls.length === 1)
-    await service.stop()
-
-    expect(sendMock).toHaveBeenCalledTimes(1)
-    const payload = sendMock.mock.calls[0]?.[0] as Record<string, unknown>
-    expect(payload.body).toBe('projected answer')
-    expect(payload.data).toMatchObject({ type: 'unread', reason: 'message', agentId: 'manager' })
-  })
-
-  it('does not send unread pushes for assistant_progress messages', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'mobile-push-service-'))
-    const manager = new FakeSwarmManager([createManagerDescriptor('profile-a', 'manager', undefined)])
-    const sendMock = vi.fn(async () => ({ ok: true, retryable: false, ticketId: 'ticket-progress-1' }))
-
-    const service = new MobilePushService({
-      swarmManager: manager as unknown as SwarmManager,
-      dataDir,
-      expoPushClient: {
-        send: sendMock,
-        getReceipts: vi.fn(async () => ({})),
-      } as unknown as ExpoPushClient,
-      isSessionActive: () => false,
-      receiptPollIntervalMs: 60_000,
-    })
-
-    await service.registerDevice({
-      token: 'ExpoPushToken[test-device]',
-      platform: 'ios',
-      deviceName: 'iPhone',
-    })
-
-    await service.start()
-    manager.emit('conversation_message', {
-      type: 'conversation_message',
-      agentId: 'manager',
-      role: 'assistant',
-      text: 'projected progress',
-      timestamp: new Date().toISOString(),
-      source: 'assistant_progress',
-      sourceContext: { channel: 'web' },
-    })
-
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    await service.stop()
-
-    expect(sendMock).not.toHaveBeenCalled()
   })
 
   it('suppresses pushes for CLI-originated sessions when notification settings mute them', async () => {
@@ -361,192 +300,12 @@ describe('MobilePushService', () => {
     })
 
     await service.start()
-    manager.emit('conversation_message', {
-      type: 'conversation_message',
-      agentId: 'manager',
-      role: 'assistant',
-      text: 'hello from manager',
-      timestamp: new Date().toISOString(),
-      source: 'speak_to_user',
-    })
+    emitAttention(manager, 'manager')
 
     await flushAsync()
     await service.stop()
 
     expect(sendMock).not.toHaveBeenCalled()
-  })
-
-  it('does not send error pushes for recoverable system error messages while the session keeps running', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'mobile-push-service-'))
-    const manager = new FakeSwarmManager([createManagerDescriptor()])
-
-    const sendMock = vi.fn(async () => ({ ok: true, retryable: false, ticketId: 'ticket-error-1' }))
-
-    const service = new MobilePushService({
-      swarmManager: manager as unknown as SwarmManager,
-      dataDir,
-      expoPushClient: {
-        send: sendMock,
-        getReceipts: vi.fn(async () => ({})),
-      } as unknown as ExpoPushClient,
-      isSessionActive: () => false,
-      receiptPollIntervalMs: 60_000,
-    })
-
-    await service.registerDevice({
-      token: 'ExpoPushToken[test-device]',
-      platform: 'ios',
-      deviceName: 'iPhone',
-    })
-
-    await service.start()
-    manager.emit('conversation_message', {
-      type: 'conversation_message',
-      agentId: 'manager',
-      role: 'system',
-      text: '⚠️ Worker reply failed: This operation was aborted. The manager may need to retry after checking provider auth, quotas, or rate limits.',
-      timestamp: new Date().toISOString(),
-      source: 'system',
-    })
-
-    await flushAsync()
-    await service.stop()
-
-    expect(sendMock).not.toHaveBeenCalled()
-  })
-
-  it('sends error pushes only for terminal manager failures, not worker error statuses', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'mobile-push-service-'))
-    const manager = new FakeSwarmManager([
-      createManagerDescriptor('profile-a', 'manager'),
-      createWorkerDescriptor('manager', 'worker-1'),
-      {
-        ...createManagerDescriptor('profile-a', 'errored-manager'),
-        displayName: 'Errored Manager',
-        status: 'error',
-      },
-    ])
-
-    const sendMock = vi.fn(async () => ({ ok: true, retryable: false, ticketId: 'ticket-status-1' }))
-
-    const service = new MobilePushService({
-      swarmManager: manager as unknown as SwarmManager,
-      dataDir,
-      expoPushClient: {
-        send: sendMock,
-        getReceipts: vi.fn(async () => ({})),
-      } as unknown as ExpoPushClient,
-      isSessionActive: () => false,
-      receiptPollIntervalMs: 60_000,
-    })
-
-    await service.registerDevice({
-      token: 'ExpoPushToken[test-device]',
-      platform: 'ios',
-      deviceName: 'iPhone',
-    })
-
-    await service.start()
-    manager.emit('agent_status', {
-      type: 'agent_status',
-      agentId: 'worker-1',
-      status: 'error',
-      pendingCount: 0,
-    })
-    manager.emit('agent_status', {
-      type: 'agent_status',
-      agentId: 'errored-manager',
-      status: 'error',
-      pendingCount: 0,
-    })
-
-    await waitForCondition(() => sendMock.mock.calls.length === 2)
-    await service.stop()
-
-    const calls = sendMock.mock.calls as unknown as Array<Array<unknown>>
-    const payloads = calls.map((call) => ((call[0] as Record<string, unknown> | undefined) ?? {}))
-    const workerPayload = payloads.find((payload) => {
-      const data = payload.data as Record<string, unknown> | undefined
-      return data?.type === 'agent_status' && data?.agentId === 'worker-1'
-    })
-    const managerPayload = payloads.find((payload) => {
-      const data = payload.data as Record<string, unknown> | undefined
-      return data?.type === 'error' && data?.agentId === 'errored-manager'
-    })
-
-    expect(workerPayload).toBeDefined()
-    expect(workerPayload?.data).toMatchObject({
-      type: 'agent_status',
-      agentId: 'worker-1',
-      sessionAgentId: 'manager',
-    })
-    expect(managerPayload).toBeDefined()
-    expect(managerPayload?.data).toMatchObject({
-      type: 'error',
-      agentId: 'errored-manager',
-      sessionAgentId: 'errored-manager',
-    })
-  })
-
-  it('dispatches pending choice requests as question notifications routed to the owning session', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'mobile-push-service-'))
-    const manager = new FakeSwarmManager([
-      createManagerDescriptor('profile-a', 'manager'),
-      createWorkerDescriptor('manager', 'worker-1'),
-    ])
-
-    const sendMock = vi.fn(async () => ({ ok: true, retryable: false, ticketId: 'ticket-choice-1' }))
-
-    const service = new MobilePushService({
-      swarmManager: manager as unknown as SwarmManager,
-      dataDir,
-      expoPushClient: {
-        send: sendMock,
-        getReceipts: vi.fn(async () => ({})),
-      } as unknown as ExpoPushClient,
-      isSessionActive: () => false,
-      receiptPollIntervalMs: 60_000,
-    })
-
-    await service.registerDevice({
-      token: 'ExpoPushToken[test-device]',
-      platform: 'ios',
-      deviceName: 'iPhone',
-    })
-
-    await service.start()
-    manager.emit('choice_request', {
-      type: 'choice_request',
-      agentId: 'worker-1',
-      choiceId: 'choice-123',
-      status: 'pending',
-      timestamp: new Date().toISOString(),
-      questions: [
-        {
-          id: 'q-1',
-          question: 'Should I keep the current retry window?',
-        },
-      ],
-    })
-
-    await waitForCondition(() => sendMock.mock.calls.length === 1)
-    await service.stop()
-
-    const calls = sendMock.mock.calls as unknown as Array<Array<unknown>>
-    const payload = (calls[0]?.[0] as Record<string, unknown> | undefined) ?? {}
-
-    expect(payload.to).toBe('ExpoPushToken[test-device]')
-    expect(payload.title).toBe('Backend Specialist needs your answer')
-    expect(payload.body).toBe('Should I keep the current retry window?')
-    expect(payload.data).toMatchObject({
-      v: 1,
-      type: 'choice_request',
-      reason: 'choice_request',
-      agentId: 'worker-1',
-      sessionAgentId: 'manager',
-      profileId: 'profile-a',
-      route: '/profiles/profile-a/sessions/manager',
-    })
   })
 
   it('suppresses push notifications when the session is actively viewed', async () => {
@@ -573,14 +332,7 @@ describe('MobilePushService', () => {
     })
 
     await service.start()
-    manager.emit('conversation_message', {
-      type: 'conversation_message',
-      agentId: 'manager',
-      role: 'assistant',
-      text: 'suppressed message',
-      timestamp: new Date().toISOString(),
-      source: 'speak_to_user',
-    })
+    emitAttention(manager, 'manager')
 
     await flushAsync()
     await service.stop()
@@ -612,14 +364,7 @@ describe('MobilePushService', () => {
     })
 
     await service.start()
-    manager.emit('conversation_message', {
-      type: 'conversation_message',
-      agentId: 'review-run',
-      role: 'assistant',
-      text: 'review update',
-      timestamp: new Date().toISOString(),
-      source: 'speak_to_user',
-    })
+    emitAttention(manager, 'review-run')
 
     await flushAsync()
     await service.stop()
@@ -660,14 +405,7 @@ describe('MobilePushService', () => {
     })
 
     await service.start()
-    manager.emit('conversation_message', {
-      type: 'conversation_message',
-      agentId: 'manager',
-      role: 'assistant',
-      text: 'retry path',
-      timestamp: new Date().toISOString(),
-      source: 'speak_to_user',
-    })
+    emitAttention(manager, 'manager')
 
     await flushAsync()
     await waitForCondition(() => sendMock.mock.calls.length === 2)
@@ -730,14 +468,7 @@ describe('MobilePushService', () => {
     })
 
     await service.start()
-    manager.emit('conversation_message', {
-      type: 'conversation_message',
-      agentId: 'manager',
-      role: 'assistant',
-      text: 'receipt path',
-      timestamp: new Date().toISOString(),
-      source: 'speak_to_user',
-    })
+    emitAttention(manager, 'manager')
 
     await waitForCondition(() => sendMock.mock.calls.length === 1)
     await (service as any).pollReceipts()
@@ -797,14 +528,7 @@ describe('MobilePushService', () => {
     })
 
     await service.start()
-    manager.emit('conversation_message', {
-      type: 'conversation_message',
-      agentId: 'manager',
-      role: 'assistant',
-      text: 'hello from both devices',
-      timestamp: new Date().toISOString(),
-      source: 'speak_to_user',
-    })
+    emitAttention(manager, 'manager')
 
     await waitForCondition(() => sendMock.mock.calls.length === 2)
     await service.stop()
@@ -816,7 +540,7 @@ describe('MobilePushService', () => {
 
     expect(dataA).toMatchObject({
       v: 1,
-      type: 'unread',
+      type: 'attention',
       agentId: 'manager',
       sessionAgentId: 'manager',
       profileId: 'profile-a',
@@ -894,14 +618,7 @@ describe('MobilePushService', () => {
     })
 
     await restarted.start()
-    manager.emit('conversation_message', {
-      type: 'conversation_message',
-      agentId: 'manager',
-      role: 'assistant',
-      text: 'after restart',
-      timestamp: new Date().toISOString(),
-      source: 'speak_to_user',
-    })
+    emitAttention(manager, 'manager')
 
     await waitForCondition(() => sendMock.mock.calls.length === 2)
     await restarted.stop()
@@ -968,5 +685,105 @@ describe('MobilePushService', () => {
       }),
     ).rejects.toThrow(/origin identity, not a URL/)
     await service.stop()
+  })
+})
+
+describe('MobilePushService Needs-you trigger', () => {
+  async function startService(manager: FakeSwarmManager) {
+    const dataDir = await mkdtemp(join(tmpdir(), 'mobile-push-attention-'))
+    const sendMock = vi.fn(async () => ({ ok: true, retryable: false, ticketId: 'ticket' }))
+    const service = new MobilePushService({
+      swarmManager: manager as unknown as SwarmManager,
+      dataDir,
+      expoPushClient: { send: sendMock, getReceipts: vi.fn(async () => ({})) } as unknown as ExpoPushClient,
+      isSessionActive: () => false,
+      receiptPollIntervalMs: 60_000,
+    })
+    await service.registerDevice({ token: 'ExpoPushToken[attention]', platform: 'android', deviceName: 'Phone' })
+    await service.start()
+    const sent = () => (sendMock.mock.calls as unknown as Array<[Record<string, any>]>).map(([payload]) => payload)
+    return { service, sendMock, sent }
+  }
+
+  it('pushes each attention once, when it first appears, and never for still-visible ones', async () => {
+    const manager = new FakeSwarmManager([
+      createManagerDescriptor('profile-a', 'manager'),
+      createManagerDescriptor('profile-a', 'other'),
+    ])
+    const { service, sendMock, sent } = await startService(manager)
+    const first = attention('manager', 'work_settled', 'a-1')
+    const second = attention('other', 'decision_waiting', 'b-1')
+
+    emitAttentionSnapshot(manager, [first])
+    await waitForCondition(() => sendMock.mock.calls.length === 1)
+    emitAttentionSnapshot(manager, [first])
+    emitAttentionSnapshot(manager, [first, second])
+    await waitForCondition(() => sendMock.mock.calls.length === 2)
+    // Dismissed, then a later work epoch raises a new occurrence for the same session.
+    emitAttentionSnapshot(manager, [second])
+    emitAttentionSnapshot(manager, [second, attention('manager', 'work_failed', 'a-2')])
+    await waitForCondition(() => sendMock.mock.calls.length === 3)
+    await flushAsync()
+    await service.stop()
+
+    expect(sent().map((payload) => payload.data.eventId)).toEqual(['a-1', 'b-1', 'a-2'])
+    expect(sent().map((payload) => payload.data.sessionAgentId)).toEqual(['manager', 'other', 'manager'])
+    expect(sent().map((payload) => payload.body)).toEqual([
+      'Finished — ready for you',
+      'Waiting on your decision',
+      'Work failed — needs your attention',
+    ])
+  })
+
+  it('treats attention already visible at startup as a baseline, not new notifications', async () => {
+    const manager = new FakeSwarmManager([createManagerDescriptor('profile-a', 'manager')])
+    const restored = attention('manager', 'awaiting_review', 'restored-1')
+    manager.initialAttentions = [restored]
+    const { service, sendMock, sent } = await startService(manager)
+
+    emitAttentionSnapshot(manager, [restored])
+    await flushAsync()
+    expect(sendMock).not.toHaveBeenCalled()
+
+    emitAttentionSnapshot(manager, [restored, attention('manager', 'plan_completed', 'fresh-1')])
+    await waitForCondition(() => sendMock.mock.calls.length === 1)
+    await service.stop()
+    expect(sent()[0]?.data.eventId).toBe('fresh-1')
+  })
+
+  it('does not push for assistant messages, status changes or choice requests', async () => {
+    const manager = new FakeSwarmManager([
+      createManagerDescriptor('profile-a', 'manager'),
+      createWorkerDescriptor('manager', 'worker-1'),
+    ])
+    const { service, sendMock } = await startService(manager)
+    const timestamp = new Date().toISOString()
+
+    manager.emit('conversation_message', {
+      type: 'conversation_message', agentId: 'manager', role: 'assistant',
+      text: 'done', timestamp, source: 'speak_to_user',
+    })
+    manager.emit('agent_status', { type: 'agent_status', agentId: 'manager', status: 'idle', pendingCount: 0 })
+    manager.emit('agent_status', { type: 'agent_status', agentId: 'worker-1', status: 'error', pendingCount: 0 })
+    manager.emit('choice_request', {
+      type: 'choice_request', agentId: 'worker-1', choiceId: 'c-1', status: 'pending', timestamp,
+      questions: [{ id: 'q-1', question: 'Keep going?' }],
+    })
+    await flushAsync()
+    await flushAsync()
+    await service.stop()
+
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('stops pushing after stop()', async () => {
+    const manager = new FakeSwarmManager([createManagerDescriptor('profile-a', 'manager')])
+    const { service, sendMock } = await startService(manager)
+    await service.stop()
+
+    emitAttention(manager, 'manager')
+    await flushAsync()
+
+    expect(sendMock).not.toHaveBeenCalled()
   })
 })
