@@ -826,10 +826,7 @@ export class SwarmWebSocketServer {
         allowReboot: !this.swarmManager.getConfig().isDesktop,
         swarmManager: this.swarmManager
       }),
-      ...createFileRoutes({
-        swarmManager: this.swarmManager,
-        broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
-      }),
+      ...createFileRoutes({ swarmManager: this.swarmManager }),
       ...createChatArtifactRoutes({ swarmManager: this.swarmManager, ticketStore: artifactTicketStore }),
       ...createArtifactPreviewRoutes({ swarmManager: this.swarmManager, previewStore: htmlPreviewStore }),
       ...createFileBrowserRoutes({ swarmManager: this.swarmManager }),

@@ -97,7 +97,6 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   // Builder HTML artifact previews: not opened to Collaboration members.
   { sample: "/api/artifact-previews", expect: { POST: "admin" } },
   { sample: "/api/artifact-previews/opaque_token_1234/index.html", expect: { GET: "admin", HEAD: "admin" } },
-  { sample: "/api/write-file", expect: { POST: "member" }, killSwitched: true },
   { sample: "/api/files/list", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/files/count", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/files/search", expect: { GET: "member" }, killSwitched: true },
@@ -107,7 +106,7 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
     killSwitched: true,
   },
   { sample: "/api/files/raw", expect: { GET: "member", HEAD: "member" }, killSwitched: true },
-  // File browser create/rename (R2) — project-scoped mutations, same category as write-file.
+  // File browser create/rename (R2) — project-scoped mutations, same category as file content writes.
   { sample: "/api/files/create", expect: { POST: "member" }, killSwitched: true },
   { sample: "/api/files/rename", expect: { PATCH: "member" }, killSwitched: true },
 

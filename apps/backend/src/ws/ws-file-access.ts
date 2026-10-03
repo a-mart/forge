@@ -107,19 +107,6 @@ function resolveReadFileAccessContext(
   };
 }
 
-function resolveLegacyWriteFileAccessContext(swarmManager: FileAccessSource): FileAccessContext {
-  const config = swarmManager.getConfig();
-  return {
-    rootDir: config.paths.rootDir,
-    allowedRoots: normalizeAllowlistRoots([
-      ...config.cwdAllowlistRoots,
-      config.paths.rootDir,
-      config.paths.dataDir,
-      config.paths.uploadsDir,
-    ])
-  };
-}
-
 async function resolvePathWithinRoots(
   requestedPath: string,
   rootDir: string,
@@ -168,12 +155,6 @@ export function resolveReadFilePath(
     requestedPathContext.allowedRoots,
     { enforceAllowedRoots: options?.enforceAllowedRoots },
   );
-}
-
-export function resolveLegacyWriteFilePath(requestedPath: string, swarmManager: FileAccessSource): Promise<string> {
-  const accessContext = resolveLegacyWriteFileAccessContext(swarmManager);
-  const normalizedRequestedPath = normalizeFileAccessPath(requestedPath);
-  return resolvePathWithinRoots(normalizedRequestedPath, accessContext.rootDir, accessContext.allowedRoots);
 }
 
 export async function readApiProxyFile(options: {

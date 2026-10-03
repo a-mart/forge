@@ -215,7 +215,6 @@ describe("collaboration HTTP auth middleware", () => {
     const memberWriteRoutes: Array<[string, string]> = [
       ["/api/files/content", "PUT"],
       ["/api/files/content", "DELETE"],
-      ["/api/write-file", "POST"],
       ["/api/git/fetch", "POST"],
       ["/api/git/switch-branch", "POST"],
       ["/api/git/create-branch", "POST"],

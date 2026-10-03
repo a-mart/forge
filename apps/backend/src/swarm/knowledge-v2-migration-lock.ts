@@ -1,13 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rm, rmdir, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { dirname, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { isEnoentError } from "../utils/fs-errors.js";
-import {
-  getCommonKnowledgePath,
-  getKnowledgeMigrationLockPath,
-  getProfileMemoryPath,
-} from "./data-paths.js";
+import { getKnowledgeMigrationLockPath } from "./data-paths.js";
 
 export class KnowledgeMigrationBusyError extends Error {
   constructor(message = "Knowledge v2 migration is running; legacy knowledge writes are temporarily busy.") {
@@ -105,20 +100,4 @@ export async function assertKnowledgeMigrationNotBusy(dataDir: string): Promise<
   if (await readKnowledgeMigrationLock(dataDir)) {
     throw new KnowledgeMigrationBusyError();
   }
-}
-
-export async function isLegacyKnowledgeWritePath(dataDir: string, filePath: string): Promise<boolean> {
-  const normalized = resolve(filePath);
-  if (normalized === resolve(getCommonKnowledgePath(dataDir))) {
-    return true;
-  }
-
-  const profilesDir = resolve(dataDir, "profiles");
-  if (!normalized.startsWith(`${profilesDir}/`)) {
-    return false;
-  }
-
-  const rest = normalized.slice(profilesDir.length + 1);
-  const segments = rest.split("/");
-  return segments.length === 2 && segments[1] === "memory.md" && normalized === resolve(getProfileMemoryPath(dataDir, segments[0]));
 }
