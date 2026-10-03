@@ -25,9 +25,8 @@ describe('fix-path', () => {
   it('is a no-op on Windows without invoking a shell', async () => {
     if (process.platform !== 'win32') return
     process.env.PATH = '/inherited'
-    const { fixPath, getFixedPath } = await import('../fix-path.js')
+    const { fixPath } = await import('../fix-path.js')
     fixPath()
-    expect(getFixedPath()).toBeUndefined()
     expect(process.env.PATH).toBe('/inherited')
     expect(mockedExec).not.toHaveBeenCalled()
   })
@@ -37,9 +36,8 @@ describe('fix-path', () => {
     process.env.SHELL = '/bin/zsh'
     process.env.PATH = '/gui/bin:/shared:/gui/bin'
     mockedExec.mockReturnValue('notice\n\x1b[32mPATH=/shell/bin:/shared:/shell/bin\x1b[0m\n' as never)
-    const { fixPath, getFixedPath } = await import('../fix-path.js')
+    const { fixPath } = await import('../fix-path.js')
 
-    expect(getFixedPath()).toBe('/shell/bin:/shared:/gui/bin')
     fixPath()
     expect(process.env.PATH).toBe('/shell/bin:/shared:/gui/bin')
     expect(mockedExec).toHaveBeenCalledWith('/bin/zsh', ['-ilc', 'echo PATH="$PATH"'], expect.objectContaining({ timeout: 5000 }))
@@ -50,10 +48,9 @@ describe('fix-path', () => {
     process.env.SHELL = '/usr/bin/fish'
     process.env.PATH = '/inherited'
     mockedExec.mockReturnValue('fish startup output\n' as never)
-    const { getFixedPath, fixPath: apply } = await import('../fix-path.js')
+    const { fixPath } = await import('../fix-path.js')
 
-    expect(getFixedPath()).toBeUndefined()
-    apply()
+    fixPath()
     expect(process.env.PATH).toBe('/inherited')
     expect(mockedExec).toHaveBeenCalledWith('/usr/bin/fish', ['-l', '-c', 'echo PATH="$PATH"'], expect.anything())
   })
@@ -62,11 +59,12 @@ describe('fix-path', () => {
     if (process.platform === 'win32') return
     delete process.env.SHELL
     process.env.PATH = '/inherited'
-    const { getFixedPath } = await import('../fix-path.js')
-    expect(getFixedPath()).toBeUndefined()
+    const { fixPath } = await import('../fix-path.js')
+    fixPath()
+    expect(process.env.PATH).toBe('/inherited')
     process.env.SHELL = '/invalid/shell'
     mockedExec.mockImplementation(() => { throw new Error('timeout') })
-    expect(getFixedPath()).toBeUndefined()
+    fixPath()
     expect(process.env.PATH).toBe('/inherited')
   })
 })

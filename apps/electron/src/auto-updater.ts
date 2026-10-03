@@ -33,14 +33,6 @@ type BackendHealthResponse = {
   }
 }
 
-export type UpdateStatusType =
-  | 'checking'
-  | 'available'
-  | 'not-available'
-  | 'downloading'
-  | 'downloaded'
-  | 'error'
-
 export type UpdateStatus =
   | { type: 'checking' }
   | { type: 'available'; version: string }
