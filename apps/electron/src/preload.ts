@@ -74,6 +74,8 @@ const roleScopedBridge = bootstrap.windowRole === 'managed-browser-popout'
         getSleepBlockerSettings: (): Promise<SleepBlockerStatus> => ipcRenderer.invoke('get-sleep-blocker-settings'),
         setSleepBlockerSettings: (patch: SleepBlockerSettingsPatch): Promise<SleepBlockerStatus | null> => ipcRenderer.invoke('set-sleep-blocker-settings', patch),
         revealInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke('reveal-in-folder', filePath),
+        openHtmlInBrowser: (filePath: string): Promise<{ success: boolean; error?: string }> =>
+          ipcRenderer.invoke('open-html-in-browser', filePath),
         openPdfInDefaultApp: (request: OpenPdfIpcRequest): Promise<OpenPdfIpcResult> =>
           ipcRenderer.invoke(OPEN_PDF_IN_DEFAULT_APP_CHANNEL, request),
         installCli: (): Promise<{

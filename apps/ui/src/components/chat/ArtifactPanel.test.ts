@@ -315,3 +315,162 @@ describe('ArtifactPanel transcript-authorized reads', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })
+
+function htmlArtifact(overrides: Partial<ArtifactReference> = {}): ArtifactReference {
+  return {
+    path: '/Users/adam/reports/dashboard.html',
+    fileName: 'dashboard.html',
+    href: 'swarm-file:///Users/adam/reports/dashboard.html',
+    sourceAgentId: 'actor-worker',
+    transcriptAgentId: 'viewed-manager',
+    messageId: 'message-7',
+    ...overrides,
+  }
+}
+
+describe('ArtifactPanel HTML artifacts', () => {
+  const html = '<!doctype html><html><body><h1>Quarterly dashboard</h1><script>document.title = "x"</script></body></html>'
+
+  function stubHtmlRead() {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      path: '/Users/adam/reports/dashboard.html', contentType: 'text/html; charset=utf-8', content: html, truncated: false, totalBytes: html.length,
+    }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  it('renders the page in an opaque-origin sandboxed frame instead of raw source', async () => {
+    const fetchMock = stubHtmlRead()
+    renderPanel(htmlArtifact())
+
+    const frame = await waitFor(() => {
+      const element = document.querySelector<HTMLIFrameElement>('iframe[title="dashboard.html"]')
+      expect(element).not.toBeNull()
+      return element!
+    })
+    expect(frame.getAttribute('srcdoc')).toBe(html)
+    const sandbox = frame.getAttribute('sandbox')?.split(/\s+/) ?? []
+    expect(sandbox).toContain('allow-scripts')
+    expect(sandbox).not.toContain('allow-same-origin')
+    expect(sandbox).not.toContain('allow-top-navigation')
+    expect(document.querySelector('pre code')).toBeNull()
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ previewBytes: 2 * 1024 * 1024 })
+  })
+
+  it('toggles between the rendered preview and the HTML source', async () => {
+    stubHtmlRead()
+    renderPanel(htmlArtifact())
+    await waitFor(() => expect(document.querySelector('iframe[title="dashboard.html"]')).not.toBeNull())
+
+    const sourceButton = document.querySelector<HTMLButtonElement>('button[aria-label="Show HTML source"]')
+    expect(sourceButton).not.toBeNull()
+    act(() => sourceButton?.click())
+    expect(document.querySelector('iframe[title="dashboard.html"]')).toBeNull()
+    expect(document.querySelector('pre code')?.textContent).toBe(html)
+
+    act(() => document.querySelector<HTMLButtonElement>('button[aria-label="Show rendered preview"]')?.click())
+    expect(document.querySelector('iframe[title="dashboard.html"]')).not.toBeNull()
+  })
+
+  it('opens the local file in the external browser and reveals it in its folder on desktop', async () => {
+    const openHtmlInBrowser = vi.fn(async () => ({ success: true as const }))
+    const revealInFolder = vi.fn(async () => undefined)
+    Object.defineProperty(window, 'electronBridge', {
+      configurable: true,
+      value: { windowRole: 'main', backendWsUrl: 'ws://127.0.0.1/socket', revealInFolder, openHtmlInBrowser },
+    })
+    stubHtmlRead()
+    renderPanel(htmlArtifact())
+    await waitFor(() => expect(document.querySelector('iframe[title="dashboard.html"]')).not.toBeNull())
+
+    const openButton = document.querySelector<HTMLButtonElement>('button[aria-label="Open in browser"]')
+    expect(openButton).not.toBeNull()
+    await act(async () => openButton?.click())
+    expect(openHtmlInBrowser).toHaveBeenCalledWith('/Users/adam/reports/dashboard.html')
+
+    act(() => document.querySelector<HTMLButtonElement>('button[aria-label="Show in folder"]')?.click())
+    expect(revealInFolder).toHaveBeenCalledWith('/Users/adam/reports/dashboard.html')
+  })
+
+  it('surfaces a desktop open failure in the panel', async () => {
+    Object.defineProperty(window, 'electronBridge', {
+      configurable: true,
+      value: {
+        windowRole: 'main',
+        backendWsUrl: 'ws://127.0.0.1/socket',
+        openHtmlInBrowser: vi.fn(async () => ({ success: false as const, error: 'File not found' })),
+      },
+    })
+    stubHtmlRead()
+    renderPanel(htmlArtifact())
+    await waitFor(() => expect(document.querySelector('iframe[title="dashboard.html"]')).not.toBeNull())
+    await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="Open in browser"]')?.click())
+    await waitFor(() => expect(document.body.textContent).toContain('File not found'))
+  })
+})
+
+describe('ArtifactPanel resizing', () => {
+  it('drags the left edge to resize, keeps the HTML frame from swallowing the drag, and persists the width', async () => {
+    vi.stubGlobal('innerWidth', 2000)
+    window.localStorage.removeItem('forge-artifact-panel-width')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      path: '/Users/adam/reports/dashboard.html', contentType: 'text/html', content: '<h1>hi</h1>', truncated: false, totalBytes: 11,
+    }), { status: 200 })))
+    renderPanel(htmlArtifact())
+    const frame = await waitFor(() => {
+      const element = document.querySelector<HTMLIFrameElement>('iframe[title="dashboard.html"]')
+      expect(element).not.toBeNull()
+      return element!
+    })
+
+    const handle = document.querySelector<HTMLElement>('[role="separator"][aria-label="Resize artifact panel"]')
+    expect(handle).not.toBeNull()
+    expect(handle?.getAttribute('aria-valuenow')).toBe('880')
+
+    act(() => { handle!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 1000 })) })
+    expect(frame.className).toContain('pointer-events-none')
+    act(() => { document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 800 })) })
+    expect(handle?.getAttribute('aria-valuenow')).toBe('1080')
+    act(() => { document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })) })
+
+    expect(frame.className).not.toContain('pointer-events-none')
+    expect(window.localStorage.getItem('forge-artifact-panel-width')).toBe('1080')
+    const panel = handle!.parentElement!
+    expect(panel.style.getPropertyValue('--artifact-panel-width')).toBe('1080px')
+  })
+})
+
+describe('ArtifactPanel HTML header actions', () => {
+  function stubRead() {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      path: '/Users/adam/reports/dashboard.html', contentType: 'text/html', content: '<h1>hi</h1>', truncated: false, totalBytes: 11,
+    }), { status: 200 })))
+  }
+
+  it('offers the external browser instead of the code editor for HTML', async () => {
+    Object.defineProperty(window, 'electronBridge', {
+      configurable: true,
+      value: { windowRole: 'main', backendWsUrl: 'ws://127.0.0.1/socket', openHtmlInBrowser: vi.fn(), revealInFolder: vi.fn() },
+    })
+    stubRead()
+    renderPanel(htmlArtifact())
+    await waitFor(() => expect(document.querySelector('iframe[title="dashboard.html"]')).not.toBeNull())
+    expect(document.querySelector('a[href^="vscode"], a[href^="cursor"]')).toBeNull()
+    expect(document.querySelector('button[aria-label="Open in browser"]')).not.toBeNull()
+    expect(document.querySelector('button[aria-label="Show in folder"]')).not.toBeNull()
+  })
+
+  it('keeps the browser action visible and explains a restart when the desktop bridge predates it', async () => {
+    Object.defineProperty(window, 'electronBridge', {
+      configurable: true,
+      value: { windowRole: 'main', backendWsUrl: 'ws://127.0.0.1/socket', revealInFolder: vi.fn() },
+    })
+    stubRead()
+    renderPanel(htmlArtifact())
+    await waitFor(() => expect(document.querySelector('iframe[title="dashboard.html"]')).not.toBeNull())
+    const openButton = document.querySelector<HTMLButtonElement>('button[aria-label="Open in browser"]')
+    expect(openButton).not.toBeNull()
+    await act(async () => openButton?.click())
+    await waitFor(() => expect(document.body.textContent).toContain('Restart Forge to open HTML files in your browser.'))
+  })
+})

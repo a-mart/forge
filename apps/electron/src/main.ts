@@ -42,6 +42,7 @@ import {
 import { applyElectronStartupOverrides } from './startup-overrides.js'
 import { validateAbsoluteLocalFilePath } from './open-path.js'
 import { installOpenPdfIpc } from './open-pdf.js'
+import { installOpenHtmlIpc } from './open-html.js'
 import { handleMainRendererWindowOpen, isUnsafeRendererWindowOpenUrl } from './window-open-policy.js'
 import { ExternalChromeDeployer } from './external-chrome/deployer.js'
 import { ExternalChromeDeploymentRecovery } from './external-chrome/recovery.js'
@@ -723,6 +724,12 @@ if (!hasSingleInstanceLock) {
   })
 
   disposeOpenPdfIpc = installOpenPdfIpc({
+    ipcMain,
+    isTrustedSender: isTrustedMainRenderer,
+    openPath: (target) => shell.openPath(target),
+  })
+
+  installOpenHtmlIpc({
     ipcMain,
     isTrustedSender: isTrustedMainRenderer,
     openPath: (target) => shell.openPath(target),
