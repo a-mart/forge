@@ -6,6 +6,7 @@ import {
   saveFileContent,
   setFileContentCache,
 } from './use-file-browser-queries'
+import { doesDeleteAffectFile } from './file-browser-utils'
 import type { FileEditorDirtySnapshot, FileEditorGuardApi, FileEditorSessionKey } from './use-file-editor-coordinator'
 
 export type FileEditMode = 'preview' | 'edit'
@@ -62,14 +63,6 @@ function serializeKey(key: FileEditorSessionKey): string {
 
 function fileNameFromPath(filePath: string): string {
   return filePath.split('/').filter(Boolean).pop() ?? filePath
-}
-
-function doesDeleteAffectFile(deletePath: string, entryType: 'file' | 'directory', filePath: string): boolean {
-  const normalizedDeletePath = deletePath.replace(/^\/+|\/+$/g, '')
-  const normalizedFilePath = filePath.replace(/^\/+|\/+$/g, '')
-  if (!normalizedDeletePath) return false
-  if (entryType === 'file') return normalizedFilePath === normalizedDeletePath
-  return normalizedFilePath === normalizedDeletePath || normalizedFilePath.startsWith(`${normalizedDeletePath}/`)
 }
 
 function canEdit(key: FileEditorSessionKey | null, content: FileContentResult | null, editingEnabled: boolean): boolean {

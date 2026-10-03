@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
+import { doesDeleteAffectFile } from './file-browser-utils'
 
 export interface FileEditorSessionKey {
   agentId: string
@@ -76,11 +77,7 @@ function doesEntryMutationAffectSnapshot(
 ): boolean {
   if (snapshot.key.agentId !== action.agentId || (snapshot.key.worktreeId ?? null) !== (action.worktreeId ?? null)) return false
 
-  const deletePath = action.path.replace(/^\/+|\/+$/g, '')
-  const filePath = snapshot.key.filePath.replace(/^\/+|\/+$/g, '')
-  if (!deletePath) return false
-  if (action.entryType === 'file') return filePath === deletePath
-  return filePath === deletePath || filePath.startsWith(`${deletePath}/`)
+  return doesDeleteAffectFile(action.path, action.entryType, snapshot.key.filePath)
 }
 
 function keysEqual(a: FileEditorSessionKey, b: FileEditorSessionKey): boolean {

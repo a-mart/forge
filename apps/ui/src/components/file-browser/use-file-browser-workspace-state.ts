@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import type { FileBrowserWorktreeSelection } from '@/hooks/index-page/use-panel-state'
+import { doesDeleteAffectFile } from './file-browser-utils'
 import type { FileEditorSessionKey } from './use-file-editor-coordinator'
 
 export interface FileBrowserScopeKey {
@@ -85,14 +86,6 @@ function renamedFilePath(path: string, newPath: string, entryType: 'file' | 'dir
     return `${normalizedNewPath}/${normalizedFilePath.slice(normalizedPath.length + 1)}`
   }
   return null
-}
-
-function doesDeleteAffectFile(deletePath: string, entryType: 'file' | 'directory', filePath: string): boolean {
-  const normalizedDeletePath = deletePath.replace(/^\/+|\/+$/g, '')
-  const normalizedFilePath = filePath.replace(/^\/+|\/+$/g, '')
-  if (!normalizedDeletePath) return false
-  if (entryType === 'file') return normalizedFilePath === normalizedDeletePath
-  return normalizedFilePath === normalizedDeletePath || normalizedFilePath.startsWith(`${normalizedDeletePath}/`)
 }
 
 export function useFileBrowserWorkspaceState({

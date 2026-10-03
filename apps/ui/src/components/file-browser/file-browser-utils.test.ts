@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { doesDeleteAffectOpenFile, isPdfFile } from './file-browser-utils'
+import { doesDeleteAffectFile, isPdfFile } from './file-browser-utils'
 
 describe('isPdfFile', () => {
   it('detects pdf extensions case-insensitively', () => {
@@ -10,12 +10,13 @@ describe('isPdfFile', () => {
   })
 })
 
-describe('doesDeleteAffectOpenFile', () => {
+describe('doesDeleteAffectFile', () => {
   it('matches exact files and ancestor folders', () => {
-    expect(doesDeleteAffectOpenFile('src/App.tsx', 'file', 'src/App.tsx')).toBe(true)
-    expect(doesDeleteAffectOpenFile('src', 'directory', 'src/App.tsx')).toBe(true)
-    expect(doesDeleteAffectOpenFile('src/components', 'directory', 'src/App.tsx')).toBe(false)
-    expect(doesDeleteAffectOpenFile('other.ts', 'file', 'src/App.tsx')).toBe(false)
-    expect(doesDeleteAffectOpenFile('src/App.tsx', 'file', null)).toBe(false)
+    expect(doesDeleteAffectFile('src/App.tsx', 'file', 'src/App.tsx')).toBe(true)
+    expect(doesDeleteAffectFile('src', 'directory', 'src/App.tsx')).toBe(true)
+    expect(doesDeleteAffectFile('src/components', 'directory', 'src/App.tsx')).toBe(false)
+    expect(doesDeleteAffectFile('other.ts', 'file', 'src/App.tsx')).toBe(false)
+    expect(doesDeleteAffectFile('/src/', 'directory', 'src/App.tsx')).toBe(true)
+    expect(doesDeleteAffectFile('/', 'directory', 'src/App.tsx')).toBe(false)
   })
 })
