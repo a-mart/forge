@@ -1,16 +1,6 @@
 import { StatCard } from '../cards/StatCard'
-import { abbreviateNumber } from '../charts/chart-utils'
+import { abbreviateNumber, formatDuration } from '../charts/chart-utils'
 import type { TokenAnalyticsTotals, TokenAnalyticsAttributionSummary } from '@forge/protocol'
-
-function formatDuration(ms: number | null): string {
-  if (ms == null) return '—'
-  if (ms < 1000) return `${Math.round(ms)}ms`
-  const seconds = ms / 1000
-  if (seconds < 60) return `${seconds.toFixed(1)}s`
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = Math.round(seconds % 60)
-  return `${minutes}m ${remainingSeconds}s`
-}
 
 interface TokenAnalyticsHeaderCardsProps {
   totals: TokenAnalyticsTotals
