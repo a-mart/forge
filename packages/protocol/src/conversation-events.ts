@@ -342,10 +342,4 @@ export function isUserVisibleConversationMessage(
   return isUserVisibleAssistantConversationMessage(entry)
 }
 
-export function isExplicitRoutedAssistantConversationMessage(
-  entry: ConversationEntry,
-): entry is ConversationMessageEvent & { role: 'assistant'; source: 'speak_to_user' } {
-  return entry.type === 'conversation_message' && entry.role === 'assistant' && entry.source === 'speak_to_user'
-}
-
 export type ConversationEntryEvent = ConversationEntry

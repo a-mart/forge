@@ -35,12 +35,10 @@ import {
   generatePosixShim,
   generateWindowsCmdShim,
   generateWindowsPs1Shim,
-  parseInstallHintContent,
   serializeInstallHint,
   isBinDirOnPath,
   verifyCliInstall,
   SHIM_NAME_POSIX,
-  type InstallHint,
 } from '../cli-install.js'
 
 /* ------------------------------------------------------------------ */
@@ -96,51 +94,6 @@ describe('generateWindowsPs1Shim (real)', () => {
     expect(shim).toContain('-not $electronExe -or -not (Test-Path $electronExe)')
     expect(shim).toContain(fallbackExe)
     expect(shim).toContain('@args')
-  })
-})
-
-/* ------------------------------------------------------------------ */
-/*  Hint serialization / parsing                                       */
-/* ------------------------------------------------------------------ */
-
-describe('serializeInstallHint / parseInstallHintContent', () => {
-  it('round-trips macOS paths', () => {
-    const hint: InstallHint = {
-      electronExePath: '/Applications/Forge.app/Contents/MacOS/Forge',
-      cliResourcePath: '/Applications/Forge.app/Contents/Resources/cli/cli.js',
-      version: '0.17.1',
-    }
-    const serialized = serializeInstallHint(hint)
-    const parsed = parseInstallHintContent(serialized)
-    expect(parsed).toEqual(hint)
-  })
-
-  it('round-trips Windows paths with drive letters', () => {
-    const hint: InstallHint = {
-      electronExePath: 'C:\\Users\\test\\AppData\\Local\\Programs\\Forge\\Forge.exe',
-      cliResourcePath: 'C:\\Users\\test\\AppData\\Local\\Programs\\Forge\\resources\\cli\\cli.js',
-      version: '0.17.1',
-    }
-    const serialized = serializeInstallHint(hint)
-    const parsed = parseInstallHintContent(serialized)
-    expect(parsed).toEqual(hint)
-  })
-
-  it('returns null for empty content', () => {
-    expect(parseInstallHintContent('')).toBeNull()
-  })
-
-  it('returns null when electronExePath is missing', () => {
-    expect(parseInstallHintContent('cliResourcePath=/some/path\nversion=1.0.0\n')).toBeNull()
-  })
-
-  it('returns null when cliResourcePath is missing', () => {
-    expect(parseInstallHintContent('electronExePath=/some/exe\nversion=1.0.0\n')).toBeNull()
-  })
-
-  it('defaults version to empty string when missing', () => {
-    const parsed = parseInstallHintContent('electronExePath=/exe\ncliResourcePath=/cli\n')
-    expect(parsed?.version).toBe('')
   })
 })
 

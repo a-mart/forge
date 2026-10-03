@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BROWSER_AUTOMATION_OPERATIONS, EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS, type BrowserAutomationRequest, type BrowserAutomationResponse, type BrowserTabSnapshot } from "@forge/protocol";
+import { BROWSER_AUTOMATION_OPERATIONS, EXTERNAL_CHROME_SUPPORTED_OPERATIONS, type BrowserAutomationRequest, type BrowserAutomationResponse, type BrowserTabSnapshot } from "@forge/protocol";
 import { AutomaticBrowserHost } from "../../../../electron/src/browser/automatic-browser-host.js";
 import type { AutomaticExternalBrowserAdapter, BrowserTargetAdapter } from "../../../../electron/src/browser/browser-target-adapter.js";
 import { BrowserHostBroker } from "../browser-automation/browser-host-broker.js";
@@ -14,7 +14,7 @@ class ManagedBoundaryAdapter implements BrowserTargetAdapter {
 
 class ExternalBoundaryAdapter implements AutomaticExternalBrowserAdapter {
   readonly targetAffinity = "external-chrome" as const;
-  readonly capabilities = { supportedOperations: EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS, physicalViewport: false, recording: false, reveal: true } as const;
+  readonly capabilities = { supportedOperations: EXTERNAL_CHROME_SUPPORTED_OPERATIONS, physicalViewport: false, recording: false, reveal: true } as const;
   executedTabIds: Array<string | null> = [];
   listEligibleTabs() { return Promise.resolve({ tabs: [], truncated: false }); }
   acquireTarget(input: Parameters<AutomaticExternalBrowserAdapter["acquireTarget"]>[0]) {

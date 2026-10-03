@@ -28,11 +28,6 @@ export function getOpenRouterModelOverrideKey(modelId: string): string {
   return `${OPENROUTER_OVERRIDE_KEY_PREFIX}${normalizedModelId}`
 }
 
-/** Whether an override key identifies a user-added OpenRouter model rather than a checked-in catalog row. */
-export function isOpenRouterModelOverrideKey(key: string): boolean {
-  return key.trim().toLowerCase().startsWith(OPENROUTER_OVERRIDE_KEY_PREFIX)
-}
-
 /** Extract the OpenRouter modelId from a dynamic override key. */
 export function parseOpenRouterModelOverrideKey(key: string): string | undefined {
   const trimmed = key.trim()
@@ -101,17 +96,6 @@ export function getCatalogModelsByFamily(familyId: string): ForgeModelDefinition
 
   const fallbackDefaultModel = getCatalogModel(family.defaultModelId, family.provider)
   return fallbackDefaultModel ? [fallbackDefaultModel] : []
-}
-
-/** Get the family a model belongs to. */
-export function getCatalogFamilyForModel(modelId: string, provider?: string): ForgeFamilyDefinition | undefined {
-  const model = getCatalogModel(modelId, provider)
-  return model ? getCatalogFamily(model.familyId) : undefined
-}
-
-/** Check if a model ID exists in the catalog. */
-export function isCatalogModelId(modelId: string): boolean {
-  return getCatalogModel(modelId) !== undefined
 }
 
 /** Infer provider from a catalog model ID. Returns null if not in catalog. */
@@ -329,11 +313,6 @@ export function getEffectiveManagerEnabled(
   }
 
   return override?.managerEnabled ?? getDefaultManagerEnabled(model, surface)
-}
-
-/** Get families visible in manager create selector. */
-export function getCreateManagerFamilies(): ForgeFamilyDefinition[] {
-  return Object.values(FORGE_MODEL_CATALOG.families).filter((family) => family.visibleInCreateManager)
 }
 
 /** Get families visible in manager change-model selector. */

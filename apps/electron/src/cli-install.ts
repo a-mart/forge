@@ -132,31 +132,6 @@ export function serializeInstallHint(hint: InstallHint): string {
   ].join('\n')
 }
 
-/**
- * Parse install hint content from the key=value line format.
- * Returns null if required fields are missing.
- * @internal Exported for testing.
- */
-export function parseInstallHintContent(content: string): InstallHint | null {
-  const parsed: Record<string, string> = {}
-  for (const line of content.split('\n')) {
-    const eqIndex = line.indexOf('=')
-    if (eqIndex > 0) {
-      parsed[line.slice(0, eqIndex)] = line.slice(eqIndex + 1)
-    }
-  }
-
-  if (!parsed.electronExePath || !parsed.cliResourcePath) {
-    return null
-  }
-
-  return {
-    electronExePath: parsed.electronExePath,
-    cliResourcePath: parsed.cliResourcePath,
-    version: parsed.version ?? '',
-  }
-}
-
 /* ------------------------------------------------------------------ */
 /*  PATH detection                                                     */
 /* ------------------------------------------------------------------ */

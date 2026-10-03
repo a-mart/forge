@@ -123,19 +123,3 @@ export function fixPath(): void {
   const currentPath = env.PATH ?? '';
   env.PATH = mergePath(shellPath, currentPath);
 }
-
-/**
- * Returns the shell's PATH without modifying `process.env`.
- * Useful if you want to pass a custom env to a child process.
- *
- * Returns undefined on Windows or if extraction fails.
- */
-export function getFixedPath(): string | undefined {
-  if (platform === 'win32') return undefined;
-
-  const shellPath = getShellPath();
-  if (!shellPath) return undefined;
-
-  const currentPath = env.PATH ?? '';
-  return mergePath(shellPath, currentPath);
-}

@@ -8,14 +8,11 @@ import {
   getSecureSecretSettingsConstraints,
   parseMaxProjectDefaults,
   SecureSessionsContractError,
-  isSecureSecretBinding,
-  isSecureSecretLeaseSpec,
   parseApplySecureSessionProjectDefaultsRequest,
   parseSetSecureSessionAccessRequest,
   parseCreateSecureSshTrustedHostRequest,
   parseGrantSecureSecretLeaseRequest,
   parseGrantSecureSecretLeasesRequest,
-  parseRequestSecureSecretAccessRequest,
   parseRequestSecureSshHostTrustRequest,
   parseResolveSecureSecretAccessRequest,
   parseResolveSecureSshHostTrustRequest,
@@ -105,7 +102,6 @@ describe('Secure Sessions protocol', () => {
 
     for (const binding of bindings) {
       expect(parseSecureSecretBinding(binding)).toEqual(binding)
-      expect(isSecureSecretBinding(binding)).toBe(true)
     }
   })
 
@@ -123,8 +119,6 @@ describe('Secure Sessions protocol', () => {
     expect(parseSecureSecretLeaseSpec({ leaseKind: 'one_use' })).toEqual({
       leaseKind: 'one_use',
     })
-    expect(isSecureSecretLeaseSpec({ leaseKind: 'timed', durationSeconds: 60 })).toBe(true)
-    expect(isSecureSecretLeaseSpec({ leaseKind: 'timed', durationSeconds: 0 })).toBe(false)
   })
 
   it('parses revision-checked lease mutations and safe access decisions', () => {
@@ -147,19 +141,6 @@ describe('Secure Sessions protocol', () => {
     })).toEqual({
       baseRevision: 5,
       leaseId: 'lease-1',
-    })
-    expect(parseRequestSecureSecretAccessRequest({
-      secretId: 'secret-api',
-      exposures: [exposure],
-      leaseKind: 'timed',
-      durationSeconds: 300,
-      purposeSummary: 'Deploy the requested release',
-    })).toEqual({
-      secretId: 'secret-api',
-      exposures: [exposure],
-      leaseKind: 'timed',
-      durationSeconds: 300,
-      purposeSummary: 'Deploy the requested release',
     })
     expect(parseResolveSecureSecretAccessRequest({
       baseRevision: 5,

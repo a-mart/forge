@@ -11,7 +11,7 @@ import type {
 import {
   BROWSER_AUTOMATION_OPERATIONS,
   EXTERNAL_CHROME_DESKTOP_AUTHORITY_IDLE_TIMEOUT_MS,
-  EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS,
+  EXTERNAL_CHROME_SUPPORTED_OPERATIONS,
   EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS,
   externalChromeControlCollisionDetails,
 } from '@forge/protocol'
@@ -44,7 +44,7 @@ class FakeManagedAdapter implements BrowserTargetAdapter {
 
 class FakeExternalAdapter implements AutomaticExternalBrowserAdapter {
   readonly targetAffinity = 'external-chrome' as const
-  readonly capabilities = { supportedOperations: EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS, physicalViewport: false, recording: false, reveal: true } as const
+  readonly capabilities = { supportedOperations: EXTERNAL_CHROME_SUPPORTED_OPERATIONS, physicalViewport: false, recording: false, reveal: true } as const
   readonly acquisitions: ExternalBrowserAcquireInput[] = []
   readonly executions: BrowserAutomationRequest[] = []
   readonly authorityReleases: Array<{ authority: ExternalBrowserTargetAuthority; reason: string }> = []

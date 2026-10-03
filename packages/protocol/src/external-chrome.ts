@@ -12,7 +12,7 @@ import {
   BROWSER_VIEWPORT_MAX_DIMENSION,
   BROWSER_VIEWPORT_MIN_DIMENSION,
   BROWSER_VIEWPORT_PRESETS,
-  EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS,
+  EXTERNAL_CHROME_SUPPORTED_OPERATIONS,
   isBrowserAutomationOperation,
   parseBrowserAutomationInput,
   type BrowserAutomationFailure,
@@ -152,13 +152,6 @@ export const EXTERNAL_CHROME_METHODS = [
 export type ExternalChromeRequestMethod = (typeof EXTERNAL_CHROME_REQUEST_METHODS)[number]
 export type ExternalChromeNotificationMethod = (typeof EXTERNAL_CHROME_NOTIFICATION_METHODS)[number]
 export type ExternalChromeMethod = (typeof EXTERNAL_CHROME_METHODS)[number]
-
-export const EXTERNAL_CHROME_SUPPORTED_OPERATIONS = EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS
-export const EXTERNAL_CHROME_UNSUPPORTED_OPERATIONS = [
-  'resize',
-  'recordingStart',
-  'recordingStop',
-] as const satisfies readonly BrowserAutomationOperation[]
 
 export const EXTERNAL_CHROME_JSON_RPC_ERROR_CODES = {
   parseError: -32700,

@@ -1,5 +1,5 @@
 import {
-  EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS,
+  EXTERNAL_CHROME_SUPPORTED_OPERATIONS,
   isExternalChromeControlCollisionDetails,
   isExternalChromeDebuggerAttachConflictDetails,
   isExternalChromeNavigationNotDispatchedDetails,
@@ -43,7 +43,7 @@ export class ExternalChromeTargetAdapter implements AutomaticExternalBrowserAdap
   readonly targetAffinity = 'external-chrome' as const
   get capabilities() {
     return {
-      supportedOperations: EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS,
+      supportedOperations: EXTERNAL_CHROME_SUPPORTED_OPERATIONS,
       physicalViewport: false,
       recording: false,
       reveal: typeof this.transport.revealTarget === 'function',
