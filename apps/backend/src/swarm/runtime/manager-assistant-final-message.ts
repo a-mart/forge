@@ -12,12 +12,6 @@ export interface CleanManagerAssistantFinalMessage {
   text: string;
 }
 
-export const INTENTIONAL_NO_REPLY_TEXT = "NO_REPLY";
-
-export function isIntentionalNoReplyText(text: string | null | undefined): boolean {
-  return text?.trim() === INTENTIONAL_NO_REPLY_TEXT;
-}
-
 /**
  * A manager's silent closeout is a standalone first line, not prose that
  * happens to mention the sentinel. Providers can occasionally append their
@@ -28,10 +22,6 @@ export function isIntentionalNoReplyText(text: string | null | undefined): boole
 export function hasNoReplySentinelLine(text: string | null | undefined): boolean {
   const trimmed = text?.trim();
   return Boolean(trimmed && /^NO_REPLY[ \t]*(?:\r?\n|$)/.test(trimmed));
-}
-
-export function isIntentionalNoReplyManagerAssistantFinalMessage(event: RuntimeSessionEvent): boolean {
-  return isIntentionalNoReplyText(extractEligibleManagerAssistantFinalText(event));
 }
 
 export function hasNoReplySentinelLineManagerAssistantFinalMessage(event: RuntimeSessionEvent): boolean {

@@ -6,7 +6,6 @@ import { RuntimeEventProjector, type RuntimeEventProjectorDeps } from "../runtim
 import {
   extractCleanManagerAssistantFinalMessage,
   hasNoReplySentinelLineManagerAssistantFinalMessage,
-  isIntentionalNoReplyManagerAssistantFinalMessage,
   isCleanManagerAssistantFinalMessage,
 } from "../runtime/manager-assistant-final-message.js";
 import type { RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
@@ -168,16 +167,15 @@ describe("clean manager assistant final message detection", () => {
     const event = assistantEnd("  NO_REPLY  ", { stopReason: "stop" });
     const malformedSentinel = assistantEnd("NO_REPLY\n\nResume from summary.", { stopReason: "stop" });
 
-    expect(isIntentionalNoReplyManagerAssistantFinalMessage(event)).toBe(true);
+    expect(hasNoReplySentinelLineManagerAssistantFinalMessage(event)).toBe(true);
     expect(isCleanManagerAssistantFinalMessage(event)).toBe(false);
     expect(extractCleanManagerAssistantFinalMessage(event)).toBeUndefined();
 
-    expect(isIntentionalNoReplyManagerAssistantFinalMessage(malformedSentinel)).toBe(false);
     expect(hasNoReplySentinelLineManagerAssistantFinalMessage(malformedSentinel)).toBe(true);
     expect(isCleanManagerAssistantFinalMessage(malformedSentinel)).toBe(false);
     expect(extractCleanManagerAssistantFinalMessage(malformedSentinel)).toBeUndefined();
 
-    expect(isIntentionalNoReplyManagerAssistantFinalMessage(
+    expect(hasNoReplySentinelLineManagerAssistantFinalMessage(
       assistantEnd("NO_REPLY because this is internal", { stopReason: "stop" }),
     )).toBe(false);
     expect(extractCleanManagerAssistantFinalMessage(
