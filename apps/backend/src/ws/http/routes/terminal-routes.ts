@@ -19,7 +19,6 @@ import { TerminalSettingsService, TerminalSettingsValidationError } from "../../
 import { TerminalService, TerminalServiceError } from "../../../terminal/terminal-service.js";
 import {
   decodePathSegment,
-  matchPathPattern,
   readJsonBody,
   sendJson,
 } from "../../http-utils.js";
@@ -392,7 +391,7 @@ function requireQueryString(requestUrl: URL, field: string): string {
 }
 
 function resolveTerminalIdFromPath(pathname: string, pattern: RegExp): string | null {
-  const match = matchPathPattern(pathname, pattern);
+  const match = pathname.match(pattern);
   if (!match) {
     return null;
   }

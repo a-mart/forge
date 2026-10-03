@@ -4,7 +4,6 @@ import {
   type ChoiceQuestion,
   type CliAgentShowResponse,
   type CliAgentsListResponse,
-  type CliCapabilitiesResponse,
   type CliChoicesListResponse,
   type CliChoiceShowResponse,
   type CliHttpErrorResponse,
@@ -117,16 +116,6 @@ async function handleCliHttpRequest(
   const segments = getCliPathSegments(requestUrl.pathname);
   if (!segments) {
     sendCliError(response, 400, "bad_path", "Malformed CLI path");
-    return;
-  }
-
-  if (segments.length === 1 && segments[0] === "capabilities") {
-    const payload: CliCapabilitiesResponse = {
-      serverTime: new Date().toISOString(),
-      serverVersion: CLI_SERVER_VERSION,
-      capabilities,
-    };
-    sendJson(response, 200, payload as unknown as Record<string, unknown>);
     return;
   }
 

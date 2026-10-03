@@ -1,7 +1,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { StatsRange, StatsSnapshot, TokenStats } from "@forge/protocol";
-import { isEnoentError, isRecord, STATS_CACHE_TTL_MS } from "./stats-shared.js";
+import { isRecord, STATS_CACHE_TTL_MS } from "./stats-shared.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 import { normalizeTimezone } from "./stats-time.js";
 import type { CacheEntry, PersistedStatsCache } from "./stats-types.js";
 

@@ -4,7 +4,6 @@ import type { CollaborationAuthContext } from "../collaboration/auth/collaborati
 import {
   BUILDER_COMMAND_ACCESS,
   MEMBER_ALLOWED_TIERS,
-  canUseBuilder,
   evaluateApiProxyMemberAccess,
   evaluateBuilderCommandAccess,
   isInventoryCommandAllowed,
@@ -58,21 +57,6 @@ describe("builder command access policy", () => {
         remoteBuildEnabled: true,
       }),
     ).toMatchObject({ ok: false, reason: "tier_not_granted" });
-  });
-
-  it("canUseBuilder: admins always; members only when remote build is enabled", () => {
-    const admin = createAuthContext("admin");
-    const member = createAuthContext("member");
-
-    expect(canUseBuilder(admin, { remoteBuildEnabled: false })).toBe(true);
-    expect(canUseBuilder(admin, { remoteBuildEnabled: true })).toBe(true);
-    expect(canUseBuilder(member, { remoteBuildEnabled: false })).toBe(false);
-    expect(canUseBuilder(member, { remoteBuildEnabled: true })).toBe(true);
-    expect(canUseBuilder(null, { remoteBuildEnabled: true })).toBe(false);
-    expect(canUseBuilder(createAuthContext("member", { disabled: true }), { remoteBuildEnabled: true })).toBe(false);
-    expect(
-      canUseBuilder(createAuthContext("member", { passwordChangeRequired: true }), { remoteBuildEnabled: true }),
-    ).toBe(false);
   });
 
   it("admins pass every command regardless of the kill switch", () => {

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { makeTempConfig } from "../../test-support/index.js";
 import { AgentDescriptorStore } from "../agents/agent-descriptor-store.js";
 import type { AgentDescriptor, ManagerProfile, SwarmConfig } from "../types.js";
+import { getLegacySessionsDirPath } from "../data-paths.js";
 
 function descriptor(config: SwarmConfig, overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
   return {
@@ -17,7 +18,7 @@ function descriptor(config: SwarmConfig, overrides: Partial<AgentDescriptor> = {
     updatedAt: "2026-01-01T00:00:00.000Z",
     cwd: config.defaultCwd,
     model: config.defaultModel,
-    sessionFile: join(config.paths.sessionsDir, "manager.jsonl"),
+    sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), "manager.jsonl"),
     ...overrides
   };
 }
@@ -82,7 +83,6 @@ describe("AgentDescriptorStore", () => {
         dataDir,
         swarmDir: join(dataDir, "swarm"),
         agentsStoreFile: join(dataDir, "swarm", "agents.json"),
-        sessionsDir: join(dataDir, "sessions")
       }
     };
     const legacySessionFile = join(legacyDataDir, "profiles", "manager", "sessions", "manager", "session.jsonl");

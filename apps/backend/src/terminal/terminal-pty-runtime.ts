@@ -2,6 +2,7 @@ import { accessSync, constants as fsConstants } from "node:fs";
 import { spawn as spawnProcess, spawnSync } from "node:child_process";
 import { basename, isAbsolute, win32 } from "node:path";
 import { OutputBatcher } from "./output-batcher.js";
+import { toErrorMessage } from "./terminal-service-helpers.js";
 
 export interface TerminalPtyExitEvent {
   exitCode: number | null;
@@ -406,10 +407,6 @@ function createPtyUnavailableError(): Error & { code: string } {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function isErrnoCode(error: unknown, code: string): boolean {

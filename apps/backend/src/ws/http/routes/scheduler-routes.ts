@@ -4,10 +4,10 @@ import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import {
   applyCorsHeaders,
   decodePathSegment,
-  matchPathPattern,
   sendJson
 } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
+import { isEnoentError } from "../../../utils/fs-errors.js";
 
 const MANAGER_SCHEDULES_ENDPOINT_PATTERN = /^\/api\/managers\/([^/]+)\/schedules$/;
 
@@ -100,7 +100,7 @@ type SchedulesRoute = {
 };
 
 function resolveSchedulesRoute(pathname: string): SchedulesRoute | null {
-  const managerMatch = matchPathPattern(pathname, MANAGER_SCHEDULES_ENDPOINT_PATTERN);
+  const managerMatch = pathname.match(MANAGER_SCHEDULES_ENDPOINT_PATTERN);
   if (!managerMatch) {
     return null;
   }
@@ -163,13 +163,4 @@ function normalizeScheduleRequiredString(value: unknown): string | undefined {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }

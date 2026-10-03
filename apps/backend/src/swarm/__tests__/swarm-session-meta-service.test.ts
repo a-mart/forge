@@ -2,7 +2,7 @@ import { mkdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAgentDescriptor, createTempConfig, type TempConfigHandle } from "../../test-support/index.js";
-import { getSessionFilePath } from "../data-paths.js";
+import { getSessionFilePath, getLegacySessionsDirPath } from "../data-paths.js";
 import { readSessionMeta, writeSessionMeta } from "../session-manifest.js";
 import { SwarmSessionMetaService } from "../swarm-session-meta-service.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
@@ -303,7 +303,7 @@ describe("SwarmSessionMetaService", () => {
       specialistId: "backend",
       status: "streaming",
       rootDir: config.defaultCwd,
-      sessionFile: join(config.paths.sessionsDir, "worker-1.jsonl"),
+      sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), "worker-1.jsonl"),
       model: { provider: "openai-codex", modelId: "gpt-5.4", thinkingLevel: "medium" },
       contextUsage: { tokens: 42 }
     });

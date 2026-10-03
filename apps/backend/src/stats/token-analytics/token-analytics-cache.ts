@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { isEnoentError, isRecord, STATS_CACHE_TTL_MS } from "../stats-shared.js";
+import { isRecord, STATS_CACHE_TTL_MS } from "../stats-shared.js";
+import { isEnoentError } from "../../utils/fs-errors.js";
 import { toSafeInteger } from "./token-analytics-math.js";
 import { hydratePersistedScanResult, serializePersistedScanResult } from "./token-analytics-serialize.js";
 import type {

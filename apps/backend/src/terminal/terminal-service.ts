@@ -39,12 +39,10 @@ export class TerminalService extends EventEmitter {
   private readonly ptyRuntime;
   private readonly persistence;
   private readonly cwdPolicy;
-  private readonly transport;
   private readonly nowProvider: () => Date;
   private readonly terminals = new Map<string, ActiveTerminalRuntime>();
   private readonly sessionCreateLocks = new Map<string, Promise<void>>();
   private readonly ticketSecret = randomBytes(32);
-  private transportUnsubscribe: (() => void) | null = null;
   private initialized = false;
   private shuttingDown = false;
   private readonly context: TerminalServiceContext;
@@ -59,7 +57,6 @@ export class TerminalService extends EventEmitter {
     this.ptyRuntime = options.ptyRuntime;
     this.persistence = options.persistence;
     this.cwdPolicy = options.cwdPolicy;
-    this.transport = options.transport;
     this.nowProvider = options.now ?? (() => new Date());
 
     const self = this;
@@ -79,9 +76,6 @@ export class TerminalService extends EventEmitter {
       get cwdPolicy() {
         return self.cwdPolicy;
       },
-      get transport() {
-        return self.transport;
-      },
       get terminals() {
         return self.terminals;
       },
@@ -99,10 +93,6 @@ export class TerminalService extends EventEmitter {
       getShuttingDown: () => self.shuttingDown,
       setShuttingDown: (value) => {
         self.shuttingDown = value;
-      },
-      getTransportUnsubscribe: () => self.transportUnsubscribe,
-      setTransportUnsubscribe: (value) => {
-        self.transportUnsubscribe = value;
       },
       emit: (eventName, ...args) => self.emit(eventName, ...args),
       resolveScopeSessionAgentId: (sessionAgentId) => self.resolveScopeSessionAgentId(sessionAgentId),
@@ -123,7 +113,6 @@ export class TerminalService extends EventEmitter {
       resize: (terminalId, sessionAgentId, cols, rows) => self.resize(terminalId, sessionAgentId, cols, rows),
       close: (terminalId, sessionAgentId, reason) => self.close(terminalId, sessionAgentId, reason),
       issueWsTicket: (input) => self.clientOperations.issueWsTicket(input),
-      handleTransportEvent: (event) => self.clientOperations.handleTransportEvent(event),
       snapshotRuntime: (runtime) => self.runtimeOperations.snapshotRuntime(runtime),
       startSnapshotInterval: (runtime) => self.runtimeOperations.startSnapshotInterval(runtime),
       snapshotRuntimeWithTimeout: (runtime, label) => self.runtimeOperations.snapshotRuntimeWithTimeout(runtime, label),
@@ -321,7 +310,6 @@ export class TerminalService extends EventEmitter {
       sessionAgentId: cloned.sessionAgentId,
       terminal: cloned,
     } satisfies TerminalCreatedEvent);
-    this.transport?.publish({ type: "terminal_state", terminal: cloned });
   }
 
   private emitTerminalUpdated(descriptor: TerminalDescriptor): void {
@@ -331,7 +319,6 @@ export class TerminalService extends EventEmitter {
       sessionAgentId: cloned.sessionAgentId,
       terminal: cloned,
     } satisfies TerminalUpdatedEvent);
-    this.transport?.publish({ type: "terminal_state", terminal: cloned });
   }
 
   private resolveScopeSessionAgentId(sessionAgentId: string): string {

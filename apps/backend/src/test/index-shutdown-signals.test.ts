@@ -33,17 +33,11 @@ const BASE_CONFIG: SwarmConfig = {
     sharedAuthDir: "/repo/data/shared/config/auth",
     sharedAuthFile: "/repo/data/shared/config/auth/auth.json",
     sharedSecretsFile: "/repo/data/shared/config/secrets.json",
-    sessionsDir: "/repo/data/sessions",
-    memoryDir: "/repo/data/memory",
-    authDir: "/repo/data/auth",
     authFile: "/repo/data/auth/auth.json",
     secretsFile: "/repo/data/secrets.json",
     agentDir: "/repo/data/agent",
     managerAgentDir: "/repo/data/agent/manager",
-    repoArchetypesDir: "/repo/.swarm/archetypes",
-    memoryFile: undefined,
     repoMemorySkillFile: "/repo/.swarm/skills/memory/SKILL.md",
-    schedulesFile: undefined
   }
 };
 

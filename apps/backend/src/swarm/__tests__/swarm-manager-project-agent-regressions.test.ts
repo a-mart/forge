@@ -2,9 +2,7 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getScheduleFilePath } from "../../scheduler/schedule-storage.js";
 import {
-  getProfileMemoryPath,
   getProjectAgentDir,
   getProjectAgentPromptPath,
   getProjectAgentReferenceDir
@@ -116,7 +114,6 @@ async function makeTempConfig(port = 8898): Promise<SwarmConfig> {
   const managerAgentDir = join(agentDir, "manager");
   const repoArchetypesDir = join(root, ".swarm", "archetypes");
   const memoryDir = join(dataDir, "memory");
-  const memoryFile = getProfileMemoryPath(dataDir, "manager");
   const repoMemorySkillFile = join(root, ".swarm", "skills", "memory", "SKILL.md");
 
   await mkdir(swarmDir, { recursive: true });
@@ -162,17 +159,11 @@ async function makeTempConfig(port = 8898): Promise<SwarmConfig> {
       sharedAuthDir,
       sharedAuthFile,
       sharedSecretsFile,
-      sessionsDir,
-      memoryDir,
-      authDir,
       authFile: join(authDir, "auth.json"),
       secretsFile: join(dataDir, "secrets.json"),
       agentDir,
       managerAgentDir,
-      repoArchetypesDir,
-      memoryFile,
       repoMemorySkillFile,
-      schedulesFile: getScheduleFilePath(dataDir, "manager")
     }
   };
 }

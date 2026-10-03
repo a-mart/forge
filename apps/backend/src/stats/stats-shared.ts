@@ -3,6 +3,7 @@ import { getStatsSourceCache } from "./stats-source-cache.js";
 import { createReadStream } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 export const STATS_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 
@@ -193,15 +194,6 @@ export function toTimestampMs(value: unknown): number | null {
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-export function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }
 
 function normalizeReasoningLevel(value: unknown): string | null {

@@ -19,7 +19,7 @@ import {
 import { readModelOverrides, resetModelOverride, writeModelOverrides } from "../../../swarm/model-overrides.js";
 import { getManagedModelProviderCredentialAvailability } from "../../../swarm/secrets-env-service.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
-import { applyCorsHeaders, decodePathSegment, parseJsonBody, sendJson } from "../../http-utils.js";
+import { applyCorsHeaders, decodePathSegment, readJsonBody, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
 
 const AVAILABLE_MODELS_ENDPOINT_PATH = "/api/settings/openrouter/available-models";
@@ -181,7 +181,7 @@ async function handleOpenRouterModelsRequest(
 
     let requestedModel: AvailableOpenRouterModel | null = null;
     try {
-      const payload = await parseJsonBody(request, 32 * 1024);
+      const payload = await readJsonBody(request, 32 * 1024);
       requestedModel = normalizeAvailableOpenRouterModelPayload(payload);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

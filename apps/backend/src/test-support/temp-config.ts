@@ -1,8 +1,6 @@
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
-import { getProfileMemoryPath } from '../swarm/data-paths.js'
 import type { AgentModelDescriptor, SwarmConfig } from '../swarm/types.js'
 import type { RuntimeTarget } from '../runtime-target.js'
 import { getAvailablePort } from './network.js'
@@ -101,7 +99,6 @@ export async function createTempConfig(options: TempConfigOptions = {}): Promise
   const repoArchetypesDir = resolve(options.repoArchetypesDir ?? join(rootDir, '.swarm', 'archetypes'))
   const memoryDir = join(dataDir, 'memory')
   const managerId = options.managerId ?? 'manager'
-  const memoryFile = getProfileMemoryPath(dataDir, managerId)
   const repoMemorySkillFile = resolve(
     options.repoMemorySkillFile ?? join(rootDir, '.swarm', 'skills', 'memory', 'SKILL.md'),
   )
@@ -184,20 +181,13 @@ export async function createTempConfig(options: TempConfigOptions = {}): Promise
       sharedAuthDir,
       sharedAuthFile,
       sharedSecretsFile,
-      collaborationConfigDir,
       collaborationAuthDbPath,
       collaborationAuthSecretPath,
-      sessionsDir,
-      memoryDir,
-      authDir,
       authFile,
       secretsFile,
       agentDir,
       managerAgentDir,
-      repoArchetypesDir,
-      memoryFile,
       repoMemorySkillFile,
-      schedulesFile: getScheduleFilePath(dataDir, managerId),
     },
   }
 

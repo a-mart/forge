@@ -23,6 +23,7 @@ import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import type { AgentDescriptor } from "../../../swarm/types.js";
 import { applyCorsHeaders, readJsonBody, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
+import { isEnoentError } from "../../../utils/fs-errors.js";
 
 const PROJECT_RESOURCES_ENDPOINT_PATH = "/api/settings/project-resources";
 const PROJECT_RESOURCES_OVERRIDE_ENDPOINT_PATH = "/api/settings/project-resources/override";
@@ -590,10 +591,6 @@ async function pathExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-function isEnoentError(error: unknown): error is NodeJS.ErrnoException {
-  return !!error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT";
 }
 
 function isEexistError(error: unknown): error is NodeJS.ErrnoException {

@@ -8,7 +8,7 @@ import {
   buildHtmlArtifactPreviewCsp,
   htmlArtifactPreviewStatus,
 } from "../../../swarm/session/html-artifact-preview.js";
-import { applyCorsHeaders, parseJsonBody, sendJson } from "../../http-utils.js";
+import { applyCorsHeaders, readJsonBody, sendJson } from "../../http-utils.js";
 import {
   invalidHtmlArtifactPreviewRequest,
   issueHtmlArtifactPreview,
@@ -38,7 +38,7 @@ export function createArtifactPreviewRoutes(options: {
           return;
         }
         let payload: unknown;
-        try { payload = await parseJsonBody(request, MAX_ISSUE_BODY_BYTES); } catch { sendJson(response, 400, invalidHtmlArtifactPreviewRequest().body); return; }
+        try { payload = await readJsonBody(request, MAX_ISSUE_BODY_BYTES); } catch { sendJson(response, 400, invalidHtmlArtifactPreviewRequest().body); return; }
         const authBinding = getCollaborationRequestAuthContext(request)?.userId;
         const result = await issueHtmlArtifactPreview({
           source: options.swarmManager,

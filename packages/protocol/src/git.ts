@@ -74,38 +74,6 @@ export interface GitLogResult {
   notInitialized?: boolean
 }
 
-export interface GitFileHistoryStats {
-  totalEdits: number
-  lastModifiedAt: string | null
-  editsToday: number
-  editsThisWeek: number
-}
-
-export interface GitFileLogResult {
-  file: string
-  commits: GitLogEntry[]
-  stats: GitFileHistoryStats
-  hasMore: boolean
-  notInitialized?: boolean
-}
-
-export interface GitFileSectionProvenanceEntry {
-  heading: string
-  level: number
-  lineStart: number
-  lineEnd: number
-  lastModifiedSha: string | null
-  lastModifiedAt: string | null
-  lastModifiedSummary: string | null
-  reviewRunId: string | null
-}
-
-export interface GitFileSectionProvenanceResult {
-  file: string
-  sections: GitFileSectionProvenanceEntry[]
-  notInitialized?: boolean
-}
-
 export interface GitCommitDetail {
   sha: string
   message: string

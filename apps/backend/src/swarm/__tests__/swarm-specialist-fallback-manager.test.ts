@@ -2,8 +2,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getScheduleFilePath } from "../../scheduler/schedule-storage.js";
-import { getProfileMemoryPath } from "../data-paths.js";
+import { getLegacySessionsDirPath } from "../data-paths.js";
 import type { RuntimeCreationOptions, SwarmAgentRuntime } from "../runtime-contracts.js";
 import { RuntimeCallbackGate } from "../runtime/runtime-callback-gate.js";
 import { SwarmSpecialistFallbackManager } from "../swarm-specialist-fallback-manager.js";
@@ -30,7 +29,6 @@ async function makeTempConfig(port = 8898): Promise<SwarmConfig> {
   const managerAgentDir = join(agentDir, "manager");
   const repoArchetypesDir = join(root, ".swarm", "archetypes");
   const memoryDir = join(dataDir, "memory");
-  const memoryFile = getProfileMemoryPath(dataDir, "manager");
   const repoMemorySkillFile = join(root, ".swarm", "skills", "memory", "SKILL.md");
 
   await mkdir(swarmDir, { recursive: true });
@@ -76,17 +74,11 @@ async function makeTempConfig(port = 8898): Promise<SwarmConfig> {
       sharedAuthDir,
       sharedAuthFile,
       sharedSecretsFile,
-      sessionsDir,
-      memoryDir,
-      authDir,
       authFile: join(authDir, "auth.json"),
       secretsFile: join(dataDir, "secrets.json"),
       agentDir,
       managerAgentDir,
-      repoArchetypesDir,
-      memoryFile,
       repoMemorySkillFile,
-      schedulesFile: getScheduleFilePath(dataDir, "manager")
     }
   };
 }
@@ -94,7 +86,7 @@ async function makeTempConfig(port = 8898): Promise<SwarmConfig> {
 function buildWorkerDescriptor(config: SwarmConfig, overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
   const now = new Date().toISOString();
   const agentId = overrides.agentId ?? "worker-spec";
-  const sessionFile = join(config.paths.sessionsDir, `${agentId}.jsonl`);
+  const sessionFile = join(getLegacySessionsDirPath(config.paths.dataDir), `${agentId}.jsonl`);
   return {
     agentId,
     displayName: agentId,
@@ -427,7 +419,7 @@ describe("SwarmSpecialistFallbackManager", () => {
 
   it("does not recover when the error is not eligible for specialist retry", async () => {
     const config = await makeTempConfig();
-    await writeFile(join(config.paths.sessionsDir, "w1.jsonl"), "", "utf8");
+    await writeFile(join(getLegacySessionsDirPath(config.paths.dataDir), "w1.jsonl"), "", "utf8");
 
     const descriptors = new Map<string, AgentDescriptor>();
     const runtimes = new Map<string, SwarmAgentRuntime>();
@@ -495,7 +487,7 @@ describe("SwarmSpecialistFallbackManager", () => {
 
   it("does not recover when the resolved fallback exactly matches the current worker model", async () => {
     const config = await makeTempConfig();
-    await writeFile(join(config.paths.sessionsDir, "w-same-model.jsonl"), "", "utf8");
+    await writeFile(join(getLegacySessionsDirPath(config.paths.dataDir), "w-same-model.jsonl"), "", "utf8");
 
     const worker = buildWorkerDescriptor(config, {
       agentId: "w-same-model",
@@ -570,7 +562,7 @@ describe("SwarmSpecialistFallbackManager", () => {
 
   it("buffers status during an active handoff and reapplies it on abort reconciliation", async () => {
     const config = await makeTempConfig();
-    await writeFile(join(config.paths.sessionsDir, "w-buf.jsonl"), "", "utf8");
+    await writeFile(join(getLegacySessionsDirPath(config.paths.dataDir), "w-buf.jsonl"), "", "utf8");
 
     const descriptors = new Map<string, AgentDescriptor>();
     const runtimes = new Map<string, SwarmAgentRuntime>();
@@ -660,7 +652,7 @@ describe("SwarmSpecialistFallbackManager", () => {
 
   it("replays queued user messages onto the replacement runtime and shuts down the previous runtime", async () => {
     const config = await makeTempConfig();
-    await writeFile(join(config.paths.sessionsDir, "w-replay.jsonl"), "", "utf8");
+    await writeFile(join(getLegacySessionsDirPath(config.paths.dataDir), "w-replay.jsonl"), "", "utf8");
 
     const descriptors = new Map<string, AgentDescriptor>();
     const runtimes = new Map<string, SwarmAgentRuntime>();
@@ -943,7 +935,7 @@ describe("SwarmSpecialistFallbackManager", () => {
 
   it("rolls back to the previous runtime when replacement creation fails", async () => {
     const config = await makeTempConfig();
-    await writeFile(join(config.paths.sessionsDir, "w-roll.jsonl"), "", "utf8");
+    await writeFile(join(getLegacySessionsDirPath(config.paths.dataDir), "w-roll.jsonl"), "", "utf8");
 
     const descriptors = new Map<string, AgentDescriptor>();
     const runtimes = new Map<string, SwarmAgentRuntime>();
@@ -1031,7 +1023,7 @@ describe("SwarmSpecialistFallbackManager", () => {
 
   it("rolls back and clears the discarded replacement token when reroute persistence fails before attach", async () => {
     const config = await makeTempConfig();
-    await writeFile(join(config.paths.sessionsDir, "w-pre-attach-reroute-fails.jsonl"), "", "utf8");
+    await writeFile(join(getLegacySessionsDirPath(config.paths.dataDir), "w-pre-attach-reroute-fails.jsonl"), "", "utf8");
 
     const descriptors = new Map<string, AgentDescriptor>();
     const runtimes = new Map<string, SwarmAgentRuntime>();
@@ -1146,7 +1138,7 @@ describe("SwarmSpecialistFallbackManager", () => {
 
   it("preserves unrelated descriptor updates and newer updatedAt when rollback restores original fallback state", async () => {
     const config = await makeTempConfig();
-    await writeFile(join(config.paths.sessionsDir, "w-rollback-preserve.jsonl"), "", "utf8");
+    await writeFile(join(getLegacySessionsDirPath(config.paths.dataDir), "w-rollback-preserve.jsonl"), "", "utf8");
 
     const descriptors = new Map<string, AgentDescriptor>();
     const runtimes = new Map<string, SwarmAgentRuntime>();
@@ -1284,7 +1276,7 @@ describe("SwarmSpecialistFallbackManager", () => {
 
   it("replays buffered old-runtime status then agent_end when fallback aborts", async () => {
     const config = await makeTempConfig();
-    await writeFile(join(config.paths.sessionsDir, "w-replay-abort.jsonl"), "", "utf8");
+    await writeFile(join(getLegacySessionsDirPath(config.paths.dataDir), "w-replay-abort.jsonl"), "", "utf8");
 
     const descriptors = new Map<string, AgentDescriptor>();
     const runtimes = new Map<string, SwarmAgentRuntime>();
@@ -1389,7 +1381,7 @@ describe("SwarmSpecialistFallbackManager", () => {
 
   it("ends successful fallback handoff without replaying buffered old-runtime callbacks", async () => {
     const config = await makeTempConfig();
-    await writeFile(join(config.paths.sessionsDir, "w-success-no-replay.jsonl"), "", "utf8");
+    await writeFile(join(getLegacySessionsDirPath(config.paths.dataDir), "w-success-no-replay.jsonl"), "", "utf8");
 
     const descriptors = new Map<string, AgentDescriptor>();
     const runtimes = new Map<string, SwarmAgentRuntime>();
@@ -1504,7 +1496,7 @@ describe("SwarmSpecialistFallbackManager", () => {
 
   it("exposes suppression for callbacks tied to the active handoff token", async () => {
     const config = await makeTempConfig();
-    await writeFile(join(config.paths.sessionsDir, "w-sup.jsonl"), "", "utf8");
+    await writeFile(join(getLegacySessionsDirPath(config.paths.dataDir), "w-sup.jsonl"), "", "utf8");
 
     const descriptors = new Map<string, AgentDescriptor>();
     const runtimes = new Map<string, SwarmAgentRuntime>();

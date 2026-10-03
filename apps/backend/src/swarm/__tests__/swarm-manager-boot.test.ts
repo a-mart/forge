@@ -24,6 +24,7 @@ import {
   getSessionDir,
   getSessionMemoryPath,
   getWorkersDir,
+  getLegacySessionsDirPath,
 } from '../data-paths.js'
 import { getSecureSessionsDbPath } from '../storage/data-paths.js'
 import { makeTempConfig as buildTempConfig } from '../../test-support/index.js'
@@ -344,7 +345,7 @@ function seedManagerDescriptorForRuntimeEventTests(manager: TestSwarmManager, co
     updatedAt: createdAt,
     cwd: config.defaultCwd,
     model: config.defaultModel,
-    sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+    sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'),
   })
   state.conversationEntriesByAgentId.set('manager', [])
 }
@@ -577,7 +578,7 @@ describe('SwarmManager', () => {
             updatedAt: createdAt,
             cwd: config.defaultCwd,
             model: config.defaultModel,
-            sessionFile: join(config.paths.sessionsDir, 'cortex--review.jsonl'),
+            sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'cortex--review.jsonl'),
           },
         ],
         profiles: [
@@ -636,7 +637,7 @@ describe('SwarmManager', () => {
             updatedAt: createdAt,
             cwd: config.defaultCwd,
             model: config.defaultModel,
-            sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+            sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'),
           },
           {
             agentId: codexAgentId,
@@ -696,7 +697,7 @@ describe('SwarmManager', () => {
   it('closes stale Codex detail starts and clears sidecar cache on boot', async () => {
     const config = await makeTempConfig()
     const createdAt = '2026-05-30T00:00:00.000Z'
-    const managerSessionFile = join(config.paths.sessionsDir, 'manager.jsonl')
+    const managerSessionFile = join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl')
     const codexAgentId = 'manager--codex'
     const codexSessionFile = join(getWorkersDir(config.paths.dataDir, 'manager', 'manager'), `${codexAgentId}.jsonl`)
 
@@ -863,7 +864,7 @@ describe('SwarmManager', () => {
             updatedAt: '2026-03-27T00:00:00.000Z',
             cwd: config.defaultCwd,
             model: config.defaultModel,
-            sessionFile: join(config.paths.sessionsDir, 'cortex.jsonl'),
+            sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'cortex.jsonl'),
           },
           {
             agentId: 'cortex--review',
@@ -878,7 +879,7 @@ describe('SwarmManager', () => {
             updatedAt: '2026-03-27T00:01:00.000Z',
             cwd: config.defaultCwd,
             model: config.defaultModel,
-            sessionFile: join(config.paths.sessionsDir, 'cortex--review.jsonl'),
+            sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'cortex--review.jsonl'),
           },
           {
             agentId: 'cortex--worker',
@@ -891,7 +892,7 @@ describe('SwarmManager', () => {
             updatedAt: '2026-03-27T00:02:00.000Z',
             cwd: config.defaultCwd,
             model: config.defaultModel,
-            sessionFile: join(config.paths.sessionsDir, 'cortex--worker.jsonl'),
+            sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'cortex--worker.jsonl'),
           },
           {
             agentId: 'manager',
@@ -905,7 +906,7 @@ describe('SwarmManager', () => {
             updatedAt: '2026-03-27T00:03:00.000Z',
             cwd: config.defaultCwd,
             model: config.defaultModel,
-            sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+            sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'),
           },
         ],
         profiles: [
@@ -1168,7 +1169,7 @@ describe('SwarmManager', () => {
   it('uses repo manager archetype overrides on boot', async () => {
     const config = await makeTempConfig()
     const managerOverride = 'You are the repo manager override.'
-    await writeFile(join(config.paths.repoArchetypesDir, 'manager.md'), `${managerOverride}\n`, 'utf8')
+    await writeFile(join(join(config.paths.rootDir, '.swarm', 'archetypes'), 'manager.md'), `${managerOverride}\n`, 'utf8')
 
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1213,7 +1214,7 @@ describe('SwarmManager', () => {
           updatedAt: '2026-01-01T00:00:00.000Z',
           cwd: config.defaultCwd,
           model: config.defaultModel,
-          sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+          sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'),
         },
         {
           agentId: 'worker-a',
@@ -1225,7 +1226,7 @@ describe('SwarmManager', () => {
           updatedAt: '2026-01-01T00:00:00.000Z',
           cwd: config.defaultCwd,
           model: config.defaultModel,
-          sessionFile: join(config.paths.sessionsDir, 'worker-a.jsonl'),
+          sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'worker-a.jsonl'),
         },
       ],
     }
@@ -1335,7 +1336,7 @@ describe('SwarmManager', () => {
 
   it('preserves critical persisted descriptor fields across boot save normalization', async () => {
     const config = await makeTempConfig()
-    const projectSessionFile = join(config.paths.sessionsDir, 'release-notes.jsonl')
+    const projectSessionFile = join(getLegacySessionsDirPath(config.paths.dataDir), 'release-notes.jsonl')
     const normalizedProjectSessionFile = join(getSessionDir(config.paths.dataDir, 'manager', 'release-notes'), 'session.jsonl')
 
     const seedAgents = {
@@ -1350,7 +1351,7 @@ describe('SwarmManager', () => {
           updatedAt: '2026-01-01T00:00:00.000Z',
           cwd: config.defaultCwd,
           model: config.defaultModel,
-          sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+          sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'),
           profileId: 'manager',
         },
         {
@@ -1455,7 +1456,7 @@ describe('SwarmManager', () => {
           updatedAt: '2026-01-01T00:00:00.000Z',
           cwd: config.defaultCwd,
           model: config.defaultModel,
-          sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+          sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'),
         },
         {
           agentId: 'worker-stopped',
@@ -1467,7 +1468,7 @@ describe('SwarmManager', () => {
           updatedAt: '2026-01-01T00:00:00.000Z',
           cwd: config.defaultCwd,
           model: config.defaultModel,
-          sessionFile: join(config.paths.sessionsDir, 'worker-stopped.jsonl'),
+          sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'worker-stopped.jsonl'),
         },
       ],
     }
@@ -1502,7 +1503,7 @@ describe('SwarmManager', () => {
           updatedAt: '2026-01-01T00:00:00.000Z',
           cwd: config.defaultCwd,
           model: config.defaultModel,
-          sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+          sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'),
         },
         {
           agentId: 'worker-idle',
@@ -1514,7 +1515,7 @@ describe('SwarmManager', () => {
           updatedAt: '2026-01-01T00:00:00.000Z',
           cwd: config.defaultCwd,
           model: config.defaultModel,
-          sessionFile: join(config.paths.sessionsDir, 'worker-idle.jsonl'),
+          sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'worker-idle.jsonl'),
         },
       ],
     }
@@ -1538,14 +1539,14 @@ describe('SwarmManager', () => {
   it('skips terminated histories at boot and lazy-loads them on demand', async () => {
     const config = await makeTempConfig()
 
-    appendSessionConversationMessage(join(config.paths.sessionsDir, 'manager.jsonl'), 'manager', 'manager-history')
+    appendSessionConversationMessage(join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'), 'manager', 'manager-history')
     appendSessionConversationMessage(
-      join(config.paths.sessionsDir, 'worker-active.jsonl'),
+      join(getLegacySessionsDirPath(config.paths.dataDir), 'worker-active.jsonl'),
       'worker-active',
       'active-worker-history',
     )
     appendSessionConversationMessage(
-      join(config.paths.sessionsDir, 'worker-terminated.jsonl'),
+      join(getLegacySessionsDirPath(config.paths.dataDir), 'worker-terminated.jsonl'),
       'worker-terminated',
       'terminated-worker-history',
     )
@@ -1562,7 +1563,7 @@ describe('SwarmManager', () => {
           updatedAt: '2026-01-01T00:00:00.000Z',
           cwd: config.defaultCwd,
           model: config.defaultModel,
-          sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+          sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'),
         },
         {
           agentId: 'worker-active',
@@ -1574,7 +1575,7 @@ describe('SwarmManager', () => {
           updatedAt: '2026-01-01T00:00:00.000Z',
           cwd: config.defaultCwd,
           model: config.defaultModel,
-          sessionFile: join(config.paths.sessionsDir, 'worker-active.jsonl'),
+          sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'worker-active.jsonl'),
         },
         {
           agentId: 'worker-terminated',
@@ -1586,7 +1587,7 @@ describe('SwarmManager', () => {
           updatedAt: '2026-01-01T00:00:00.000Z',
           cwd: config.defaultCwd,
           model: config.defaultModel,
-          sessionFile: join(config.paths.sessionsDir, 'worker-terminated.jsonl'),
+          sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'worker-terminated.jsonl'),
         },
       ],
     }
@@ -1619,7 +1620,7 @@ describe('SwarmManager', () => {
           updatedAt: '2026-01-01T00:00:00.000Z',
           cwd: config.defaultCwd,
           model: config.defaultModel,
-          sessionFile: join(config.paths.sessionsDir, 'ops-manager.jsonl'),
+          sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'ops-manager.jsonl'),
         },
         {
           agentId: 'ops-worker',
@@ -1631,7 +1632,7 @@ describe('SwarmManager', () => {
           updatedAt: '2026-01-01T00:00:00.000Z',
           cwd: config.defaultCwd,
           model: config.defaultModel,
-          sessionFile: join(config.paths.sessionsDir, 'ops-worker.jsonl'),
+          sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'ops-worker.jsonl'),
         },
       ],
     }
@@ -1849,7 +1850,7 @@ describe('SwarmManager', () => {
 
     const managerDescriptor = firstBoot.getAgent('manager')
     expect(managerDescriptor).toBeDefined()
-    const sessionFile = managerDescriptor?.sessionFile ?? join(config.paths.sessionsDir, 'manager.jsonl')
+    const sessionFile = managerDescriptor?.sessionFile ?? join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl')
     const sessionText = await readFile(sessionFile, 'utf8')
     expect(sessionText).toContain(unicodeReply)
 
@@ -1878,7 +1879,7 @@ describe('SwarmManager', () => {
     const managerDescriptor = firstBoot.getAgent('manager')
     expect(managerDescriptor).toBeDefined()
 
-    const sessionFile = managerDescriptor?.sessionFile ?? join(config.paths.sessionsDir, 'manager.jsonl')
+    const sessionFile = managerDescriptor?.sessionFile ?? join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl')
     const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
     const cacheText = await waitForFileText(cacheFile, ['persist this', 'saved reply'])
     expect(cacheText).toContain('persist this')
@@ -2020,7 +2021,7 @@ describe('SwarmManager', () => {
               updatedAt: createdAt,
               cwd: config.defaultCwd,
               model: config.defaultModel,
-              sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+              sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'),
             },
           ],
         },
@@ -2030,7 +2031,7 @@ describe('SwarmManager', () => {
       'utf8',
     )
 
-    const sessionManager = SessionManager.open(join(config.paths.sessionsDir, 'manager.jsonl'))
+    const sessionManager = SessionManager.open(join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'))
     sessionManager.appendMessage({
       role: 'assistant',
       content: [{ type: 'text', text: 'seed' }],
@@ -2144,7 +2145,7 @@ describe('SwarmManager', () => {
               updatedAt: '2026-03-27T00:00:00.000Z',
               cwd: config.defaultCwd,
               model: config.defaultModel,
-              sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+              sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'),
             },
             {
               agentId: 'manager--s2',
@@ -2157,7 +2158,7 @@ describe('SwarmManager', () => {
               updatedAt: '2026-03-27T00:01:00.000Z',
               cwd: config.defaultCwd,
               model: config.defaultModel,
-              sessionFile: join(config.paths.sessionsDir, 'manager--s2.jsonl'),
+              sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager--s2.jsonl'),
             },
             {
               agentId: 'manager--s3',
@@ -2170,7 +2171,7 @@ describe('SwarmManager', () => {
               updatedAt: '2026-03-27T00:02:00.000Z',
               cwd: config.defaultCwd,
               model: legacyOverrideModel,
-              sessionFile: join(config.paths.sessionsDir, 'manager--s3.jsonl'),
+              sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager--s3.jsonl'),
             },
           ],
           profiles: [
@@ -2227,7 +2228,7 @@ describe('SwarmManager', () => {
     await writeFile(config.paths.agentsStoreFile, JSON.stringify({
       agents: [{ agentId: 'manager', displayName: 'Manager', role: 'manager', managerId: 'manager',
         profileId: 'manager', status: 'idle', createdAt: timestamp, updatedAt: timestamp,
-        cwd: config.defaultCwd, model: legacyModel, sessionFile: join(config.paths.sessionsDir, 'manager.jsonl') }],
+        cwd: config.defaultCwd, model: legacyModel, sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl') }],
       profiles: [{ profileId: 'manager', displayName: 'Manager', defaultSessionAgentId: 'manager',
         defaultModel: legacyModel, createdAt: timestamp, updatedAt: timestamp }],
     }))
@@ -2265,7 +2266,7 @@ describe('SwarmManager', () => {
               updatedAt: '2026-03-27T00:00:00.000Z',
               cwd: config.defaultCwd,
               model: legacyCodexModel,
-              sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+              sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'),
             },
             {
               agentId: 'worker',
@@ -2277,7 +2278,7 @@ describe('SwarmManager', () => {
               updatedAt: '2026-03-27T00:01:00.000Z',
               cwd: config.defaultCwd,
               model: legacyCodexModel,
-              sessionFile: join(config.paths.sessionsDir, 'worker.jsonl'),
+              sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'worker.jsonl'),
             },
           ],
           profiles: [
@@ -2351,7 +2352,7 @@ describe('SwarmManager', () => {
               updatedAt: '2026-03-27T00:00:00.000Z',
               cwd: config.defaultCwd,
               model: legacyCursorModel,
-              sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+              sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'),
             },
             {
               agentId: 'worker',
@@ -2364,7 +2365,7 @@ describe('SwarmManager', () => {
               updatedAt: '2026-03-27T00:01:00.000Z',
               cwd: config.defaultCwd,
               model: { ...legacyCursorModel, thinkingLevel: 'none' },
-              sessionFile: join(config.paths.sessionsDir, 'worker.jsonl'),
+              sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'worker.jsonl'),
             },
           ],
           profiles: [
@@ -2433,7 +2434,7 @@ describe('SwarmManager', () => {
               updatedAt: '2026-03-27T00:00:00.000Z',
               cwd: config.defaultCwd,
               model: resolveModelDescriptorFromPreset('pi-opus'),
-              sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+              sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'),
             },
             {
               agentId: 'manager--s2',
@@ -2446,7 +2447,7 @@ describe('SwarmManager', () => {
               updatedAt: '2026-03-27T00:01:00.000Z',
               cwd: config.defaultCwd,
               model: explicitDefaultModel,
-              sessionFile: join(config.paths.sessionsDir, 'manager--s2.jsonl'),
+              sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager--s2.jsonl'),
             },
           ],
           profiles: [

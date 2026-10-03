@@ -6,12 +6,35 @@ import { AuthStorage } from '@earendil-works/pi-coding-agent'
 import type { StatsSnapshot } from '@forge/protocol'
 import {
   assembleFullPayload,
-  assembleSkeletonPayload,
-  emptyFeatureAdoption,
   extractAuthMethodsConfigured,
   extractProvidersUsed,
 } from '../telemetry-payload.js'
+import type { FeatureAdoptionData } from '../telemetry-payload.js'
 import type { SwarmConfig } from '../../swarm/types.js'
+
+function emptyFeatureAdoption(): FeatureAdoptionData {
+  return {
+    specialistsConfigured: 0,
+    specialistsPersistedCount: 0,
+    specialistsCustomCount: 0,
+    specialistsEnabledCount: 0,
+    terminalsActive: 0,
+    pinnedMessagesUsed: 0,
+    scheduledTasksCount: 0,
+    forkedSessionsCount: 0,
+    projectAgentsCount: 0,
+    projectAgentsPersistedCount: 0,
+    extensionsLoaded: 0,
+    extensionsDiscoveredCount: 0,
+    skillsConfigured: 0,
+    skillsDiscoveredCount: 0,
+    referenceDocsCount: 0,
+    slashCommandsCount: 0,
+    cortexAutoReviewEnabled: false,
+    mobileDevicesRegistered: 0,
+    mobileDevicesEnabledCount: 0,
+  }
+}
 
 function createStatsSnapshot(): StatsSnapshot {
   return {
@@ -215,27 +238,6 @@ describe('telemetry payload helpers', () => {
       expect(payload.platform).toBe(expectation.friendly)
       expect(payload.platform_raw).toBe(expectation.raw)
     }
-  })
-
-  it('assembles skeleton payload with a friendly platform label and raw fallback', async () => {
-    const payload = await assembleSkeletonPayload(
-      'install-123',
-      'report-skeleton',
-      '2026-04-01T00:00:00.000Z',
-      { isDesktop: false } as SwarmConfig,
-    )
-
-    const expectedPlatform =
-      process.platform === 'darwin'
-        ? 'macOS'
-        : process.platform === 'win32'
-          ? 'Windows'
-          : process.platform === 'linux'
-            ? 'Linux'
-            : process.platform
-
-    expect(payload.platform).toBe(expectedPlatform)
-    expect(payload.platform_raw).toBe(process.platform)
   })
 
   it('extracts providers used from catalog lookups and slash heuristics', () => {

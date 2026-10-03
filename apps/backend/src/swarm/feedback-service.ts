@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, stat } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   FEEDBACK_REASON_CODES,
@@ -9,7 +9,7 @@ import {
   type FeedbackSubmitValue
 } from "@forge/protocol";
 import type { ObservabilityFacade } from "../observability/observability-types.js";
-import { getProfilesDir, getSessionFeedbackPath, getSessionsDir } from "./data-paths.js";
+import { getSessionFeedbackPath } from "./data-paths.js";
 import { readSessionMeta, writeSessionMeta } from "./session-manifest.js";
 import { isEnoentError } from "../utils/fs-errors.js";
 import { writeFileAtomic } from "../utils/atomic-files.js";
@@ -19,10 +19,6 @@ export interface FeedbackListOptions {
   since?: string;
   scope?: string;
   value?: string;
-}
-
-export interface FeedbackAcrossSessionsOptions extends FeedbackListOptions {
-  profileId?: string;
 }
 
 export class FeedbackService {
@@ -87,34 +83,6 @@ export class FeedbackService {
 
       return true;
     });
-  }
-
-  async queryFeedbackAcrossSessions(opts: FeedbackAcrossSessionsOptions = {}): Promise<FeedbackEvent[]> {
-    const profileId = normalizeOptionalString(opts.profileId);
-    const profileIds = profileId ? [profileId] : await listDirectoryNames(getProfilesDir(this.dataDir));
-
-    const events: FeedbackEvent[] = [];
-    for (const currentProfileId of profileIds) {
-      const sessionIds = await listDirectoryNames(getSessionsDir(this.dataDir, currentProfileId));
-      for (const sessionId of sessionIds) {
-        const sessionEvents = await this.listFeedback(currentProfileId, sessionId, {
-          since: opts.since,
-          scope: opts.scope,
-          value: opts.value
-        });
-        events.push(...sessionEvents);
-      }
-    }
-
-    events.sort((left, right) => {
-      if (left.createdAt !== right.createdAt) {
-        return left.createdAt.localeCompare(right.createdAt);
-      }
-
-      return left.id.localeCompare(right.id);
-    });
-
-    return events;
   }
 
   async getLatestStates(profileId: string, sessionId: string): Promise<FeedbackState[]> {
@@ -353,19 +321,6 @@ function feedbackSubmitEventKey(event: Pick<FeedbackSubmitEvent, "actor" | "scop
     kind = event.value === "comment" ? "comment" : "vote";
   }
   return `${event.actor}:${event.scope}:${event.targetId}:${kind}`;
-}
-
-async function listDirectoryNames(dirPath: string): Promise<string[]> {
-  try {
-    const entries = await readdir(dirPath, { withFileTypes: true });
-    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return [];
-    }
-
-    throw error;
-  }
 }
 
 function normalizeReasonCodes(value: unknown): string[] {

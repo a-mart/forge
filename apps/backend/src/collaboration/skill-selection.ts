@@ -1,5 +1,4 @@
 export type CollaborationSkillHandleList = string[];
-export type CollaborationSkillSelectionMode = "all" | "custom";
 
 export const COLLABORATION_ALWAYS_ON_SKILL_HANDLES = ["memory"] as const;
 
@@ -62,12 +61,6 @@ export function parseCollaborationSkillHandlesJson(
   }
 
   return normalizeCollaborationSkillHandles(parsed);
-}
-
-export function resolveCollaborationSkillSelectionMode(
-  value: string | null | undefined,
-): CollaborationSkillSelectionMode {
-  return parseCollaborationSkillHandlesJson(value) === null ? "all" : "custom";
 }
 
 export function serializeCollaborationSkillSelectionInput(

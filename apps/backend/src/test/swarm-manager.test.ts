@@ -2,7 +2,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { SessionManager } from '@earendil-works/pi-coding-agent'
-import { getCommonKnowledgePath, getWorkerSessionFilePath } from '../swarm/data-paths.js'
+import { getCommonKnowledgePath, getWorkerSessionFilePath, getLegacySessionsDirPath } from '../swarm/data-paths.js'
 import { makeTempConfig as buildTempConfig } from '../test-support/index.js'
 const memoryMergeMockState = vi.hoisted(() => ({
   executeLLMMerge: vi.fn(async (..._args: any[]) => '# Swarm Memory\n\n## Decisions\n- merged by mock\n'),
@@ -210,7 +210,7 @@ function seedManagerDescriptorForRuntimeEventTests(manager: TestSwarmManager, co
     updatedAt: createdAt,
     cwd: config.defaultCwd,
     model: config.defaultModel,
-    sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+    sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'),
   })
   state.conversationEntriesByAgentId.set('manager', [])
 }
@@ -344,7 +344,7 @@ describe('SwarmManager', () => {
       updatedAt: '2026-01-01T00:00:00.000Z',
       cwd: config.defaultCwd,
       model: config.defaultModel,
-      sessionFile: join(config.paths.sessionsDir, 'worker-1.jsonl'),
+      sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'worker-1.jsonl'),
     })
     state.conversationEntriesByAgentId.set('worker-1', [])
 
@@ -415,7 +415,7 @@ describe('SwarmManager', () => {
       ),
     ).toBe(true)
 
-    const sessionManager = SessionManager.open(join(config.paths.sessionsDir, 'manager.jsonl'))
+    const sessionManager = SessionManager.open(join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'))
     const persistedConversationEntries = sessionManager
       .getEntries()
       .filter((entry: any) => entry.type === 'custom' && entry.customType === 'swarm_conversation_entry')

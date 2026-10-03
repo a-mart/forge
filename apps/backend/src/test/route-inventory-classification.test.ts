@@ -97,7 +97,6 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   // Builder HTML artifact previews: not opened to Collaboration members.
   { sample: "/api/artifact-previews", expect: { POST: "admin" } },
   { sample: "/api/artifact-previews/opaque_token_1234/index.html", expect: { GET: "admin", HEAD: "admin" } },
-  { sample: "/api/write-file", expect: { POST: "member" }, killSwitched: true },
   { sample: "/api/files/list", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/files/count", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/files/search", expect: { GET: "member" }, killSwitched: true },
@@ -107,7 +106,7 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
     killSwitched: true,
   },
   { sample: "/api/files/raw", expect: { GET: "member", HEAD: "member" }, killSwitched: true },
-  // File browser create/rename (R2) — project-scoped mutations, same category as write-file.
+  // File browser create/rename (R2) — project-scoped mutations, same category as file content writes.
   { sample: "/api/files/create", expect: { POST: "member" }, killSwitched: true },
   { sample: "/api/files/rename", expect: { PATCH: "member" }, killSwitched: true },
 
@@ -115,8 +114,6 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   { sample: "/api/git/status", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/diff", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/log", expect: { GET: "member" }, killSwitched: true },
-  { sample: "/api/git/file-log", expect: { GET: "member" }, killSwitched: true },
-  { sample: "/api/git/file-section-provenance", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/commit", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/commit-diff", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/worktrees", expect: { GET: "member" }, killSwitched: true },
@@ -127,7 +124,6 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   { sample: "/api/git/create-branch", expect: { POST: "member" }, killSwitched: true },
   { sample: "/api/git/pull-ff-only", expect: { POST: "member" }, killSwitched: true },
   { sample: "/api/git/push", expect: { POST: "member" }, killSwitched: true },
-  { sample: "/api/git/provider/status", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/pull-requests", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/pull-requests/42", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/pull-requests/42/merge", expect: { POST: "member" }, killSwitched: true },
@@ -143,14 +139,12 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
     expect: { GET: "member" },
     killSwitched: true,
   },
-  { sample: "/api/v1/feedback", expect: { GET: "admin" } },
 
   // --- cortex / onboarding (remote Cortex surfacing is deferred) ------------
   { sample: "/api/onboarding/state", expect: { GET: "admin" } },
   { sample: "/api/onboarding/preferences", expect: { POST: "admin" } },
   { sample: "/api/cortex/index", expect: { GET: "admin" } },
   { sample: "/api/cortex/entries", expect: { GET: "admin" } },
-  { sample: "/api/cortex/entry/entry-1", expect: { GET: "admin", POST: "admin" } },
   { sample: "/api/cortex/changelog", expect: { GET: "admin" } },
   { sample: "/api/cortex/consolidation", expect: { GET: "admin", POST: "admin" } },
 
@@ -172,7 +166,6 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   { sample: "/api/settings/recommended-manager-defaults", expect: { POST: "admin" } },
   { sample: "/api/settings/delegation-rosters", expect: { GET: "member", PUT: "admin" }, killSwitched: true },
   { sample: "/api/settings/specialists", expect: { GET: "admin", PUT: "admin", DELETE: "admin" } },
-  { sample: "/api/settings/specialists/tiers", expect: { GET: "admin", PUT: "admin" } },
   { sample: "/api/settings/model-cache-visualization/enabled", expect: { GET: "admin", PUT: "admin" } },
   { sample: "/api/settings/model-overrides", expect: { GET: "member", PUT: "admin", DELETE: "admin" }, killSwitched: true },
   { sample: "/api/settings/openrouter/available-models", expect: { GET: "admin" } },
@@ -209,7 +202,6 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
 
   // --- project-scoped session surfaces ---------------------------------------
   { sample: "/api/managers/mgr-1/schedules", expect: { GET: "member" }, killSwitched: true },
-  { sample: "/api/restart-recovery", expect: { GET: "admin", POST: "admin" } },
   { sample: "/api/slash-commands", expect: { GET: "admin", POST: "admin" } },
   { sample: "/api/agents/agent-1/compact", expect: { POST: "member" }, killSwitched: true },
   { sample: "/api/agents/agent-1/smart-compact", expect: { POST: "member" }, killSwitched: true },

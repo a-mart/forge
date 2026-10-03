@@ -6,11 +6,11 @@ import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import {
   applyCorsHeaders,
   decodePathSegment,
-  matchPathPattern,
   readJsonBody,
   sendJson
 } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
+import { isEnoentError } from "../../../utils/fs-errors.js";
 
 const GLOBAL_SLASH_COMMANDS_ENDPOINT_PATTERN = /^\/api\/slash-commands$/;
 const GLOBAL_SLASH_COMMAND_ENDPOINT_PATTERN = /^\/api\/slash-commands\/([^/]+)$/;
@@ -224,14 +224,14 @@ export function createSlashCommandRoutes(options: { swarmManager: SwarmManager }
 }
 
 function resolveSlashCommandRoute(pathname: string): SlashCommandsRoute | null {
-  const collectionMatch = matchPathPattern(pathname, GLOBAL_SLASH_COMMANDS_ENDPOINT_PATTERN);
+  const collectionMatch = pathname.match(GLOBAL_SLASH_COMMANDS_ENDPOINT_PATTERN);
   if (collectionMatch) {
     return {
       kind: "collection"
     };
   }
 
-  const itemMatch = matchPathPattern(pathname, GLOBAL_SLASH_COMMAND_ENDPOINT_PATTERN);
+  const itemMatch = pathname.match(GLOBAL_SLASH_COMMAND_ENDPOINT_PATTERN);
   if (itemMatch) {
     const commandId = decodePathSegment(itemMatch[1]);
     if (!commandId) {
@@ -416,13 +416,4 @@ function hasDuplicateSlashCommandName(commands: SlashCommand[], name: string, ex
 
 function normalizeSlashCommandNameForComparison(name: string): string {
   return name.trim().toLowerCase();
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }

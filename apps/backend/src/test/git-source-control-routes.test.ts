@@ -923,10 +923,10 @@ describe("git-source-control-routes", () => {
       ghBinary: "/definitely/missing/gh"
     });
 
-    const response = await fetch(`${server.baseUrl}/api/git/provider/status?agentId=alpha--s1`);
+    const response = await fetch(`${server.baseUrl}/api/git/pull-requests?agentId=alpha--s1`);
     expect(response.status).toBe(200);
 
-    const payload = (await response.json()) as GitHostedProviderStatus;
+    const { providerStatus: payload } = (await response.json()) as { providerStatus: GitHostedProviderStatus };
     expect(payload.provider).toBe("github");
     expect(payload.available).toBe(false);
     expect(payload.authenticated).toBe(false);
@@ -935,10 +935,10 @@ describe("git-source-control-routes", () => {
   it("returns unauthenticated provider status from fake gh auth failure", async () => {
     const server = await createPullRequestTestServer({ ghAuth: "fail" });
 
-    const response = await fetch(`${server.baseUrl}/api/git/provider/status?agentId=alpha--s1`);
+    const response = await fetch(`${server.baseUrl}/api/git/pull-requests?agentId=alpha--s1`);
     expect(response.status).toBe(200);
 
-    const payload = (await response.json()) as GitHostedProviderStatus;
+    const { providerStatus: payload } = (await response.json()) as { providerStatus: GitHostedProviderStatus };
     expect(payload.provider).toBe("github");
     expect(payload.available).toBe(true);
     expect(payload.authenticated).toBe(false);

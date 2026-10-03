@@ -13,6 +13,7 @@ import {
   getSessionPlanHistoryPath,
   getSessionPlanPath,
   getSessionPlanUsagePath,
+  getLegacySessionsDirPath,
 } from '../data-paths.js'
 import { loadPins, savePins } from '../message-pins.js'
 import { resolveModelDescriptorFromPreset } from '../model-presets.js'
@@ -442,7 +443,7 @@ Never use plain assistant text for user communication.`
           updatedAt: '2026-01-01T00:00:00.000Z',
           cwd: config.defaultCwd,
           model: config.defaultModel,
-          sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+          sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'),
         },
         {
           agentId: 'broken-worker',
@@ -453,7 +454,7 @@ Never use plain assistant text for user communication.`
           createdAt: '2026-01-01T00:00:00.000Z',
           updatedAt: '2026-01-01T00:00:00.000Z',
           cwd: config.defaultCwd,
-          sessionFile: join(config.paths.sessionsDir, 'broken-worker.jsonl'),
+          sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'broken-worker.jsonl'),
         },
       ],
     }

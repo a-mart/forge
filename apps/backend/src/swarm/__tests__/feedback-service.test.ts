@@ -453,65 +453,6 @@ describe("feedback-service", () => {
     await expect(service.listFeedback(profileId, sessionId, { since: eventB.createdAt })).resolves.toEqual([eventB, eventC]);
   });
 
-  it("queries feedback across sessions", async () => {
-    const dataDir = await createTempDataDir();
-    const service = new FeedbackService(dataDir);
-
-    const alphaSessionOne = await service.submitFeedback({
-      profileId: "alpha",
-      sessionId: "alpha--s1",
-      scope: "message",
-      targetId: "msg-1",
-      value: "up",
-      reasonCodes: ["great_outcome"],
-      comment: "",
-      channel: "web",
-      actor: "user"
-    });
-
-    await delayMs(5);
-
-    await service.submitFeedback({
-      profileId: "alpha",
-      sessionId: "alpha--s2",
-      scope: "message",
-      targetId: "msg-2",
-      value: "down",
-      reasonCodes: ["poor_outcome"],
-      comment: "",
-      channel: "web",
-      actor: "user"
-    });
-
-    await delayMs(5);
-
-    const betaSessionOne = await service.submitFeedback({
-      profileId: "beta",
-      sessionId: "beta--s1",
-      scope: "session",
-      targetId: "beta--s1",
-      value: "up",
-      reasonCodes: ["great_outcome"],
-      comment: "",
-      channel: "web",
-      actor: "user"
-    });
-
-    const allFeedback = await service.queryFeedbackAcrossSessions();
-    expect(allFeedback).toHaveLength(3);
-
-    const alphaFeedback = await service.queryFeedbackAcrossSessions({ profileId: "alpha" });
-    expect(alphaFeedback).toHaveLength(2);
-    expect(alphaFeedback.every((event) => event.profileId === "alpha")).toBe(true);
-
-    const downVotes = await service.queryFeedbackAcrossSessions({ value: "down" });
-    expect(downVotes).toHaveLength(1);
-    expect(downVotes[0]?.value).toBe("down");
-
-    expect(allFeedback.map((event) => event.id)).toContain(alphaSessionOne.id);
-    expect(allFeedback.map((event) => event.id)).toContain(betaSessionOne.id);
-  });
-
   it("tracks feedback file size and updates session meta fields", async () => {
     const dataDir = await createTempDataDir();
     const profileId = "alpha";

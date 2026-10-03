@@ -3,10 +3,6 @@ import { basename, resolve, sep } from "node:path";
 import type {
   GitCommitDetail,
   GitDiffResult,
-  GitFileHistoryStats,
-  GitFileLogResult,
-  GitFileSectionProvenanceEntry,
-  GitFileSectionProvenanceResult,
   GitFileStatus,
   GitLogEntry,
   GitLogRef,
@@ -16,17 +12,14 @@ import type {
 } from "@forge/protocol";
 import { GitCli } from "../../../versioning/git-cli.js";
 import { parseVersioningCommitMetadata } from "../../../versioning/versioning-commit-metadata.js";
-import { resolveTrackedVersionedPathReference } from "../../../versioning/versioned-paths.js";
+import { isEnoentError } from "../../../utils/fs-errors.js";
 
 const MAX_DIFF_FILE_BYTES = 1 * 1024 * 1024;
 const MAX_STATUS_FILES = 500;
 const MAX_LOG_LIMIT = 200;
 const BINARY_SNIFF_BYTES = 8 * 1024;
-const MAX_SECTION_PROVENANCE_SECTIONS = 20;
 const FIELD_SEPARATOR = "\x1f";
 const RECORD_SEPARATOR = "\x1e";
-const HEADING_PATTERN = /^\s{0,3}(#{1,6})[ \t]+(.+?)\s*$/u;
-const FENCE_PATTERN = /^\s*(`{3,}|~{3,})/u;
 
 interface GitStatusContext {
   repoKind: GitRepoKind;
@@ -34,27 +27,7 @@ interface GitStatusContext {
   notInitialized?: boolean;
 }
 
-interface MarkdownHeadingSection {
-  heading: string;
-  level: number;
-  lineStart: number;
-  lineEnd: number;
-}
-
-interface GitFileSectionProvenanceOptions {
-  notInitialized?: boolean;
-}
-
-interface GitFileLogOptions {
-  includeStats?: boolean;
-}
-
-interface ReadGitLogEntriesOptions {
-  includeFilesChanged?: boolean;
-}
-
 export class GitDiffService {
-  private readonly fileHistoryStatsCache = new Map<string, GitFileHistoryStats>();
   async getStatus(cwd: string, context?: GitStatusContext): Promise<GitStatusResult> {
     const repoKind = context?.repoKind ?? "workspace";
     const repoLabel = context?.repoLabel ?? "Workspace";
@@ -192,87 +165,6 @@ export class GitDiffService {
     };
   }
 
-  async getFileLog(
-    cwd: string,
-    file: string,
-    limit: number,
-    offset: number,
-    options?: GitFileLogOptions
-  ): Promise<GitFileLogResult> {
-    const normalized = resolveTrackedVersionedPathReference(cwd, file);
-    if (!normalized) {
-      throw new Error("file must resolve to a tracked versioning path.");
-    }
-
-    const boundedLimit = Math.min(Math.max(limit, 1), MAX_LOG_LIMIT);
-    const boundedOffset = Math.max(offset, 0);
-    const shouldIncludeStats = options?.includeStats === true || boundedOffset === 0;
-    const allCommits = await this.readGitLogEntries(cwd, undefined, undefined, normalized.gitPath, true, {
-      includeFilesChanged: false
-    });
-    const selectedBaseCommits = allCommits.slice(boundedOffset, boundedOffset + boundedLimit + 1);
-    const statsCacheKey = this.buildFileHistoryStatsCacheKey(cwd, normalized.gitPath);
-
-    let stats = this.fileHistoryStatsCache.get(statsCacheKey) ?? createEmptyGitFileHistoryStats();
-    if (shouldIncludeStats) {
-      stats = computeGitFileHistoryStats(allCommits);
-      this.fileHistoryStatsCache.set(statsCacheKey, stats);
-    }
-
-    const page = await this.attachFilesChangedCounts(cwd, selectedBaseCommits.slice(0, boundedLimit));
-
-    return {
-      file: normalized.gitPath,
-      commits: await this.attachLogDecorations(cwd, page),
-      stats,
-      hasMore: selectedBaseCommits.length > boundedLimit
-    };
-  }
-
-  async getFileSectionProvenance(
-    cwd: string,
-    file: string,
-    options?: GitFileSectionProvenanceOptions
-  ): Promise<GitFileSectionProvenanceResult> {
-    const normalized = resolveTrackedVersionedPathReference(cwd, file);
-    if (!normalized) {
-      throw new Error("file must resolve to a tracked versioning path.");
-    }
-
-    const fileResult = await readWorkingTreeUtf8WithinRoot(cwd, normalized.gitPath);
-    if (!fileResult.exists) {
-      throw new Error(`File not found: ${normalized.gitPath}`);
-    }
-
-    const sections = parseMarkdownHeadingSections(fileResult.content).slice(0, MAX_SECTION_PROVENANCE_SECTIONS);
-    const baseSections = sections.map((section) => createEmptySectionProvenance(section));
-
-    if (options?.notInitialized || sections.length === 0) {
-      return {
-        file: normalized.gitPath,
-        sections: baseSections,
-        notInitialized: options?.notInitialized ? true : undefined
-      };
-    }
-
-    const git = this.createGit(cwd);
-    const provenancedSections: GitFileSectionProvenanceEntry[] = [];
-
-    // v1 intentionally resolves sections one git process at a time because `git log -L`
-    // is relatively expensive and Cortex files are usually small. Cap the section count
-    // to avoid pathological markdown files from spawning an unbounded number of processes.
-    for (const section of sections) {
-      provenancedSections.push(
-        await this.resolveSectionProvenance(git, normalized.gitPath, section)
-      );
-    }
-
-    return {
-      file: normalized.gitPath,
-      sections: provenancedSections
-    };
-  }
-
   async getCommitDetail(cwd: string, sha: string): Promise<GitCommitDetail> {
     const git = this.createGit(cwd);
     const format = `%H${FIELD_SEPARATOR}%an${FIELD_SEPARATOR}%aI${FIELD_SEPARATOR}%s${FIELD_SEPARATOR}%b${RECORD_SEPARATOR}`;
@@ -400,33 +292,16 @@ export class GitDiffService {
     return trimmed.replace(/\\/g, "/");
   }
 
-  private async readGitLogEntries(
-    cwd: string,
-    limit?: number,
-    offset?: number,
-    file?: string,
-    follow = false,
-    options?: ReadGitLogEntriesOptions
-  ): Promise<GitLogEntry[]> {
+  private async readGitLogEntries(cwd: string, limit: number, offset: number): Promise<GitLogEntry[]> {
     const git = this.createGit(cwd);
     const format = `%H${FIELD_SEPARATOR}%h${FIELD_SEPARATOR}%P${FIELD_SEPARATOR}%an${FIELD_SEPARATOR}%aI${FIELD_SEPARATOR}%s${FIELD_SEPARATOR}%b${RECORD_SEPARATOR}`;
     const args = ["log", `--format=${format}`];
 
-    if (follow && file) {
-      args.push("--follow");
-    }
-
-    if (typeof offset === "number" && offset > 0) {
+    if (offset > 0) {
       args.push(`--skip=${offset}`);
     }
 
-    if (typeof limit === "number") {
-      args.push("-n", String(limit));
-    }
-
-    if (file) {
-      args.push("--", file);
-    }
+    args.push("-n", String(limit));
 
     const result = await git.run(args);
     const records = parseGitFormatRecords(result.stdout);
@@ -443,13 +318,6 @@ export class GitDiffService {
         metadata: parseVersioningCommitMetadata(body)
       };
     });
-
-    if (options?.includeFilesChanged === false) {
-      return parsedBase.map((entry) => ({
-        ...entry,
-        filesChanged: 0
-      }));
-    }
 
     return this.attachFilesChangedCounts(cwd, parsedBase);
   }
@@ -532,10 +400,6 @@ export class GitDiffService {
     );
   }
 
-  private buildFileHistoryStatsCacheKey(cwd: string, file: string): string {
-    return `${resolve(cwd)}::${file}`;
-  }
-
   private async countFilesChangedInCommit(cwd: string, sha: string): Promise<number> {
     if (!sha) {
       return 0;
@@ -562,48 +426,6 @@ export class GitDiffService {
 
     const parts = result.stdout.trim().split(/\s+/).filter((part) => part.length > 0);
     return parts.length > 1;
-  }
-
-  private async resolveSectionProvenance(
-    git: GitCli,
-    file: string,
-    section: MarkdownHeadingSection
-  ): Promise<GitFileSectionProvenanceEntry> {
-    const format = `%H${FIELD_SEPARATOR}%aI${FIELD_SEPARATOR}%s${FIELD_SEPARATOR}%b${RECORD_SEPARATOR}`;
-    const result = await git.run(
-      [
-        "log",
-        "-n",
-        "1",
-        "-L",
-        `${section.lineStart},${section.lineEnd}:${file}`,
-        `--format=${format}`
-      ],
-      { allowFailure: true }
-    );
-
-    if (result.exitCode !== 0) {
-      return createEmptySectionProvenance(section);
-    }
-
-    const record = parseGitFormatRecords(result.stdout)[0];
-    if (!record) {
-      return createEmptySectionProvenance(section);
-    }
-
-    const [sha, modifiedAt, summary = "", ...bodyParts] = record.split(FIELD_SEPARATOR);
-    const metadata = parseVersioningCommitMetadata(bodyParts.join(FIELD_SEPARATOR));
-
-    return {
-      heading: section.heading,
-      level: section.level,
-      lineStart: section.lineStart,
-      lineEnd: section.lineEnd,
-      lastModifiedSha: sha?.trim() || null,
-      lastModifiedAt: modifiedAt?.trim() || null,
-      lastModifiedSummary: summary.trim() || null,
-      reviewRunId: metadata?.reviewRunId ?? null
-    };
   }
 }
 
@@ -757,151 +579,6 @@ function mapStatusCode(code: string): GitFileStatus["status"] {
   }
 }
 
-function createEmptyGitFileHistoryStats(): GitFileHistoryStats {
-  return {
-    totalEdits: 0,
-    lastModifiedAt: null,
-    editsToday: 0,
-    editsThisWeek: 0
-  };
-}
-
-function computeGitFileHistoryStats(commits: GitLogEntry[]): GitFileHistoryStats {
-  const now = Date.now();
-  const dayAgo = now - 24 * 60 * 60 * 1000;
-  const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
-
-  let editsToday = 0;
-  let editsThisWeek = 0;
-  for (const commit of commits) {
-    const timestamp = Date.parse(commit.date);
-    if (!Number.isFinite(timestamp)) {
-      continue;
-    }
-
-    if (timestamp >= dayAgo) {
-      editsToday += 1;
-    }
-    if (timestamp >= weekAgo) {
-      editsThisWeek += 1;
-    }
-  }
-
-  return {
-    totalEdits: commits.length,
-    lastModifiedAt: commits[0]?.date ?? null,
-    editsToday,
-    editsThisWeek
-  };
-}
-
-function parseMarkdownHeadingSections(content: string): MarkdownHeadingSection[] {
-  const lines = splitMarkdownLines(content);
-  const headings: Array<{ heading: string; level: number; lineNumber: number }> = [];
-
-  let inFence = false;
-  let fenceChar = "";
-  let fenceLength = 0;
-  let inHtmlComment = false;
-
-  for (const [index, rawLine] of lines.entries()) {
-    const lineNumber = index + 1;
-    const line = rawLine ?? "";
-
-    if (inFence) {
-      if (isFenceClose(line, fenceChar, fenceLength)) {
-        inFence = false;
-        fenceChar = "";
-        fenceLength = 0;
-      }
-      continue;
-    }
-
-    const fenceMatch = line.match(FENCE_PATTERN);
-    if (fenceMatch) {
-      inFence = true;
-      fenceChar = fenceMatch[1]?.[0] ?? "";
-      fenceLength = fenceMatch[1]?.length ?? 0;
-      continue;
-    }
-
-    if (inHtmlComment) {
-      if (line.includes("-->")) {
-        inHtmlComment = false;
-      }
-      continue;
-    }
-
-    const trimmedStart = line.trimStart();
-    if (trimmedStart.startsWith("<!--")) {
-      if (!trimmedStart.includes("-->")) {
-        inHtmlComment = true;
-      }
-      continue;
-    }
-
-    const match = line.match(HEADING_PATTERN);
-    if (!match) {
-      continue;
-    }
-
-    const heading = normalizeHeadingText(match[2] ?? "");
-    if (!heading) {
-      continue;
-    }
-
-    headings.push({
-      heading,
-      level: match[1]?.length ?? 1,
-      lineNumber
-    });
-  }
-
-  return headings.map((heading, index) => ({
-    heading: heading.heading,
-    level: heading.level,
-    lineStart: heading.lineNumber,
-    lineEnd: (headings[index + 1]?.lineNumber ?? lines.length + 1) - 1
-  }));
-}
-
-function createEmptySectionProvenance(section: MarkdownHeadingSection): GitFileSectionProvenanceEntry {
-  return {
-    heading: section.heading,
-    level: section.level,
-    lineStart: section.lineStart,
-    lineEnd: section.lineEnd,
-    lastModifiedSha: null,
-    lastModifiedAt: null,
-    lastModifiedSummary: null,
-    reviewRunId: null
-  };
-}
-
-function splitMarkdownLines(content: string): string[] {
-  return content.replace(/\r\n?/gu, "\n").split("\n");
-}
-
-function normalizeHeadingText(value: string): string {
-  return value
-    .replace(/\s+#+\s*$/u, "")
-    .replace(/<!--.*?-->/gu, "")
-    .trim();
-}
-
-function isFenceClose(line: string, fenceChar: string, fenceLength: number): boolean {
-  if (!fenceChar || fenceLength === 0) {
-    return false;
-  }
-
-  const closePattern = new RegExp(`^\\s*${escapeRegExp(fenceChar)}{${fenceLength},}\\s*$`, "u");
-  return closePattern.test(line);
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-}
-
 async function readWorkingTreeUtf8WithinRoot(
   cwd: string,
   relativePath: string
@@ -950,15 +627,6 @@ async function readUtf8FileAllowMissing(path: string): Promise<{ exists: boolean
 
     throw error;
   }
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }
 
 function isBinaryBuffer(content: Buffer): boolean {

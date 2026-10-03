@@ -136,28 +136,12 @@ export interface BuilderCommandAccessDecision {
 }
 
 /**
+ * Gate for non-collab builder commands on a collaboration-server socket.
+ * Builder-runtime sockets never reach this gate (no auth context exists).
+ *
  * Policy from SPEC §4.2: builder access on a collaboration-server instance is
  * available to admins unconditionally and to active members when the
  * `remoteBuild.enabled` instance setting is on.
- */
-export function canUseBuilder(
-  authContext: CollaborationAuthContext | null,
-  options: { remoteBuildEnabled: boolean },
-): boolean {
-  if (!authContext || authContext.disabled || authContext.passwordChangeRequired) {
-    return false;
-  }
-
-  if (authContext.role === "admin") {
-    return true;
-  }
-
-  return options.remoteBuildEnabled;
-}
-
-/**
- * Gate for non-collab builder commands on a collaboration-server socket.
- * Builder-runtime sockets never reach this gate (no auth context exists).
  */
 export function evaluateBuilderCommandAccess(options: {
   commandType: ClientCommand["type"];

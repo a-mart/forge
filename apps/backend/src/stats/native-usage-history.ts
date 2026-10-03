@@ -84,10 +84,6 @@ export class NativeUsageHistory {
     return result;
   }
 }
-export async function recoverNativeUsage(dataDir: string, entries: Entry[], ownerAgentId: string,
-  options: { claudeProjectsDir?: string } = {}): Promise<UsageEntry[]> {
-  return new NativeUsageHistory(dataDir, options).recover(entries, ownerAgentId);
-}
 async function filesUnder(path: string, depth: number): Promise<string[]> {
   try {
     const entries = await readdir(path, { withFileTypes: true });

@@ -12,6 +12,7 @@ import {
   getProfilesDir,
   getSharedKnowledgeDir,
 } from "../swarm/data-paths.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 export interface VersionedPathsOptions {
   trackSessionMemory?: boolean;
@@ -24,10 +25,6 @@ export interface VersionedPathMetadata {
   promptCategory?: PromptCategory;
   promptId?: string;
   surface: "knowledge" | "memory" | "reference" | "prompt" | "index" | "entry";
-}
-
-export interface TrackedVersionedPathReference extends VersionedPathMetadata {
-  gitPath: string;
 }
 
 export function isTrackedVersionedPath(
@@ -121,22 +118,6 @@ export function resolveVersionedPathMetadata(
   }
 
   return undefined;
-}
-
-export function resolveTrackedVersionedPathReference(
-  dataDir: string,
-  filePath: string,
-  options?: VersionedPathsOptions
-): TrackedVersionedPathReference | undefined {
-  const metadata = resolveVersionedPathMetadata(dataDir, filePath, options);
-  if (!metadata) {
-    return undefined;
-  }
-
-  return {
-    ...metadata,
-    gitPath: metadata.relativePath
-  };
 }
 
 export async function enumerateExistingTrackedPaths(
@@ -296,13 +277,4 @@ async function addTrackedPathIfPresent(
   if (metadata) {
     tracked.add(metadata.relativePath);
   }
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }

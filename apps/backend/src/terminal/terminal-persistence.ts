@@ -13,6 +13,7 @@ import {
   getTerminalSnapshotPath,
 } from "../swarm/data-paths.js";
 import { appendJsonl, writeFileAtomic } from "../utils/atomic-files.js";
+import { toErrorMessage } from "./terminal-service-helpers.js";
 
 const { Terminal } = headlessPkg as typeof HeadlessModule;
 const { SerializeAddon } = serializePkg as typeof SerializeModule;
@@ -382,8 +383,4 @@ function isErrnoCode(error: unknown, code: string): boolean {
     "code" in error &&
     (error as { code?: string }).code === code
   );
-}
-
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

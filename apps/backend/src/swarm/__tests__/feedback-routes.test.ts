@@ -191,16 +191,6 @@ describe("feedback-routes", () => {
     const payload = (await response.json()) as { error?: string };
     expect(payload.error).toContain("Unknown session");
   });
-
-  it("returns 400 for invalid cross-session profileId query segments", async () => {
-    const server = await createFeedbackTestServer([createManagerSession("alpha", "alpha--s1")]);
-
-    const response = await fetch(`${server.baseUrl}/api/v1/feedback?profileId=../alpha`);
-    expect(response.status).toBe(400);
-
-    const payload = (await response.json()) as { error?: string };
-    expect(payload.error).toContain("Invalid path segment");
-  });
 });
 
 async function createFeedbackTestServer(descriptors: AgentDescriptor[]): Promise<TestServer> {

@@ -12,7 +12,7 @@ import {
   evaluateMergePreflight,
   matchesCurrentBranchPullRequest,
   parseAllowedMergeMethods,
-  parseCheckSummariesFromRollup,
+  parseCheckSummaries,
   parseGitHubRepoFromRemoteUrl
 } from "../ws/http/services/git-hosted-provider.js";
 import type { GitSourceControlContext } from "../ws/http/shared/route-helpers.js";
@@ -46,7 +46,7 @@ describe("GitHostedProviderService", () => {
       remoteSetup: false
     });
 
-    const status = await service.getProviderStatus(context);
+    const { providerStatus: status } = await service.listPullRequests(context);
     expect(status.provider).toBe("none");
     expect(status.available).toBe(false);
     expect(status.message).toContain("not initialized");
@@ -146,7 +146,7 @@ describe("GitHostedProviderService", () => {
 
     const service = new GitHostedProviderService({ ghBinary: fakeGhPath });
     const context = createContext({ cwd: repoDir, remoteSetup: true });
-    const status = await service.getProviderStatus(context);
+    const { providerStatus: status } = await service.listPullRequests(context);
 
     expect(status.provider).toBe("github");
     expect(status.available).toBe(true);
@@ -209,7 +209,7 @@ describe("GitHostedProviderService", () => {
       ])
     ).toBe("success");
 
-    const summaries = parseCheckSummariesFromRollup([
+    const summaries = parseCheckSummaries([
       {
         name: "Backend tests",
         status: "COMPLETED",

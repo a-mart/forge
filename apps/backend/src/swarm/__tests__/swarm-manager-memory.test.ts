@@ -20,6 +20,8 @@ import {
   getRootSessionMemoryPath,
   getSessionDir,
   getSessionMemoryPath,
+  getLegacySessionsDirPath,
+  getLegacyMemoryDirPath,
 } from '../data-paths.js'
 import { makeTempConfig as buildTempConfig } from '../../test-support/index.js'
 const memoryMergeMockState = vi.hoisted(() => ({
@@ -331,7 +333,7 @@ function seedManagerDescriptorForRuntimeEventTests(manager: TestSwarmManager, co
     updatedAt: createdAt,
     cwd: config.defaultCwd,
     model: config.defaultModel,
-    sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+    sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'),
   })
   state.conversationEntriesByAgentId.set('manager', [])
 }
@@ -397,7 +399,7 @@ describe('SwarmManager', () => {
 
     await bootWithDefaultManager(manager, config)
 
-    const profileMemory = await readFile(config.paths.memoryFile!, 'utf8')
+    const profileMemory = await readFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), 'utf8')
     const rootSessionMemory = await readFile(getRootSessionMemoryPath(config.paths.dataDir, 'manager'), 'utf8')
 
     expect(profileMemory).toContain('# Swarm Memory')
@@ -413,12 +415,12 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(firstBoot, config)
 
     const persistedMemory = '# Swarm Memory\n\n## Project Facts\n- remember me\n'
-    await writeFile(config.paths.memoryFile!, persistedMemory, 'utf8')
+    await writeFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), persistedMemory, 'utf8')
 
     const secondBoot = new TestSwarmManager(config)
     await bootWithDefaultManager(secondBoot, config)
 
-    const profileMemory = await readFile(config.paths.memoryFile!, 'utf8')
+    const profileMemory = await readFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), 'utf8')
     expect(profileMemory).toBe(persistedMemory)
 
     const resources = await secondBoot.getMemoryRuntimeResourcesForTest()
@@ -448,7 +450,7 @@ describe('SwarmManager', () => {
 
     const rootSessionMemoryPath = getRootSessionMemoryPath(config.paths.dataDir, 'manager')
 
-    await writeFile(config.paths.memoryFile!, '# Swarm Memory\n\n## Decisions\n- canonical profile decision\n', 'utf8')
+    await writeFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), '# Swarm Memory\n\n## Decisions\n- canonical profile decision\n', 'utf8')
     await writeFile(rootSessionMemoryPath, '# Swarm Memory\n\n## Decisions\n- root working note\n', 'utf8')
 
     const resources = await manager.getMemoryRuntimeResourcesForTest('manager')
@@ -476,7 +478,7 @@ describe('SwarmManager', () => {
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    await writeFile(config.paths.memoryFile!, '# Swarm Memory\n\n## Decisions\n- manager-only\n', 'utf8')
+    await writeFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), '# Swarm Memory\n\n## Decisions\n- manager-only\n', 'utf8')
     await writeFile(getCommonKnowledgePath(config.paths.dataDir), '# Common Knowledge\n\n## Working Patterns\n- keep PRs small\n', 'utf8')
 
     const resources = await manager.getMemoryRuntimeResourcesForTest('manager')
@@ -492,7 +494,7 @@ describe('SwarmManager', () => {
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    await writeFile(config.paths.memoryFile!, '# Swarm Memory\n\n## Decisions\n- manager-only\n', 'utf8')
+    await writeFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), '# Swarm Memory\n\n## Decisions\n- manager-only\n', 'utf8')
     await writeFile(getCommonKnowledgePath(config.paths.dataDir), '# Common Knowledge\n\n## Working Patterns\n- shared\n', 'utf8')
 
     const resources = await manager.getMemoryRuntimeResourcesForTest('manager')
@@ -530,7 +532,7 @@ describe('SwarmManager', () => {
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    await writeFile(config.paths.memoryFile!, '# Swarm Memory\n\n## Decisions\n- manager-only\n', 'utf8')
+    await writeFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), '# Swarm Memory\n\n## Decisions\n- manager-only\n', 'utf8')
     await mkdir(dirname(getProfileReferencePath(config.paths.dataDir, 'manager', 'architecture.md')), { recursive: true })
     await writeFile(
       getProfileReferencePath(config.paths.dataDir, 'manager', 'architecture.md'),
@@ -555,11 +557,11 @@ describe('SwarmManager', () => {
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    const managerMemory = await readFile(config.paths.memoryFile!, 'utf8')
+    const managerMemory = await readFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), 'utf8')
     expect(managerMemory).toContain('# Swarm Memory')
     expect(managerMemory).not.toBe(legacyContent)
 
-    await expect(readFile(join(config.paths.memoryDir, '.migrated'), 'utf8')).rejects.toMatchObject({
+    await expect(readFile(join(getLegacyMemoryDirPath(config.paths.dataDir), '.migrated'), 'utf8')).rejects.toMatchObject({
       code: 'ENOENT',
     })
   })
@@ -570,12 +572,12 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const worker = await manager.spawnAgent('manager', { agentId: 'Memory Worker' })
-    const workerMemoryFile = join(config.paths.memoryDir, `${worker.agentId}.md`)
+    const workerMemoryFile = join(getLegacyMemoryDirPath(config.paths.dataDir), `${worker.agentId}.md`)
     const rootSessionMemoryPath = getRootSessionMemoryPath(config.paths.dataDir, 'manager')
 
-    await writeFile(config.paths.memoryFile!, '# Swarm Memory\n\n## Decisions\n- canonical profile memory\n', 'utf8')
+    await writeFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), '# Swarm Memory\n\n## Decisions\n- canonical profile memory\n', 'utf8')
     await writeFile(rootSessionMemoryPath, '# Swarm Memory\n\n## Decisions\n- manager working memory\n', 'utf8')
-    await mkdir(config.paths.memoryDir, { recursive: true })
+    await mkdir(getLegacyMemoryDirPath(config.paths.dataDir), { recursive: true })
     await writeFile(workerMemoryFile, '# Swarm Memory\n\n## Decisions\n- worker memory\n', 'utf8')
 
     const resources = await manager.getMemoryRuntimeResourcesForTest(worker.agentId)
@@ -591,7 +593,7 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Memory Session' })
-    const profileMemoryPath = config.paths.memoryFile!
+    const profileMemoryPath = getProfileMemoryPath(config.paths.dataDir, 'manager')
     const sessionMemoryPath = getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId)
 
     await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Decisions\n- shared profile decision\n', 'utf8')
@@ -617,13 +619,13 @@ describe('SwarmManager', () => {
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Worker Memory Session' })
     const worker = await manager.spawnAgent(sessionAgent.agentId, { agentId: 'Session Memory Worker' })
-    const profileMemoryPath = config.paths.memoryFile!
+    const profileMemoryPath = getProfileMemoryPath(config.paths.dataDir, 'manager')
     const sessionMemoryPath = getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId)
-    const workerMemoryPath = join(config.paths.memoryDir, `${worker.agentId}.md`)
+    const workerMemoryPath = join(getLegacyMemoryDirPath(config.paths.dataDir), `${worker.agentId}.md`)
 
     await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Project Facts\n- shared fact\n', 'utf8')
     await writeFile(sessionMemoryPath, '# Swarm Memory\n\n## Project Facts\n- session fact\n', 'utf8')
-    await mkdir(config.paths.memoryDir, { recursive: true })
+    await mkdir(getLegacyMemoryDirPath(config.paths.dataDir), { recursive: true })
     await writeFile(workerMemoryPath, '# Swarm Memory\n\n## Project Facts\n- worker fact\n', 'utf8')
 
     const resources = await manager.getMemoryRuntimeResourcesForTest(worker.agentId)
@@ -645,7 +647,7 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Merge Session' })
-    const profileMemoryPath = config.paths.memoryFile!
+    const profileMemoryPath = getProfileMemoryPath(config.paths.dataDir, 'manager')
     const sessionMemoryPath = getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId)
     const auditPath = getProfileMergeAuditLogPath(config.paths.dataDir, 'manager')
 
@@ -713,7 +715,7 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Seed Session' })
-    const profileMemoryPath = config.paths.memoryFile!
+    const profileMemoryPath = getProfileMemoryPath(config.paths.dataDir, 'manager')
     const auditPath = getProfileMergeAuditLogPath(config.paths.dataDir, 'manager')
 
     await writeFile(profileMemoryPath, '', 'utf8')
@@ -747,7 +749,7 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Template Session' })
-    const profileMemoryPath = config.paths.memoryFile!
+    const profileMemoryPath = getProfileMemoryPath(config.paths.dataDir, 'manager')
 
     await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Decisions\n- before merge\n', 'utf8')
 
@@ -777,7 +779,7 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Idempotent Session' })
-    await writeFile(config.paths.memoryFile!, '# Swarm Memory\n\n## Decisions\n- existing profile decision\n', 'utf8')
+    await writeFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), '# Swarm Memory\n\n## Decisions\n- existing profile decision\n', 'utf8')
     await writeFile(
       getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId),
       '# Swarm Memory\n\n## Decisions\n- repeatable merge detail\n',
@@ -810,7 +812,7 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Profile Drift Session' })
-    const profileMemoryPath = config.paths.memoryFile!
+    const profileMemoryPath = getProfileMemoryPath(config.paths.dataDir, 'manager')
     const auditPath = getProfileMergeAuditLogPath(config.paths.dataDir, 'manager')
 
     await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Decisions\n- existing profile decision\n', 'utf8')
@@ -856,7 +858,7 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Legacy Idempotent Session' })
-    const profileMemoryPath = config.paths.memoryFile!
+    const profileMemoryPath = getProfileMemoryPath(config.paths.dataDir, 'manager')
     const sessionMemoryPath = getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId)
     const metaPath = join(getSessionDir(config.paths.dataDir, 'manager', sessionAgent.agentId), 'meta.json')
 
@@ -896,7 +898,7 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'No Change Session' })
-    const profileMemoryPath = config.paths.memoryFile!
+    const profileMemoryPath = getProfileMemoryPath(config.paths.dataDir, 'manager')
     const auditPath = getProfileMergeAuditLogPath(config.paths.dataDir, 'manager')
 
     await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Decisions\n- unchanged summary\n', 'utf8')
@@ -934,7 +936,7 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Failure Session' })
-    const profileMemoryPath = config.paths.memoryFile!
+    const profileMemoryPath = getProfileMemoryPath(config.paths.dataDir, 'manager')
     const auditPath = getProfileMergeAuditLogPath(config.paths.dataDir, 'manager')
 
     await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Decisions\n- keep this canonical summary\n', 'utf8')
@@ -975,7 +977,7 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Audit Failure Session' })
-    await writeFile(config.paths.memoryFile!, '', 'utf8')
+    await writeFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), '', 'utf8')
     await writeFile(
       getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId),
       '# Swarm Memory\n\n## Decisions\n- audit failure seed detail\n',
@@ -990,7 +992,7 @@ describe('SwarmManager', () => {
       'Session memory merge failed during write_audit: audit disk full',
     )
 
-    expect(await readFile(config.paths.memoryFile!, 'utf8')).toBe(
+    expect(await readFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), 'utf8')).toBe(
       '# Swarm Memory\n\n## Decisions\n- audit failure seed detail\n',
     )
 
@@ -1015,7 +1017,7 @@ describe('SwarmManager', () => {
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Audit Retry Session' })
     const auditPath = getProfileMergeAuditLogPath(config.paths.dataDir, 'manager')
-    await writeFile(config.paths.memoryFile!, '# Swarm Memory\n\n## Decisions\n- existing profile decision\n', 'utf8')
+    await writeFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), '# Swarm Memory\n\n## Decisions\n- existing profile decision\n', 'utf8')
     await writeFile(
       getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId),
       '# Swarm Memory\n\n## Decisions\n- detail before audit retry\n',
@@ -1070,7 +1072,7 @@ describe('SwarmManager', () => {
     const beforeDescriptor = manager.listAgents().find((agent) => agent.agentId === sessionAgent.agentId)
     expect(beforeDescriptor?.mergedAt).toBeUndefined()
 
-    await writeFile(config.paths.memoryFile!, '# Swarm Memory\n\n## Decisions\n- existing profile decision\n', 'utf8')
+    await writeFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), '# Swarm Memory\n\n## Decisions\n- existing profile decision\n', 'utf8')
     await writeFile(
       getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId),
       '# Swarm Memory\n\n## Decisions\n- detail before descriptor-store save failure\n',
@@ -1106,7 +1108,7 @@ describe('SwarmManager', () => {
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Redundant Save Failure Session' })
     const auditPath = getProfileMergeAuditLogPath(config.paths.dataDir, 'manager')
-    await writeFile(config.paths.memoryFile!, '# Swarm Memory\n\n## Decisions\n- existing profile decision\n', 'utf8')
+    await writeFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), '# Swarm Memory\n\n## Decisions\n- existing profile decision\n', 'utf8')
     await writeFile(
       getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId),
       '# Swarm Memory\n\n## Decisions\n- detail before redundant save failure\n',
@@ -1146,7 +1148,7 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Record Attempt Failure Session' })
-    await writeFile(config.paths.memoryFile!, '', 'utf8')
+    await writeFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), '', 'utf8')
     await writeFile(
       getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId),
       '# Swarm Memory\n\n## Decisions\n- record attempt failure detail\n',
@@ -1181,7 +1183,7 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Retry Session' })
-    const profileMemoryPath = config.paths.memoryFile!
+    const profileMemoryPath = getProfileMemoryPath(config.paths.dataDir, 'manager')
     const auditPath = getProfileMergeAuditLogPath(config.paths.dataDir, 'manager')
 
     await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Decisions\n- existing summary\n', 'utf8')
@@ -1226,7 +1228,7 @@ describe('SwarmManager', () => {
 
     const { sessionAgent: firstSession } = await manager.createSession('manager', { label: 'First Merge Session' })
     const { sessionAgent: secondSession } = await manager.createSession('manager', { label: 'Second Merge Session' })
-    const profileMemoryPath = config.paths.memoryFile!
+    const profileMemoryPath = getProfileMemoryPath(config.paths.dataDir, 'manager')
 
     await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Project Facts\n- baseline\n', 'utf8')
     await writeFile(
@@ -1278,7 +1280,7 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Legacy Auth Merge Session' })
-    await writeFile(config.paths.memoryFile!, '# Swarm Memory\n\n## Decisions\n- existing profile decision\n', 'utf8')
+    await writeFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), '# Swarm Memory\n\n## Decisions\n- existing profile decision\n', 'utf8')
     await writeFile(
       getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId),
       '# Swarm Memory\n\n## Decisions\n- merge detail from session\n',
@@ -1294,7 +1296,7 @@ describe('SwarmManager', () => {
     expect(sharedAuth['openai-codex']).toMatchObject({ type: 'api_key' })
     expect(sharedAuth['openai-codex'].key ?? sharedAuth['openai-codex'].access).toBe('sk-legacy-merge-auth')
 
-    const mergedProfileMemory = await readFile(config.paths.memoryFile!, 'utf8')
+    const mergedProfileMemory = await readFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), 'utf8')
     expect(mergedProfileMemory).toContain('merged by mock')
     expect(memoryMergeMockState.executeLLMMerge).toHaveBeenCalledTimes(1)
   })

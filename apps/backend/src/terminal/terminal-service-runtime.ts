@@ -50,13 +50,6 @@ export class TerminalServiceRuntimeController {
       }
 
       this.context.emit("terminal_output", event);
-      this.context.transport?.publish({
-        type: "terminal_output",
-        terminalId: runtime.meta.terminalId,
-        sessionAgentId: runtime.meta.sessionAgentId,
-        seq,
-        chunk,
-      });
 
       if (runtime.journalBytes >= this.context.runtimeConfig.journalMaxBytes) {
         await this.snapshotRuntime(runtime);
@@ -125,13 +118,6 @@ export class TerminalServiceRuntimeController {
 
       if (runtime.published) {
         this.context.emit("terminal_exit", event);
-        this.context.transport?.publish({
-          type: "terminal_exit",
-          terminalId: runtime.meta.terminalId,
-          sessionAgentId: runtime.meta.sessionAgentId,
-          exitCode,
-          exitSignal,
-        });
         this.context.emitTerminalUpdated(runtime.descriptor);
       }
     });

@@ -9,6 +9,7 @@ import { ProjectWorkspaceResolver } from "../../../swarm/project-workspace-resol
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import { applyCorsHeaders, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
+import { isEnoentError } from "../../../utils/fs-errors.js";
 
 const SETTINGS_EXTENSIONS_ENDPOINT_PATH = "/api/settings/extensions";
 const SETTINGS_EXTENSIONS_METHODS = "GET, OPTIONS";
@@ -281,11 +282,6 @@ async function isFile(pathValue: string): Promise<boolean> {
     throw error;
   }
 }
-
-function isEnoentError(error: unknown): error is NodeJS.ErrnoException {
-  return !!error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT";
-}
-
 
 function toComparablePath(pathValue: string): string {
   const resolved = resolve(pathValue);

@@ -4,10 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRuntimeExtensionSnapshot } from "@forge/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getScheduleFilePath } from "../../scheduler/schedule-storage.js";
 import { AgentDescriptorStore } from "../agents/agent-descriptor-store.js";
 import { ForgeExtensionHost } from "../forge-extension-host.js";
-import { getProfileMemoryPath } from "../data-paths.js";
 import type { RuntimeGenerationEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
 import {
   SECURE_RUNTIME_BINDING_UNAVAILABLE_MESSAGE,
@@ -39,7 +37,6 @@ async function makeTempConfig(port = 8897): Promise<SwarmConfig> {
   const managerAgentDir = join(agentDir, "manager");
   const repoArchetypesDir = join(root, ".swarm", "archetypes");
   const memoryDir = join(dataDir, "memory");
-  const memoryFile = getProfileMemoryPath(dataDir, "manager");
   const repoMemorySkillFile = join(root, ".swarm", "skills", "memory", "SKILL.md");
 
   await mkdir(swarmDir, { recursive: true });
@@ -85,17 +82,11 @@ async function makeTempConfig(port = 8897): Promise<SwarmConfig> {
       sharedAuthDir,
       sharedAuthFile,
       sharedSecretsFile,
-      sessionsDir,
-      memoryDir,
-      authDir,
       authFile: join(authDir, "auth.json"),
       secretsFile: join(dataDir, "secrets.json"),
       agentDir,
       managerAgentDir,
-      repoArchetypesDir,
-      memoryFile,
       repoMemorySkillFile,
-      schedulesFile: getScheduleFilePath(dataDir, "manager")
     }
   };
 }

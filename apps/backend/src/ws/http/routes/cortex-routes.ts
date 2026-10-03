@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type {
   CortexEntriesResponse,
-  CortexEntryResponse,
   CortexIndexResponse,
   OnboardingState,
   OnboardingTechnicalLevel,
@@ -15,7 +14,7 @@ import { estimateTokens, type KnowledgeEntry, type KnowledgeEntryScope } from ".
 import { getOnboardingSnapshot, renderOnboardingCommonKnowledge, saveOnboardingPreferences, skipOnboarding } from "../../../swarm/onboarding-state.js";
 import { readCortexReviewLogEntries } from "../../../swarm/scripts/cortex-review-state.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
-import { applyCorsHeaders, parseJsonBody, sendJson } from "../../http-utils.js";
+import { applyCorsHeaders, readJsonBody, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
 
 const ONBOARDING_STATE_ENDPOINT_PATH = "/api/onboarding/state";
@@ -24,7 +23,6 @@ const ONBOARDING_PREFERENCES_ENDPOINT_PATH = "/api/onboarding/preferences";
 const ONBOARDING_PREFERENCES_METHODS = "POST, OPTIONS";
 const CORTEX_INDEX_ENDPOINT_PATH = "/api/cortex/index";
 const CORTEX_ENTRIES_ENDPOINT_PATH = "/api/cortex/entries";
-const CORTEX_ENTRY_ENDPOINT_PATTERN = /^\/api\/cortex\/entry\/([^/]+)$/u;
 const CORTEX_CHANGELOG_ENDPOINT_PATH = "/api/cortex/changelog";
 const CORTEX_CONSOLIDATION_ENDPOINT_PATH = "/api/cortex/consolidation";
 const ONBOARDING_PREFERRED_NAME_MAX_LENGTH = 200;
@@ -58,7 +56,7 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager; cortex
         if (request.method !== "POST") return methodNotAllowed(request, response, ONBOARDING_PREFERENCES_METHODS);
         applyCorsHeaders(request, response, ONBOARDING_PREFERENCES_METHODS);
         try {
-          const payload = await parseJsonBody(request, 8 * 1024);
+          const payload = await readJsonBody(request, 8 * 1024);
           const mutation = parseOnboardingPreferencesPayload(payload);
           if (!mutation) {
             sendJson(response, 400, { error: "Request body must include onboarding preferences or skipped status." });
@@ -75,7 +73,7 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager; cortex
           sendJson(response, 200, { state: buildOnboardingStateResponse(snapshot) });
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unable to save onboarding preferences.";
-          sendJson(response, message.includes("Request body exceeds") ? 413 : 400, { error: message });
+          sendJson(response, message.includes("Request body too large") ? 413 : 400, { error: message });
         }
       },
     },
@@ -115,48 +113,6 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager; cortex
         if (!cortexEnabled) return sendJson(response, 503, { error: "Cortex is disabled" });
         const entries = await swarmManager.getKnowledgeService().listEntries({ includeArchived: true });
         sendJson(response, 200, ({ entries: entries.map(toEntryDto) } satisfies CortexEntriesResponse) as unknown as Record<string, unknown>);
-      },
-    },
-    {
-      methods: "GET, POST, OPTIONS",
-      matches: (pathname) => CORTEX_ENTRY_ENDPOINT_PATTERN.test(pathname),
-      handle: async (request, response, requestUrl) => {
-        const methods = "GET, POST, OPTIONS";
-        if (request.method === "OPTIONS") return optionsResponse(request, response, methods);
-        if (request.method !== "GET" && request.method !== "POST") return methodNotAllowed(request, response, methods);
-        applyCorsHeaders(request, response, methods);
-        if (!cortexEnabled) return sendJson(response, 503, { error: "Cortex is disabled" });
-        const id = decodeURIComponent(CORTEX_ENTRY_ENDPOINT_PATTERN.exec(requestUrl.pathname)?.[1] ?? "");
-        try {
-          if (request.method === "GET") {
-            const entry = await swarmManager.getKnowledgeService().readEntry(id, { includeArchived: true });
-            sendJson(response, 200, ({ entry: toEntryDto(entry) } satisfies CortexEntryResponse) as unknown as Record<string, unknown>);
-            return;
-          }
-          const existing = await swarmManager.getKnowledgeService().readEntry(id, { includeArchived: true });
-          const payload = (await parseJsonBody(request, 64 * 1024)) as Partial<{ title: string; body: string; expectedVersion: number; importance: string }>;
-          const entry = await swarmManager.getKnowledgeService().upsertEntry({
-            id: existing.frontmatter.id,
-            type: existing.frontmatter.type,
-            scope: existing.frontmatter.scope,
-            title: typeof payload.title === "string" ? payload.title : existing.frontmatter.title,
-            body: typeof payload.body === "string" ? payload.body : existing.body,
-            evidenceTier: existing.frontmatter.evidence_tier,
-            sources: existing.frontmatter.sources,
-            importance: payload.importance === "high" || payload.importance === "pinned" || payload.importance === "normal"
-              ? payload.importance
-              : existing.frontmatter.importance,
-            status: existing.frontmatter.status,
-            supersedes: existing.frontmatter.supersedes,
-            sourceEntryIds: existing.frontmatter.source_entry_ids,
-            expectedVersion: typeof payload.expectedVersion === "number" ? payload.expectedVersion : existing.frontmatter.version,
-          });
-          sendJson(response, 200, ({ entry: toEntryDto(entry) } satisfies CortexEntryResponse) as unknown as Record<string, unknown>);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Unable to process knowledge entry.";
-          const code = message.includes("version conflict") ? 409 : message.includes("not found") ? 404 : 400;
-          sendJson(response, code, { error: message });
-        }
       },
     },
     {

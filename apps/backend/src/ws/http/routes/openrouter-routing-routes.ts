@@ -1,7 +1,7 @@
 import { parseOpenRouterRoutingConfig, resolveOpenRouterRouting, type OpenRouterModelsFile, type OpenRouterRoutingSettingsResponse, type ServerEvent } from "@forge/protocol";
 import { getOpenRouterRoutingRevision, mutateOpenRouterModelsFile, readOpenRouterModels } from "../../../swarm/openrouter-models.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
-import { applyCorsHeaders, decodePathSegment, parseJsonBody, sendJson } from "../../http-utils.js";
+import { applyCorsHeaders, decodePathSegment, readJsonBody, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
 import { OpenRouterEndpointDiscovery } from "../services/openrouter-endpoints.js";
 const ROUTING = "/api/settings/openrouter/routing";
@@ -36,7 +36,7 @@ export function createOpenRouterRoutingRoutes(options: { swarmManager: SwarmMana
         let revision: string;
         let routing: ReturnType<typeof parseOpenRouterRoutingConfig>;
         try {
-          const body = await parseJsonBody(request, 32 * 1024) as Record<string, unknown>;
+          const body = await readJsonBody(request, 32 * 1024) as Record<string, unknown>;
           if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some((key) => key !== "revision" && key !== "routing") || typeof body.revision !== "string") throw new Error("Expected { revision, routing }");
           revision = body.revision;
           routing = parseOpenRouterRoutingConfig(body.routing);

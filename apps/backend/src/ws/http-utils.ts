@@ -8,10 +8,6 @@ export function resolveRequestUrl(request: IncomingMessage, fallbackHost: string
   return new URL(request.url ?? "/", `http://${request.headers.host ?? fallbackHost}`);
 }
 
-export function matchPathPattern(pathname: string, pattern: RegExp): RegExpMatchArray | null {
-  return pathname.match(pattern);
-}
-
 export function decodePathSegment(rawSegment: string | undefined): string | undefined {
   if (!rawSegment) {
     return undefined;
@@ -62,34 +58,6 @@ export async function readJsonBody(
     return JSON.parse(raw);
   } catch {
     throw new Error("Request body must be valid JSON");
-  }
-}
-
-export async function parseJsonBody(request: IncomingMessage, maxBytes: number): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  let byteLength = 0;
-
-  for await (const chunk of request) {
-    const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
-    byteLength += buffer.byteLength;
-
-    if (byteLength > maxBytes) {
-      throw new Error(`Request body exceeds ${maxBytes} bytes.`);
-    }
-
-    chunks.push(buffer);
-  }
-
-  if (chunks.length === 0) {
-    return {};
-  }
-
-  const rawBody = Buffer.concat(chunks).toString("utf8");
-
-  try {
-    return JSON.parse(rawBody);
-  } catch {
-    throw new Error("Request body must be valid JSON.");
   }
 }
 

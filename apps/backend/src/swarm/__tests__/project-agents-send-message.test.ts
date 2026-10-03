@@ -3,8 +3,6 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { getScheduleFilePath } from "../../scheduler/schedule-storage.js";
-import { getProfileMemoryPath } from "../data-paths.js";
 import { getConversationHistoryCacheFilePath } from "../conversation-history-cache.js";
 import { SwarmManager } from "../swarm-manager.js";
 import type { AgentContextUsage, AgentDescriptor, RequestedDeliveryMode, SendMessageReceipt, SwarmConfig } from "../types.js";
@@ -128,7 +126,6 @@ async function makeTempConfig(port = 8897): Promise<SwarmConfig> {
   const managerAgentDir = join(agentDir, "manager");
   const repoArchetypesDir = join(root, ".swarm", "archetypes");
   const memoryDir = join(dataDir, "memory");
-  const memoryFile = getProfileMemoryPath(dataDir, "manager");
   const repoMemorySkillFile = join(root, ".swarm", "skills", "memory", "SKILL.md");
 
   await mkdir(swarmDir, { recursive: true });
@@ -174,17 +171,11 @@ async function makeTempConfig(port = 8897): Promise<SwarmConfig> {
       sharedAuthDir,
       sharedAuthFile,
       sharedSecretsFile,
-      sessionsDir,
-      memoryDir,
-      authDir,
       authFile: join(authDir, "auth.json"),
       secretsFile: join(dataDir, "secrets.json"),
       agentDir,
       managerAgentDir,
-      repoArchetypesDir,
-      memoryFile,
       repoMemorySkillFile,
-      schedulesFile: getScheduleFilePath(dataDir, "manager")
     }
   };
 }

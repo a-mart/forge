@@ -184,44 +184,6 @@ export function createGitSourceControlRoutes(options: {
     }),
     {
       methods: GIT_GET_METHODS,
-      matches: (pathname) => pathname === "/api/git/provider/status",
-      handle: async (request, response, requestUrl) => {
-        if (request.method === "OPTIONS") {
-          applyCorsHeaders(request, response, GIT_GET_METHODS);
-          response.statusCode = 204;
-          response.end();
-          return;
-        }
-
-        if (request.method !== "GET") {
-          applyCorsHeaders(request, response, GIT_GET_METHODS);
-          response.setHeader("Allow", GIT_GET_METHODS);
-          sendJson(response, 405, { error: "Method Not Allowed" });
-          return;
-        }
-
-        applyCorsHeaders(request, response, GIT_GET_METHODS);
-
-        try {
-          const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
-          const repoTarget = parseRepoTarget(requestUrl.searchParams.get("repoTarget"));
-          const worktreeId = optionalTrimmedQuery(requestUrl.searchParams.get("worktreeId"));
-          const context = await resolveGitSourceControlContext(
-            swarmManager,
-            agentId,
-            repoTarget,
-            worktreeId
-          );
-          const payload = await service.getProviderStatus(context);
-          sendJson(response, 200, payload as unknown as Record<string, unknown>);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Git source-control request failed.";
-          sendJson(response, resolveHttpStatusCode(message), { error: message });
-        }
-      }
-    },
-    {
-      methods: GIT_GET_METHODS,
       matches: (pathname) => pathname === "/api/git/pull-requests",
       handle: async (request, response, requestUrl) => {
         if (request.method === "OPTIONS") {

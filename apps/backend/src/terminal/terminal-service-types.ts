@@ -9,7 +9,6 @@ import type { TerminalRuntimeConfig } from "./terminal-config.js";
 import type { TerminalPersistence } from "./terminal-persistence.js";
 import type { TerminalPtyHandle, TerminalPtyRuntime } from "./terminal-pty-runtime.js";
 import type { ResolvedTerminalSession, TerminalSessionResolver } from "./terminal-session-resolver.js";
-import type { TerminalTransport, TerminalTransportInboundEvent } from "./terminal-transport.js";
 
 export interface TerminalServiceOptions {
   dataDir: string;
@@ -23,7 +22,6 @@ export interface TerminalServiceOptions {
     /** Terminals validate existing session CWDs without remote selection allowlist gates. */
     enforceAllowlist?: boolean;
   };
-  transport?: TerminalTransport;
   now?: () => Date;
 }
 
@@ -118,7 +116,6 @@ export interface TerminalServiceContext {
     rootDir: string;
     allowlistRoots: string[];
   };
-  readonly transport?: TerminalTransport;
   readonly terminals: Map<string, ActiveTerminalRuntime>;
   readonly sessionCreateLocks: Map<string, Promise<void>>;
   readonly ticketSecret: Buffer;
@@ -127,8 +124,6 @@ export interface TerminalServiceContext {
   setInitialized(value: boolean): void;
   getShuttingDown(): boolean;
   setShuttingDown(value: boolean): void;
-  getTransportUnsubscribe(): (() => void) | null;
-  setTransportUnsubscribe(value: (() => void) | null): void;
   emit(eventName: string | symbol, ...args: unknown[]): boolean;
   resolveScopeSessionAgentId(sessionAgentId: string): string;
   requireSession(sessionAgentId: string): ResolvedTerminalSession;
@@ -151,7 +146,6 @@ export interface TerminalServiceContext {
     sessionAgentId: string;
     requesterAgentId: string;
   }): Promise<TerminalIssueTicketResponse>;
-  handleTransportEvent(event: TerminalTransportInboundEvent): Promise<void>;
   snapshotRuntime(runtime: ActiveTerminalRuntime): Promise<void>;
   startSnapshotInterval(runtime: ActiveTerminalRuntime): void;
   snapshotRuntimeWithTimeout(runtime: ActiveTerminalRuntime, label: string): Promise<void>;

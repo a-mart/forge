@@ -26,10 +26,11 @@ describe('SwarmWebSocketServer', () => {
     })
 
     await server.start()
-    await mkdir(dirname(config.paths.schedulesFile!), { recursive: true })
+    const schedulesFile = getScheduleFilePath(config.paths.dataDir, 'manager')
+    await mkdir(dirname(schedulesFile), { recursive: true })
 
     await writeFile(
-      config.paths.schedulesFile!,
+      schedulesFile,
       JSON.stringify(
         {
           schedules: [

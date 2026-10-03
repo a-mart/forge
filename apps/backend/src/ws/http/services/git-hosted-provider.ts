@@ -188,10 +188,6 @@ export class GitHostedProviderService {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
-  async getProviderStatus(context: GitSourceControlContext): Promise<GitHostedProviderStatus> {
-    return this.buildProviderStatus(context);
-  }
-
   async listPullRequests(
     context: GitSourceControlContext,
     options: { openLimit?: number; closedLimit?: number } = {}
@@ -630,12 +626,6 @@ export function aggregateCheckStatusFromRollup(
   return best;
 }
 
-export function parseCheckSummariesFromRollup(
-  rollup: RawGhPullRequest["statusCheckRollup"]
-): GitPullRequestCheckSummary[] {
-  return parseCheckSummaries(rollup);
-}
-
 export function matchesCurrentBranchPullRequest(
   entry: Pick<
     RawGhPullRequest,
@@ -850,7 +840,7 @@ function classifyCheckEntryStatus(entry: RawGhStatusCheckRollup): CheckStatus | 
   return null;
 }
 
-function parseCheckSummaries(
+export function parseCheckSummaries(
   rollup: RawGhPullRequest["statusCheckRollup"]
 ): GitPullRequestCheckSummary[] {
   return normalizeRollupEntries(rollup)

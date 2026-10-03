@@ -47,12 +47,6 @@ export interface CliCapabilities {
   features: CliFeatureFlags
 }
 
-export interface CliCapabilitiesResponse {
-  serverTime: string
-  serverVersion: string
-  capabilities: CliCapabilities
-}
-
 export type CliStatusState = 'ok' | 'degraded' | 'unavailable'
 
 export interface CliStatusSummary {

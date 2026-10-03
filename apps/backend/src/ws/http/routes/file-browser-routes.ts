@@ -16,7 +16,7 @@ import type {
 import { createReadStream, type ReadStream } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
-import { applyCorsHeaders, parseJsonBody, sendJson } from "../../http-utils.js";
+import { applyCorsHeaders, readJsonBody, sendJson } from "../../http-utils.js";
 import {
   FileBrowserService,
   MAX_FILE_SAVE_BODY_BYTES,
@@ -254,7 +254,7 @@ async function handlePutFileContent(
   service: FileBrowserService
 ): Promise<void> {
   try {
-    const payload = await parseJsonBody(request, MAX_FILE_SAVE_BODY_BYTES);
+    const payload = await readJsonBody(request, MAX_FILE_SAVE_BODY_BYTES);
     if (!payload || typeof payload !== "object") {
       sendJson(response, 400, { error: "Request body must be a JSON object." });
       return;
@@ -405,7 +405,7 @@ async function handleCreateFile(
   service: FileBrowserService
 ): Promise<void> {
   try {
-    const payload = await parseJsonBody(request, 64 * 1024);
+    const payload = await readJsonBody(request, 64 * 1024);
     if (!payload || typeof payload !== "object") {
       sendJson(response, 400, { error: "Request body must be a JSON object." });
       return;
@@ -451,7 +451,7 @@ async function handleRenamePath(
   service: FileBrowserService
 ): Promise<void> {
   try {
-    const payload = await parseJsonBody(request, 64 * 1024);
+    const payload = await readJsonBody(request, 64 * 1024);
     if (!payload || typeof payload !== "object") {
       sendJson(response, 400, { error: "Request body must be a JSON object." });
       return;
@@ -666,7 +666,7 @@ function resolveHttpStatusCode(message: string): number {
 }
 
 function resolveSaveHttpStatusCode(message: string): number {
-  if (message.includes("Request body exceeds")) {
+  if (message.includes("Request body too large")) {
     return 413;
   }
 
