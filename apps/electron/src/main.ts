@@ -32,6 +32,7 @@ import { installBrowserPreviewIpc } from './browser/browser-preview-ipc.js'
 import { isDockManagedBrowserShortcut, isManagedBrowserPopoutAvailable } from './browser/managed-browser-platform.js'
 import type { ElectronWindowRole, ManagedBrowserWorkspaceMode } from './browser/browser-bridge-contract.js'
 import { LifecycleLog } from './lifecycle-log.js'
+import { rotateLogFileIfLarge } from './log-rotation.js'
 import { installElectronDevelopmentProcessControl } from './dev-process-control.js'
 import {
   createSecureVaultController,
@@ -72,6 +73,7 @@ const BACKEND_SHUTDOWN_TIMEOUT_MS = 30_000
 const BACKEND_RESTART_DELAY_MS = 1_000
 const BACKEND_LOG_TAIL_LINES = 40
 const BACKEND_LOG_FILENAME = 'backend.log'
+const BACKEND_LOG_ROTATE_BYTES = 10 * 1024 * 1024
 const LIFECYCLE_LOG_FILENAME = 'lifecycle.log'
 const PACKAGED_BACKEND_DIRNAME = 'backend'
 const PACKAGED_RENDERER_DIRNAME = 'ui'
@@ -494,6 +496,8 @@ class BackendSupervisor {
     this.stdoutRemainder = ''
     this.stderrRemainder = ''
     this.recentOutputLines.length = 0
+    const logPath = this.ensureBackendLogPath()
+    if (logPath) rotateLogFileIfLarge(logPath, BACKEND_LOG_ROTATE_BYTES)
     this.writeLogLine(`=== Backend launch ${new Date().toISOString()} ===`)
   }
 
