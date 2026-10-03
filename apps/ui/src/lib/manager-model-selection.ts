@@ -40,7 +40,6 @@ export interface ManagerModelProviderGroup {
 }
 
 const OPENROUTER_FAMILY_ID = 'openrouter'
-const GENERIC_REASONING_LEVELS: ManagerReasoningLevel[] = ['none', 'low', 'medium', 'high', 'xhigh']
 
 /** Encode a provider + modelId into a unique select value. */
 export function encodeManagerModelValue(provider: string, modelId: string): string {
@@ -52,15 +51,6 @@ export function decodeManagerModelValue(value: string): { provider: string; mode
   const idx = value.indexOf('::')
   if (idx < 1) return undefined
   return { provider: value.slice(0, idx), modelId: value.slice(idx + 2) }
-}
-
-function findOpenRouterModelEntry(
-  modelId: string,
-  openRouterModels: readonly OpenRouterModelEntry[],
-): OpenRouterModelEntry | undefined {
-  const normalizedModelId = modelId.trim()
-  if (!normalizedModelId) return undefined
-  return openRouterModels.find((entry) => entry.modelId === normalizedModelId)
 }
 
 function buildOpenRouterManagerRow(
@@ -172,44 +162,4 @@ export function groupManagerModelRows(rows: ManagerModelSelectRow[]): ManagerMod
   }
 
   return Array.from(map.values())
-}
-
-/**
- * Build a fallback row for a current model descriptor that isn't in the selectable list.
- * This prevents dialogs from silently switching away from a hidden/unavailable model.
- */
-export function buildCurrentModelFallbackRow(
-  provider: string,
-  modelId: string,
-  thinkingLevel?: string,
-  openRouterModels: readonly OpenRouterModelEntry[] = [],
-): ManagerModelSelectRow {
-  const addedOpenRouterModels = openRouterModels ?? []
-  const providerDef = getCatalogProvider(provider)
-  const catalogModel = Object.values(FORGE_MODEL_CATALOG.models).find(
-    (m) => m.provider === provider && m.modelId === modelId,
-  ) as ForgeModelDefinition | undefined
-  const family = catalogModel ? getCatalogFamily(catalogModel.familyId) : undefined
-  const openRouterModel = provider === 'openrouter'
-    ? findOpenRouterModelEntry(modelId, addedOpenRouterModels)
-    : undefined
-
-  return {
-    key: encodeManagerModelValue(provider, modelId),
-    provider,
-    providerDisplayName: providerDef?.displayName ?? provider,
-    familyId: catalogModel?.familyId ?? (openRouterModel ? OPENROUTER_FAMILY_ID : 'unknown'),
-    familyDisplayName: family?.displayName ?? (openRouterModel ? (providerDef?.displayName ?? 'OpenRouter') : 'Other'),
-    modelId,
-    displayName: catalogModel?.displayName ?? openRouterModel?.displayName ?? modelId,
-    supportedReasoningLevels: catalogModel
-      ? (catalogModel.supportedReasoningLevels as ManagerReasoningLevel[])
-      : openRouterModel
-        ? ([...openRouterModel.supportedReasoningLevels] as ManagerReasoningLevel[])
-        : GENERIC_REASONING_LEVELS,
-    defaultReasoningLevel: openRouterModel
-      ? getOpenRouterManagerDefaultReasoningLevel(openRouterModel) as ManagerReasoningLevel
-      : ((thinkingLevel as ManagerReasoningLevel) ?? 'high'),
-    unavailableReason: 'Not available for selection',
-  }
 }

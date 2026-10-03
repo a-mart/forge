@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { getOpenRouterModelOverrideKey, type OpenRouterModelEntry } from '@forge/protocol'
 import {
-  buildCurrentModelFallbackRow,
   buildManagerModelRows,
   decodeManagerModelValue,
   encodeManagerModelValue,
@@ -277,27 +276,6 @@ describe('buildManagerModelRows OpenRouter dynamic entries', () => {
     expect(rows.find((row) => row.modelId === model.modelId)).toMatchObject({
       provider: 'openrouter',
       unavailableReason: 'Provider not configured',
-    })
-  })
-
-  it('preserves an unavailable current OpenRouter model as a fallback row', () => {
-    const model = openRouterEntry()
-    const fallback = buildCurrentModelFallbackRow(
-      'openrouter',
-      model.modelId,
-      'high',
-      [model],
-    )
-
-    expect(fallback).toMatchObject({
-      key: 'openrouter::z-ai/glm-5.1',
-      provider: 'openrouter',
-      providerDisplayName: 'OpenRouter',
-      modelId: model.modelId,
-      displayName: model.displayName,
-      supportedReasoningLevels: ['none', 'low', 'medium', 'high'],
-      defaultReasoningLevel: 'medium',
-      unavailableReason: 'Not available for selection',
     })
   })
 })

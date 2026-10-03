@@ -129,10 +129,6 @@ export function toSwarmFileHref(path: string): string {
     : `${SWARM_FILE_PREFIX}${encodedPath}`
 }
 
-export function toVscodeInsidersHref(path: string): string {
-  return toEditorHref(path, 'vscode-insiders')
-}
-
 export function toEditorHref(path: string, scheme: string): string {
   const normalizedPath = normalizeArtifactPath(path)
   if (!normalizedPath) {

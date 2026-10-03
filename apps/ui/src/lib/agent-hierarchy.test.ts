@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  buildManagerTreeRows,
   buildProfileTreeRows,
   chooseFallbackAgentId,
   filterAgentsAfterProfileArchive,
@@ -82,10 +81,9 @@ describe('agent-hierarchy', () => {
       updatedAt: '2026-01-02T00:00:00.000Z',
     }
 
-    it('never lists a side chat as a sidebar session or manager row', () => {
+    it('never lists a side chat as a sidebar session', () => {
       const rows = buildProfileTreeRows([parent, sideChat], [profile('manager')])
       expect(rows[0]?.sessions.map((entry) => entry.sessionAgent.agentId)).toEqual(['manager'])
-      expect(buildManagerTreeRows([parent, sideChat]).managerRows.map((row) => row.manager.agentId)).toEqual(['manager'])
     })
 
     it('never selects a side chat as the active or fallback session', () => {
@@ -101,25 +99,6 @@ describe('agent-hierarchy', () => {
       expect(findSideChatForSource([parent, sideChat], 'manager--s2')).toBeNull()
       expect(findSideChatForSource([parent, sideChat], null)).toBeNull()
     })
-  })
-
-  it('groups workers under owning managers', () => {
-    const agents: AgentDescriptor[] = [
-      manager('manager'),
-      manager('manager-2', 'manager'),
-      worker('worker-a', 'manager'),
-      worker('worker-b', 'manager-2'),
-      worker('worker-orphan', 'missing-manager'),
-    ]
-
-    const { managerRows, orphanWorkers } = buildManagerTreeRows(agents)
-
-    expect(managerRows).toHaveLength(2)
-    expect(managerRows[0]?.manager.agentId).toBe('manager')
-    expect(managerRows[0]?.workers.map((entry) => entry.agentId)).toEqual(['worker-a'])
-    expect(managerRows[1]?.manager.agentId).toBe('manager-2')
-    expect(managerRows[1]?.workers.map((entry) => entry.agentId)).toEqual(['worker-b'])
-    expect(orphanWorkers.map((entry) => entry.agentId)).toEqual(['worker-orphan'])
   })
 
   it('prefers the legacy default manager id when choosing a primary manager', () => {
@@ -147,10 +126,6 @@ describe('agent-hierarchy', () => {
     const stoppedManager = { ...manager('manager-stopped'), status: 'stopped' as const }
     const erroredWorker = { ...worker('worker-error', 'manager-stopped'), status: 'error' as const }
 
-    const { managerRows, orphanWorkers } = buildManagerTreeRows([stoppedManager, erroredWorker])
-
-    expect(managerRows).toHaveLength(0)
-    expect(orphanWorkers).toHaveLength(0)
     expect(getPrimaryManagerId([stoppedManager])).toBeNull()
     expect(chooseFallbackAgentId([stoppedManager, erroredWorker], null)).toBeNull()
   })
@@ -354,4 +329,5 @@ describe('agent-hierarchy', () => {
     expect(getPrimaryManagerId([collabSession, builderSession])).toBe('manager')
     expect(chooseFallbackAgentId([collabSession, builderSession], collabSession.agentId)).toBe('manager')
   })
+
 })

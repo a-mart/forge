@@ -13,9 +13,7 @@
 export {
   LOCAL_ORIGIN_ID,
   compositeKey,
-  parseCompositeKey,
   type OriginId,
-  type CompositeId,
 } from './origin-key'
 
 export {

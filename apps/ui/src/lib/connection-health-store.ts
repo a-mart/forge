@@ -133,24 +133,6 @@ export function reportCollabPoll(available: boolean): void {
 }
 
 // ---------------------------------------------------------------------------
-// Deprecated — kept as no-ops for backward compatibility
-// ---------------------------------------------------------------------------
-
-/** @deprecated No longer needed — health poll tracks availability */
-export function markBuilderInactive(): void {
-  // Clear WS signal only; poll keeps availability accurate
-  builderTracker = { ...builderTracker, wsConnected: false }
-  recalc()
-}
-
-/** @deprecated No longer needed — health poll tracks availability */
-export function markCollabInactive(): void {
-  // Clear WS signal only; poll keeps availability accurate
-  collabTracker = { ...collabTracker, wsConnected: false }
-  recalc()
-}
-
-// ---------------------------------------------------------------------------
 // React hook (useSyncExternalStore for tear-free reads)
 // ---------------------------------------------------------------------------
 
