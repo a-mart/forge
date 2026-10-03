@@ -68,4 +68,3 @@ export async function issueHtmlArtifactPreview(options: {
 export function invalidHtmlArtifactPreviewRequest(): { status: number; body: Record<string, unknown> } {
   return { status: 400, body: { error: "invalid_request", code: "invalid_request" } };
 }
-
