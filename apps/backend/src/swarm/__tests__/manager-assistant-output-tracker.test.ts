@@ -302,11 +302,32 @@ describe("ManagerAssistantOutputTracker", () => {
     tracker.activateTurn("manager-1", WEB_TARGET);
 
     tracker.handleRuntimeEvent("manager-1", { type: "tool_execution_start", toolName: "shell", toolCallId: "t1", args: {} });
-    tracker.handleRuntimeEvent("manager-1", assistantMessageEnd("premature"));
+    tracker.handleRuntimeEvent("manager-1", assistantMessageEnd("premature", { stopReason: "toolUse" }));
     tracker.handleRuntimeEvent("manager-1", { type: "turn_end", toolResults: [] });
 
     expect(emitted).toHaveLength(1);
     expect(emitted[0]).toMatchObject({ text: "premature", source: "assistant_progress" });
+  });
+
+  it("leaves clean finals to the final projector even while a tool remains open", () => {
+    const { tracker, emitted } = createTracker();
+    tracker.activateTurn("manager-1", WEB_TARGET);
+    tracker.handleRuntimeEvent("manager-1", { type: "tool_execution_start", toolName: "shell", toolCallId: "t1", args: {} });
+    tracker.handleRuntimeEvent("manager-1", assistantMessageEnd("Background check is still running."));
+
+    expect(emitted).toEqual([]);
+  });
+
+  it("waits for streamed text to be classified before publishing progress during open tool work", () => {
+    const { tracker, emitted } = createTracker();
+    tracker.activateTurn("manager-1", WEB_TARGET);
+    tracker.handleRuntimeEvent("manager-1", { type: "tool_execution_start", toolName: "shell", toolCallId: "t1", args: {} });
+    tracker.handleRuntimeEvent("manager-1", assistantMessageUpdate("Still checking", { stopReason: "toolUse" }));
+    tracker.handleRuntimeEvent("manager-1", assistantMessageUpdate("Still checking the task.", { stopReason: "toolUse" }));
+    expect(emitted).toEqual([]);
+    tracker.handleRuntimeEvent("manager-1", assistantMessageEnd("Still checking the task.", { stopReason: "toolUse" }));
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({ text: "Still checking the task.", source: "assistant_progress" });
   });
 
   it("does not promote clean message_end text to assistant_progress when later tool work starts", () => {
