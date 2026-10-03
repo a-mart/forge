@@ -20,7 +20,8 @@ import { computeSkillBundleContentSha256, sha256Hex } from "./skill-bundle-canon
 import { SkillBundleError } from "./skill-bundle-errors.js";
 import { analyzeFrontmatter, buildPortabilityMetadata } from "./skill-bundle-portability.js";
 import { parseSkillFrontmatter } from "./skill-frontmatter.js";
-import { assertValidSkillHandle, errorToMessage, normalizeSkillBundleFilePath } from "./skill-bundle-paths.js";
+import { assertValidSkillHandle, normalizeSkillBundleFilePath } from "./skill-bundle-paths.js";
+import { errorToMessage } from "../../utils/normalize.js";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });

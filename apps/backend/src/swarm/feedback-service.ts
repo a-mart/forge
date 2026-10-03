@@ -13,6 +13,7 @@ import { getProfilesDir, getSessionFeedbackPath, getSessionsDir } from "./data-p
 import { readSessionMeta, writeSessionMeta } from "./session-manifest.js";
 import { isEnoentError } from "../utils/fs-errors.js";
 import { writeFileAtomic } from "../utils/atomic-files.js";
+import { isRecord, normalizeOptionalString } from "../utils/normalize.js";
 
 export interface FeedbackListOptions {
   since?: string;
@@ -465,17 +466,4 @@ function isFeedbackSubmitValue(value: unknown): value is FeedbackSubmitValue {
 
 function isFeedbackChannel(value: unknown): value is FeedbackEvent["channel"] {
   return value === "web" || value === "telegram";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function normalizeOptionalString(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
 }

@@ -18,7 +18,6 @@ import { SkillBundleError } from "./skill-bundle-errors.js";
 import {
   assertValidSkillHandle,
   compareCodePoint,
-  errorToMessage,
   isPathWithinRoot,
   isSensitiveSkillEntryName,
   normalizeSkillBundleFilePath,
@@ -31,6 +30,7 @@ import {
   type SkillBundleValidationResult
 } from "./skill-bundle-validation.js";
 import { parseSkillFrontmatter } from "./skill-frontmatter.js";
+import { errorToMessage } from "../../utils/normalize.js";
 import type { SkillMetadata, SkillMetadataService } from "./skill-metadata-service.js";
 
 export {

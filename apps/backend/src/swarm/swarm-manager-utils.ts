@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { open } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { isEnoentError } from "../utils/fs-errors.js";
+import { errorToMessage, isRecord } from "../utils/normalize.js";
 import { getModel, getModels, type Api, type Model } from "./pi/pi-ai-compat.js";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import {
@@ -572,10 +573,6 @@ export function extractDescriptorAgentId(value: unknown): string | undefined {
   return isNonEmptyString(value.agentId) ? value.agentId.trim() : undefined;
 }
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function validateWorkerParentContext(value: unknown, descriptorManagerId: unknown): string | undefined {
   if (!isRecord(value)) {
     return "workerParentContext must be an object when provided";
@@ -753,7 +750,7 @@ function normalizeOptionalPersistedString(value: unknown, fieldName: string): st
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export { isEnoentError };
+export { errorToMessage, isEnoentError, isRecord };
 
 export function parseSessionNumberFromAgentId(agentId: string, profileId: string): number | undefined {
   if (!agentId.startsWith(`${profileId}${SESSION_ID_SUFFIX_SEPARATOR}`)) {
@@ -1621,10 +1618,6 @@ export function escapeXmlForPreview(str: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
-}
-
-export function errorToMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 export function nowIso(): string {

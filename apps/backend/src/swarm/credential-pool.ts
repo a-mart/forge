@@ -7,6 +7,7 @@ import { AuthStorage, type AuthCredential } from "@earendil-works/pi-coding-agen
 import type { CredentialPoolState, CredentialPoolStrategy, PooledCredentialInfo } from "@forge/protocol";
 import { isEnoentError } from "../utils/fs-errors.js";
 import { writeJsonFileAtomic } from "../utils/atomic-files.js";
+import { errorToMessage } from "../utils/normalize.js";
 
 // ── Storage types (persisted to credential-pool.json) ──
 
@@ -547,7 +548,7 @@ export class CredentialPoolService {
       throw new PooledCredentialAuthError(
         provider,
         credentialId,
-        `Failed to refresh pooled ${provider} credential ${credentialId}: ${toErrorMessage(error)}`
+        `Failed to refresh pooled ${provider} credential ${credentialId}: ${errorToMessage(error)}`
       );
     }
   }
@@ -808,10 +809,6 @@ function normalizeAuthToken(value: unknown): string | undefined {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function shouldMigrateCredential(provider: string, credential: AuthCredential | undefined): boolean {

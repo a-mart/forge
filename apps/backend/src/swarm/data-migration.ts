@@ -18,6 +18,8 @@ import {
 import { rebuildSessionMeta } from "./session-manifest.js";
 import { isEnoentError, isErrnoCode } from "../utils/fs-errors.js";
 import { writeFileAtomic, writeJsonFileAtomic } from "../utils/atomic-files.js";
+import { errorToMessage, isRecord, normalizeOptionalString } from "../utils/normalize.js";
+import { copyFileIfMissing } from "./storage/copy-file-if-missing.js";
 import type { AgentDescriptor, ManagerProfile } from "./types.js";
 
 const MIGRATION_SENTINEL_FILE = ".migration-v1-done";
@@ -674,24 +676,6 @@ async function hardlinkOrCopyFileIfMissing(
   }
 }
 
-async function copyFileIfMissing(sourcePath: string, targetPath: string): Promise<void> {
-  if (!(await pathExists(sourcePath)) || (await pathExists(targetPath))) {
-    return;
-  }
-
-  await fs.mkdir(dirname(targetPath), { recursive: true });
-
-  try {
-    await fs.copyFile(sourcePath, targetPath, fsConstants.COPYFILE_EXCL);
-  } catch (error) {
-    if (isErrnoCode(error, "EEXIST") || isEnoentError(error)) {
-      return;
-    }
-
-    throw error;
-  }
-}
-
 async function pathExists(path: string): Promise<boolean> {
   try {
     await fs.stat(path);
@@ -703,19 +687,6 @@ async function pathExists(path: string): Promise<boolean> {
 
     throw error;
   }
-}
-
-function normalizeOptionalString(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isManagerDescriptor(
@@ -736,8 +707,4 @@ function log(
   }
 
   logHandler(message, details);
-}
-
-function errorToMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
