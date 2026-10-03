@@ -24,7 +24,6 @@ import type { AgentDescriptor } from "../types.js";
 import type { SwarmManagerFacadeServices } from "../swarm-manager-facade-services.js";
 import { SwarmManagerGoalFacade } from "../swarm-manager-goal-facade.js";
 import type { SecureRuntimeBinding } from "./runtime/secure-runtime-binding.js";
-import type { SecureOrphanRecoveryResult } from "./execution/secure-execution-backend.js";
 import type {
   ConnectBitwardenSecureSecretProviderInput,
   ConnectBitwardenPasswordManagerInput,
@@ -300,28 +299,10 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
     );
   }
 
-  isTeamSecureMode(managerAgentId: string): boolean {
-    return this.secureSessions.isTeamSecureMode(managerAgentId);
-  }
-
   listSecureSessionTeamSnapshots(
     managerAgentId: string,
   ): Promise<SecureSessionSnapshot[]> {
     return this.secureSessions.listSecureSessionTeamSnapshots(managerAgentId);
-  }
-
-  prepareWorkerForSecureTeam(workerAgentId: string): Promise<boolean> {
-    return this.secureSessions.prepareWorkerForSecureTeam(workerAgentId);
-  }
-
-  advanceWorkerSecureAssignment(
-    workerAgentId: string,
-    assignmentId: string,
-  ): Promise<void> {
-    return this.secureSessions.advanceWorkerSecureAssignment(
-      workerAgentId,
-      assignmentId,
-    );
   }
 
   grantSecureSessionLease(
@@ -404,10 +385,6 @@ export abstract class SwarmManagerSecureSessionsFacade extends SwarmManagerGoalF
 
   setSecureSessionAccess(sessionAgentId: string, input: SetSecureSessionAccessRequest): Promise<SecureSessionSnapshot> {
     return this.secureSessions.setSecureSessionAccess(sessionAgentId, input);
-  }
-
-  initializeSecureSessions(): Promise<SecureOrphanRecoveryResult> {
-    return this.secureSessions.initializeSecureSessions();
   }
 
   closeSecureSessions(): Promise<void> {

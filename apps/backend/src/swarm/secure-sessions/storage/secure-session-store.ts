@@ -1095,29 +1095,6 @@ export class SecureSessionStore {
     })();
   }
 
-  deleteProjectDefault(profileId: string, secretId: string): boolean {
-    assertId(profileId, "profile ID");
-    assertId(secretId, "secret ID");
-    return this.database.transaction(() => {
-      if (!this.getProjectDefault(profileId, secretId)) return false;
-      const now = this.timestamp();
-      this.revokeProjectDefaultLeases(profileId, [secretId], now);
-      this.database.prepare(`
-        DELETE FROM secure_session_project_default
-        WHERE profile_id = ? AND secret_id = ?
-      `).run(profileId, secretId);
-      this.audit({
-        eventType: "project_default_deleted",
-        profileId,
-        secretId,
-        outcome: "deleted",
-        occurredAt: now
-      });
-      this.bumpCatalog(now);
-      return true;
-    })();
-  }
-
   listSshTrustedHosts(profileId?: string): SecureSessionSshTrustedHost[] {
     if (profileId !== undefined) assertId(profileId, "profile ID");
     const rows = profileId === undefined
@@ -1217,37 +1194,6 @@ export class SecureSessionStore {
       this.bumpCatalog(now);
       return true;
     })();
-  }
-
-  listActiveProjectDefaultLeases(
-    profileId: string,
-    secretId?: string
-  ): SecureSessionLease[] {
-    assertId(profileId, "profile ID");
-    if (secretId !== undefined) assertId(secretId, "secret ID");
-    const rows = secretId === undefined
-      ? this.database.prepare(`
-          SELECT l.lease_id
-          FROM secure_session_lease l
-          JOIN secure_session_state ss ON ss.session_agent_id = l.session_agent_id
-          WHERE ss.profile_id = ?
-            AND l.grant_source = 'project_default'
-            AND l.state = 'active'
-          ORDER BY l.session_agent_id, l.lease_id
-        `).all(profileId)
-      : this.database.prepare(`
-          SELECT l.lease_id
-          FROM secure_session_lease l
-          JOIN secure_session_state ss ON ss.session_agent_id = l.session_agent_id
-          WHERE ss.profile_id = ?
-            AND l.secret_id = ?
-            AND l.grant_source = 'project_default'
-            AND l.state = 'active'
-          ORDER BY l.session_agent_id, l.lease_id
-        `).all(profileId, secretId);
-    return (rows as Array<{ lease_id: string }>).map(({ lease_id }) =>
-      this.requireLease(lease_id)
-    );
   }
 
   /**
