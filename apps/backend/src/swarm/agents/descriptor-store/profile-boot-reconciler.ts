@@ -1,4 +1,4 @@
-import { normalizePersistedSwarmModelDescriptor } from "../../model-presets.js";
+import { normalizePersistedSwarmModelDescriptor } from "../../catalog/model-presets.js";
 import { normalizeOptionalAgentId } from "../../swarm-manager-utils.js";
 import { DEFAULT_MANAGER_POSTURE } from "../../prompts/manager-posture.js";
 import { isContextMode, isManagerPosture } from "@forge/protocol";

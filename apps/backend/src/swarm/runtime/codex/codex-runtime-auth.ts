@@ -1,5 +1,5 @@
 import { AuthStorage, type AuthCredential } from "@earendil-works/pi-coding-agent";
-import { ensureCanonicalAuthFilePath } from "../../auth-storage-paths.js";
+import { ensureCanonicalAuthFilePath } from "../../storage/auth-storage-paths.js";
 import type { CredentialPoolService } from "../../credential-pool.js";
 import {
   buildOpenAICodexAuthCredentialFromLease,

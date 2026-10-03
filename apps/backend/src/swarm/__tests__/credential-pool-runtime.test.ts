@@ -5,7 +5,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { anthropicOAuthProvider, openaiCodexOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import { AuthStorage, type AuthCredential } from "@earendil-works/pi-coding-agent";
 import { CredentialPoolService, type CredentialPoolServiceDeps } from "../credential-pool.js";
-import { classifyRuntimeCapacityError } from "../runtime-utils.js";
+import { classifyRuntimeCapacityError } from "../runtime/runtime-utils.js";
 
 let tempDir: string;
 let authDir: string;

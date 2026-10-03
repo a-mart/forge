@@ -1,7 +1,7 @@
 import type { AgentInitialModelInputState } from "@forge/protocol";
 import type { SwarmAgentRuntime } from "../runtime-contracts.js";
 import type { AgentDescriptor } from "../types.js";
-import { openSessionManagerWithSizeGuard } from "../session-file-guard.js";
+import { openSessionManagerWithSizeGuard } from "../session/session-file-guard.js";
 import {
   findPiInitialModelInputCapture,
   findPiInitialModelInputCaptureInSessionEntries,

@@ -3,7 +3,7 @@ import {
   getOpenAICodexWebSocketConstructorDiagnostics,
   installOpenAICodexWebSocketDiagnostics,
   type OpenAICodexWebSocketConstructorDiagnostics
-} from "../../../swarm/runtime-utils.js";
+} from "../../../swarm/runtime/runtime-utils.js";
 import type { SidebarPerfRecentSamples } from "../../../stats/sidebar-perf-types.js";
 import { applyCorsHeaders, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";

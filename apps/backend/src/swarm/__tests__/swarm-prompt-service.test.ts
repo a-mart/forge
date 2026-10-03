@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FileBackedPromptRegistry } from "../prompts/prompt-registry.js";
-import { writeProjectAgentRecord } from "../project-agent-storage.js";
+import { writeProjectAgentRecord } from "../storage/project-agent-storage.js";
 import { writeProjectAgentReferenceDoc } from "../reference-docs.js";
 import { writeReferenceDoc } from "../storage/asset-root-storage.js";
 import { SwarmPromptService } from "../swarm-prompt-service.js";

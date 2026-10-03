@@ -8,7 +8,7 @@ import { TokenAnalyticsService } from "../stats/token-analytics-service.js";
 import { hydratePersistedScanResult } from "../stats/token-analytics/token-analytics-serialize.js";
 import { getSharedTokenAnalyticsCachePath } from "../swarm/data-paths.js";
 import { CURSOR_SDK_USAGE_ENTRY_TYPE } from "../utils/cursor-sdk-usage-records.js";
-import { getProfileSpecialistsDir, getSharedSpecialistsDir } from "../swarm/specialists/specialist-paths.js";
+import { getProfileSpecialistsDir, getSharedSpecialistsDir } from "../swarm/agents/specialists/specialist-paths.js";
 
 interface TestContext {
   rootDir: string;

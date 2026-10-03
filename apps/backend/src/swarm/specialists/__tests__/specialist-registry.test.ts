@@ -22,11 +22,11 @@ import {
   saveProfileSpecialist,
   saveSharedSpecialist,
   seedBuiltins,
-} from "../specialist-registry.js";
+} from "../../agents/specialists/specialist-registry.js";
 import { getBuiltinSpecialistsDir } from "../../agents/specialists/specialist-paths.js";
-import { modelCatalogService } from "../../model-catalog-service.js";
+import { modelCatalogService } from "../../catalog/model-catalog-service.js";
 import { parseXaiOAuthModelCatalog } from "../../catalog/xai-oauth-model-discovery.js";
-import { writeModelOverrides } from "../../model-overrides.js";
+import { writeModelOverrides } from "../../catalog/model-overrides.js";
 
 function makeSpecialistMarkdown(options: {
   displayName: string;

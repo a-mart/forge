@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   classifyRuntimeCapacityError,
   parseRetryAfterMsFromErrorMessage,
-} from '../swarm/runtime-utils.js'
+} from '../swarm/runtime/runtime-utils.js'
 
 describe('runtime capacity error parsing', () => {
   it('classifies quota errors and parses minute retry windows', () => {

@@ -7,7 +7,7 @@ import {
   runCaptureCheckFork,
   type CaptureCadenceInput,
 } from "./capture-check.js";
-import { readSessionMeta, writeSessionMeta } from "./session-manifest.js";
+import { readSessionMeta, writeSessionMeta } from "./session/session-manifest.js";
 import { previewForLog } from "./swarm-manager-utils.js";
 import type { AgentDescriptor } from "./types.js";
 

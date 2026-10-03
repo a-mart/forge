@@ -20,8 +20,8 @@ import {
   DEFAULT_SWARM_MODEL_PRESET,
   inferSwarmModelPresetFromDescriptor,
   resolveModelDescriptorFromPreset,
-} from "./model-presets.js";
-import { FileBackedPromptRegistry, type PromptRegistry } from "./prompt-registry.js";
+} from "./catalog/model-presets.js";
+import { FileBackedPromptRegistry, type PromptRegistry } from "./prompts/prompt-registry.js";
 import { SecretsEnvService } from "./secrets-env-service.js";
 import { SessionDescriptorFactory } from "./session-descriptor-factory.js";
 import { NonoSecureExecutionBackend } from "./secure-sessions/execution/nono-secure-execution-backend.js";
@@ -40,7 +40,7 @@ import {
   type SessionPinCoordinatorHost,
 } from "./session-pin-coordinator.js";
 import { SkillFileService } from "./skill-file-service.js";
-import { SkillMetadataService } from "./skill-metadata-service.js";
+import { SkillMetadataService } from "./skills/skill-metadata-service.js";
 import { SwarmObservabilityCoordinator } from "./swarm-observability-coordinator.js";
 import { getSecureSessionsDbPath } from "./storage/data-paths.js";
 import type { AgentDescriptor, ManagerProfile, SwarmConfig, SwarmModelPreset } from "./types.js";

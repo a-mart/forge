@@ -16,7 +16,7 @@ import {
   updateSessionMetaStats,
   updateSessionMetaWorker,
   writeSessionMeta
-} from "../session-manifest.js";
+} from "../session/session-manifest.js";
 
 const DEFAULT_MODEL = {
   provider: "openai-codex",

@@ -3,7 +3,7 @@
  * Raw agent_end/willRetry is observational only.
  */
 import { describe, expect, it, vi } from "vitest";
-import { AgentRuntime } from "../agent-runtime.js";
+import { AgentRuntime } from "../runtime/pi-agent-runtime.js";
 import type { AgentDescriptor } from "../types.js";
 
 class FakeSession {

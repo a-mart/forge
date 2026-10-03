@@ -1,12 +1,12 @@
 import type { CollaborationChannelPromptPreviewResponse, CollaborationSkillSelectionInput, PromptPreviewResponse } from "@forge/protocol";
-import { parseSwarmReasoningLevel } from "../../../../swarm/model-presets.js";
+import { parseSwarmReasoningLevel } from "../../../../swarm/catalog/model-presets.js";
 import {
   deleteChannelSpecialist,
   generateRosterBlock,
   resolveCollaborationChannelRoster,
   saveChannelSpecialist,
   type SaveSpecialistRequest,
-} from "../../../../swarm/specialists/specialist-registry.js";
+} from "../../../../swarm/agents/specialists/specialist-registry.js";
 import type { SwarmConfig, SwarmReasoningLevel } from "../../../../swarm/types.js";
 import {
   attachEffectiveChannelModelSettings,

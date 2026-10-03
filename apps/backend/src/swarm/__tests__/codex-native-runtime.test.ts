@@ -10,7 +10,7 @@ import { ChoiceRequestCancelledError, SwarmChoiceService } from "../swarm-choice
 import { nativeCodexEnvironment } from "../runtime/codex/codex-runtime-auth.js";
 import { ManagerAssistantOutputTracker } from "../runtime/manager-assistant-output-tracker.js";
 import { extractCleanManagerAssistantFinalMessage } from "../runtime/manager-assistant-final-message.js";
-import { ConversationProjector } from "../conversation-projector.js";
+import { ConversationProjector } from "../session/conversation-projector.js";
 import type { CodexAppServerClientHandlers } from "../codex-app-server/types.js";
 import type { AgentDescriptor, ConversationMessageEvent } from "../types.js";
 import type { RuntimeSessionEvent } from "../runtime-contracts.js";

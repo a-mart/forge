@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   trimConversationForEmergencyRecovery,
   type EmergencyContextTrimMessage
-} from "../emergency-context-trim.js";
+} from "../runtime/emergency-context-trim.js";
 
 function message(role: string, content: unknown, index: number): EmergencyContextTrimMessage {
   return {

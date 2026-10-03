@@ -15,7 +15,7 @@ import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { isEligibleLocalBuilderManager, type BrowserAutomationService } from "../swarm/browser-automation/index.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
-import type { UnreadTracker } from "../swarm/unread-tracker.js";
+import type { UnreadTracker } from "../swarm/session/unread-tracker.js";
 import { filterBuilderVisibleAgents, filterBuilderVisibleProfiles, isBuilderInventorySession } from "./builder-visibility.js";
 import { resolveSessionAgentIdForUnread } from "./unread-utils.js";
 import {

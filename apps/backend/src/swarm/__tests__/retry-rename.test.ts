@@ -13,7 +13,7 @@ vi.mock("node:fs", () => ({
   renameSync: renameMocks.syncRename
 }));
 
-import { renameSyncWithRetry, renameWithRetry } from "../retry-rename.js";
+import { renameSyncWithRetry, renameWithRetry } from "../storage/retry-rename.js";
 
 describe("retry-rename", () => {
   beforeEach(() => {

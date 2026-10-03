@@ -1,5 +1,5 @@
 import { existsSync, rmSync } from "node:fs";
-import { getConversationHistoryCacheFilePath } from "../conversation-history-cache.js";
+import { getConversationHistoryCacheFilePath } from "../session/conversation-history-cache.js";
 import { isCodexAppServerExternalThreadDescriptor } from "../external-threads.js";
 import { CONVERSATION_ENTRY_TYPE, ConversationTimeline } from "../session/conversation-timeline.js";
 import { openSessionManagerWithSizeGuard } from "../session/session-file-guard.js";

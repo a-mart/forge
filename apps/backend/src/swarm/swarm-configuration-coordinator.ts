@@ -29,18 +29,18 @@ import {
   type DirectoryListingResult,
   type DirectoryValidationResult,
 } from "./cwd-policy.js";
-import { generatePiProjection } from "./model-catalog-projection.js";
+import { generatePiProjection } from "./catalog/model-catalog-projection.js";
 import { buildManagerSelectionCatalog } from "./catalog/manager-selection-catalog.js";
-import { modelCatalogService } from "./model-catalog-service.js";
+import { modelCatalogService } from "./catalog/model-catalog-service.js";
 import { getModelCacheVisualizationEnabled } from "./model-cache-visualization-settings.js";
-import { resolveModelDescriptorFromPreset } from "./model-presets.js";
+import { resolveModelDescriptorFromPreset } from "./catalog/model-presets.js";
 import {
   PromptResourceCoordinator,
   type PromptResourceCoordinatorOptions,
   type ResolvedSpecialistDefinitionLike,
   type SpecialistRegistryModule,
 } from "./prompt-resource-coordinator.js";
-import { normalizeArchetypeId, type PromptRegistry } from "./prompt-registry.js";
+import { normalizeArchetypeId, type PromptRegistry } from "./prompts/prompt-registry.js";
 import { isCollaborationServerRuntimeTarget } from "../runtime-target.js";
 import type { RuntimeErrorEvent } from "./runtime-contracts.js";
 import {
@@ -48,7 +48,7 @@ import {
   type SecretsEnvService,
 } from "./secrets-env-service.js";
 import type { SkillFileService } from "./skill-file-service.js";
-import type { SkillMetadata, SkillMetadataService } from "./skill-metadata-service.js";
+import type { SkillMetadata, SkillMetadataService } from "./skills/skill-metadata-service.js";
 import type { ImportSkillOptions } from "./skills/skill-sharing-service.js";
 import { SwarmPromptService, type SwarmPromptServiceOptions } from "./swarm-prompt-service.js";
 import {

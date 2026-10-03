@@ -8,7 +8,7 @@ import {
   getSessionsDir,
   getWorkersDir,
 } from "../../swarm/data-paths.js";
-import { resolveRoster } from "../../swarm/specialists/specialist-registry.js";
+import { resolveRoster } from "../../swarm/agents/specialists/specialist-registry.js";
 import {
   GENERATION_MEASUREMENT_ENTRY_TYPE,
   foldGenerationMeasurementRecords,

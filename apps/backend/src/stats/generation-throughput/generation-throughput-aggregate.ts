@@ -6,7 +6,7 @@ import type {
   GenerationThroughputModelTrend,
   GenerationThroughputRoleSummary,
 } from "@forge/protocol";
-import { modelCatalogService } from "../../swarm/model-catalog-service.js";
+import { modelCatalogService } from "../../swarm/catalog/model-catalog-service.js";
 import { formatDayLabel, toDayKey } from "../stats-time.js";
 import { isMeasuredGeneration } from "./generation-throughput-query.js";
 import type { GenerationMeasurementRecord } from "./generation-throughput-types.js";

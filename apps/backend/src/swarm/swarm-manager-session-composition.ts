@@ -4,7 +4,7 @@ import {
   type ArchiveLastUsedHydratorDeps,
 } from "./archive/archive-last-used-hydrator.js";
 import { ArchiveService, type ArchiveServiceDeps } from "./archive/archive-service.js";
-import { deleteProjectAgentRecord } from "./project-agent-storage.js";
+import { deleteProjectAgentRecord } from "./storage/project-agent-storage.js";
 import {
   ProjectAgentCoordinator,
   type ProjectAgentCoordinatorOptions,
@@ -28,7 +28,7 @@ import {
 } from "./session-provisioner.js";
 import type { SessionDescriptorFactory } from "./session-descriptor-factory.js";
 import type { SessionPinCoordinator } from "./session-pin-coordinator.js";
-import type { ConversationProjector } from "./conversation-projector.js";
+import type { ConversationProjector } from "./session/conversation-projector.js";
 import {
   SwarmProjectAgentService,
   type SwarmProjectAgentServiceOptions,

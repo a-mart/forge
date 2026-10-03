@@ -10,7 +10,7 @@ import {
   trimToMaxChars,
   trimToMaxCharsFromEnd
 } from "./swarm-manager-utils.js";
-import { extractMessageErrorMessage, extractMessageText } from "./message-utils.js";
+import { extractMessageErrorMessage, extractMessageText } from "./session/message-utils.js";
 import { isNonRunningAgentStatus } from "./agent-state-machine.js";
 import { isExternalThreadDescriptor } from "./external-thread-compatibility.js";
 import type { WorkerResultCoordinator } from "./worker-result-coordinator.js";

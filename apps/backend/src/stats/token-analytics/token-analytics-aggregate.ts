@@ -10,7 +10,7 @@ import type {
   TokenCostTotals,
   TokenUsageTotals,
 } from "@forge/protocol";
-import { modelCatalogService } from "../../swarm/model-catalog-service.js";
+import { modelCatalogService } from "../../swarm/catalog/model-catalog-service.js";
 import {
   addCostTotals,
   addUsage,

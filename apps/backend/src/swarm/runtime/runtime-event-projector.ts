@@ -18,7 +18,7 @@ import {
   extractRole,
   isAbortLikeErrorMessage,
   isLocalRuntimeShutdownErrorMessage
-} from "../message-utils.js";
+} from "../session/message-utils.js";
 import type { VersioningMutation } from "../../versioning/versioning-types.js";
 import { MANUAL_MANAGER_STOP_NOTICE } from "../manual-stop-notice.js";
 import type { WorkerActivityStateLike, WorkerStallStateLike } from "./worker-health-types.js";

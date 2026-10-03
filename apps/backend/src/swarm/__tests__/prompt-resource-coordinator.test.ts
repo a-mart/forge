@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PromptRegistry } from "../prompt-registry.js";
+import type { PromptRegistry } from "../prompts/prompt-registry.js";
 import { PromptResourceCoordinator } from "../prompt-resource-coordinator.js";
-import type { SkillMetadataService } from "../skill-metadata-service.js";
+import type { SkillMetadataService } from "../skills/skill-metadata-service.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
 import type { RuntimeErrorEvent } from "../runtime-contracts.js";
 

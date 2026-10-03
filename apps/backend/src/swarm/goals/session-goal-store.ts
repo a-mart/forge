@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import type { SessionGoalControlAction, TokenUsageTotals } from '@forge/protocol'
 import { appendJsonl, writeJsonFileAtomic } from '../../utils/atomic-files.js'
 import { getSessionGoalHistoryPath, getSessionGoalPath } from '../storage/data-paths.js'
-import { renameWithRetry } from '../retry-rename.js'
+import { renameWithRetry } from '../storage/retry-rename.js'
 import {
   MIN_BLOCKED_GOAL_TURNS,
   SessionGoalValidationError,

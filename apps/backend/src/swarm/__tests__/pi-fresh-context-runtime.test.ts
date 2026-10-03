@@ -17,7 +17,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { AgentRuntime } from "../agent-runtime.js";
+import { AgentRuntime } from "../runtime/pi-agent-runtime.js";
 import {
   createFreshContextHandler,
   FRESH_CONTEXT_BUSY_ERROR,

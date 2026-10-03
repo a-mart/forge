@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ConversationProjector } from "../conversation-projector.js";
+import type { ConversationProjector } from "../session/conversation-projector.js";
 import { SessionActiveToolsState } from "../session-active-tools.js";
 import { ManagerToolActivityState } from "../manager-tool-activity.js";
 import { SwarmEventCoordinator } from "../swarm-event-coordinator.js";

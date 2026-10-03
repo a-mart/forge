@@ -5,7 +5,7 @@ import {
   isWorkerTranscriptSidecarSessionFile,
 } from "../../session/worker-transcript-files.js";
 import { getWorkersDir, getWorkerSessionFilePath } from "../../data-paths.js";
-import { normalizePersistedSwarmModelDescriptor } from "../../model-presets.js";
+import { normalizePersistedSwarmModelDescriptor } from "../../catalog/model-presets.js";
 import { readFileHead } from "../../swarm-manager-utils.js";
 import type { AgentDescriptor, AgentsStoreFile } from "../../types.js";
 

@@ -21,7 +21,7 @@ import {
   type LoadExtensionsResult,
   type ToolDefinition
 } from "@earendil-works/pi-coding-agent";
-import { AgentRuntime } from "../../agent-runtime.js";
+import { AgentRuntime } from "../pi-agent-runtime.js";
 import { evaluateFreshContextSupport } from "../../context-mode.js";
 import { TaskNotesStore } from "../../task-notes-store.js";
 import { createTaskNotesTool } from "../../task-notes-tool.js";
@@ -33,7 +33,7 @@ import {
   findPiInitialModelInputCaptureInSessionEntries,
   PI_INITIAL_MODEL_INPUT_CAPTURE_ENTRY_TYPE,
 } from "../initial-model-input-capture.js";
-import { ensureCanonicalAuthFilePath } from "../../auth-storage-paths.js";
+import { ensureCanonicalAuthFilePath } from "../../storage/auth-storage-paths.js";
 import { prepareProviderImage, PROVIDER_UNDERSIZED_IMAGE_OMISSION } from "../image-utils.js";
 import type { CredentialPoolService } from "../../credential-pool.js";
 import type {
@@ -41,7 +41,7 @@ import type {
   OpenAIAuthBrokerRuntimeService,
 } from "../../openai-auth/openai-auth-broker-runtime-service.js";
 import type { ForgeExtensionHost } from "../../forge-extension-host.js";
-import { createPiModelRegistry } from "../../pi-model-registry.js";
+import { createPiModelRegistry } from "../../catalog/pi-model-registry.js";
 import { formatPiExtensionLoadError } from "../../pi-extension-migration-diagnostics.js";
 import type {
   RuntimeCreationOptions,
@@ -51,14 +51,14 @@ import type {
   SwarmAgentRuntime,
   SwarmRuntimeCallbacks
 } from "../../runtime-contracts.js";
-import { installOpenAICodexWebSocketDiagnostics } from "../../runtime-utils.js";
+import { installOpenAICodexWebSocketDiagnostics } from "../runtime-utils.js";
 import {
   buildProjectSafePiProjectSettingsStorage,
   filterUntrustedProjectPiExtensions,
   pathExistsSync,
   type ProjectExecutableTrustPlan
 } from "../../project-executable-trust.js";
-import { openSessionManagerWithSizeGuard } from "../../session-file-guard.js";
+import { openSessionManagerWithSizeGuard } from "../../session/session-file-guard.js";
 import { mapForgeReasoningToPiThinkingLevel } from "../../pi-thinking-level.js";
 import type { SkillMetadata } from "../../skills/skill-metadata-service.js";
 import type { SwarmToolHost } from "../../swarm-tool-host.js";

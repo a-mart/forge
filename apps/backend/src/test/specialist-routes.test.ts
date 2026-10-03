@@ -33,7 +33,7 @@ const specialistRegistryState = vi.hoisted(() => ({
   invalidateSpecialistCache: vi.fn(),
 }));
 
-vi.mock("../swarm/specialists/specialist-registry.js", () => ({
+vi.mock("../swarm/agents/specialists/specialist-registry.js", () => ({
   deleteProfileSpecialist: (...args: unknown[]) => specialistRegistryState.deleteProfileSpecialist(...args),
   deleteSharedSpecialist: (...args: unknown[]) => specialistRegistryState.deleteSharedSpecialist(...args),
   resolveRoster: (...args: unknown[]) => specialistRegistryState.resolveRoster(...args),
@@ -48,7 +48,7 @@ vi.mock("../swarm/specialists/specialist-registry.js", () => ({
 }));
 
 import { createSpecialistRoutes } from "../ws/http/routes/specialist-routes.js";
-import { modelCatalogService } from "../swarm/model-catalog-service.js";
+import { modelCatalogService } from "../swarm/catalog/model-catalog-service.js";
 import { parseXaiOAuthModelCatalog } from "../swarm/catalog/xai-oauth-model-discovery.js";
 
 interface TestServer {

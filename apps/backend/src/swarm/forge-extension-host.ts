@@ -10,7 +10,7 @@ import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
 import { ProjectWorkspaceResolver } from "./project-workspace-resolver.js";
 import { discoverForgeExtensions, listForgeProfileIdsOnDisk } from "./forge-extension-discovery.js";
 import { loadForgeExtensionModules } from "./forge-extension-loader.js";
-import type { RuntimeErrorEvent } from "./runtime-types.js";
+import type { RuntimeErrorEvent } from "./runtime-contracts.js";
 import type { AgentDescriptor } from "./types.js";
 import { createForgeBindingToken } from "./forge-extension-types.js";
 import type {

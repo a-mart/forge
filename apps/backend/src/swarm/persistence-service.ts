@@ -1,7 +1,7 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { getScheduleFilePath } from "../scheduler/schedule-storage.js";
-import { getConversationHistoryCacheFilePath } from "./conversation-history-cache.js";
+import { getConversationHistoryCacheFilePath } from "./session/conversation-history-cache.js";
 import {
   getGlobalForgeExtensionsDir,
   getProfileForgeExtensionsDir,

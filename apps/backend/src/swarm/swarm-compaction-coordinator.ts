@@ -2,7 +2,7 @@ import { isNonRunningAgentStatus } from "./agent-state-machine.js";
 import {
   combineCompactionCustomInstructions,
   type PinRegistry,
-} from "./message-pins.js";
+} from "./session/message-pins.js";
 import type { CaptureCascadeCoordinator } from "./capture-cascade-coordinator.js";
 import type { SessionGoalCoordinator } from "./goals/session-goal-coordinator.js";
 import type { SessionPlanCoordinator } from "./planning/session-plan-coordinator.js";

@@ -2,9 +2,9 @@ import { isNonRunningAgentStatus } from "./agent-state-machine.js";
 import {
   formatAgentCreatorContextMessage,
   gatherAgentCreatorContext,
-} from "./agent-creator-context.js";
+} from "./agents/agent-creator-context.js";
 import type { AgentMessageSendOptions } from "./agent-message-dispatcher.js";
-import type { PromptCategory, PromptRegistry } from "./prompt-registry.js";
+import type { PromptCategory, PromptRegistry } from "./prompts/prompt-registry.js";
 import type {
   AgentDescriptor,
   RequestedDeliveryMode,

@@ -23,8 +23,8 @@ const workspaceResolverMockState = vi.hoisted(() => ({
   failNextResolvePassive: undefined as Error | undefined,
 }))
 
-vi.mock('../memory-merge.js', async () => {
-  const actual = await vi.importActual<typeof import('../memory-merge.js')>('../memory-merge.js')
+vi.mock('../prompts/memory-merge.js', async () => {
+  const actual = await vi.importActual<typeof import('../prompts/memory-merge.js')>('../prompts/memory-merge.js')
   return {
     ...actual,
     executeLLMMerge: (...args: Parameters<typeof actual.executeLLMMerge>) =>
@@ -32,8 +32,8 @@ vi.mock('../memory-merge.js', async () => {
   }
 })
 
-vi.mock('../project-agent-analysis.js', async () => {
-  const actual = await vi.importActual<typeof import('../project-agent-analysis.js')>('../project-agent-analysis.js')
+vi.mock('../agents/project-agent-analysis.js', async () => {
+  const actual = await vi.importActual<typeof import('../agents/project-agent-analysis.js')>('../agents/project-agent-analysis.js')
   return {
     ...actual,
     analyzeSessionForPromotion: (...args: Parameters<typeof actual.analyzeSessionForPromotion>) =>

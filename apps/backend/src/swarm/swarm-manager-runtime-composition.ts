@@ -1,6 +1,6 @@
 import type { GenerationMeasurementRecordV1, GenerationThroughputEvent, SessionActiveToolsSnapshotEvent, SessionGoalSnapshotEvent, SpecialistTargetSpace } from "@forge/protocol";
 import type { VersioningMutationSink } from "../versioning/versioning-types.js";
-import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
+import { ensureCanonicalAuthFilePath } from "./storage/auth-storage-paths.js";
 import { BootReconciler } from "./agents/descriptor-store/boot-reconciler.js";
 import { ProfileBootReconciler } from "./agents/descriptor-store/profile-boot-reconciler.js";
 import { WorkerBootRecovery } from "./agents/descriptor-store/worker-boot-recovery.js";
@@ -16,7 +16,7 @@ import type { CodexMcpToolGateEvaluation } from "./codex-app-server/codex-mcp-to
 import type { ForgeExtensionHost } from "./forge-extension-host.js";
 import { SessionGoalCoordinator } from "./goals/session-goal-coordinator.js";
 import { loadOnboardingState } from "./onboarding-state.js";
-import { modelCatalogService } from "./model-catalog-service.js";
+import { modelCatalogService } from "./catalog/model-catalog-service.js";
 import type { SwarmObservabilityCoordinator } from "./swarm-observability-coordinator.js";
 import type { SessionPlanCoordinator } from "./planning/session-plan-coordinator.js";
 import { blockDismissedWorkGraphWorkers } from "./planning/work-graph-restart-recovery.js";
@@ -29,8 +29,8 @@ import type { SecretsEnvService } from "./secrets-env-service.js";
 import { type SessionLifecycleCoordinator, SessionLifecycleCoordinator as SessionLifecycleCoordinatorImpl } from "./session-lifecycle-coordinator.js";
 import type { SecureSessionCoordinatorPort } from "./secure-sessions/secure-session-lifecycle-port.js";
 import type { SessionPinCoordinator } from "./session-pin-coordinator.js";
-import type { SkillMetadata } from "./skill-metadata-service.js";
-import { cleanupOldSharedConfigPaths, migrateSharedConfigLayout, removeRetiredPlanningArtifacts } from "./shared-config-migration.js";
+import type { SkillMetadata } from "./skills/skill-metadata-service.js";
+import { cleanupOldSharedConfigPaths, migrateSharedConfigLayout, removeRetiredPlanningArtifacts } from "./storage/shared-config-migration.js";
 import { SwarmAgentLifecycleService } from "./swarm-agent-lifecycle-service.js";
 import { SwarmBootCoordinator } from "./swarm-boot-coordinator.js";
 import { SwarmCompactionCoordinator } from "./swarm-compaction-coordinator.js";

@@ -5,7 +5,7 @@ import {
   type MessageRouteProvenance,
   type MessageRouteTargetKind,
 } from "./message-router.js";
-import { normalizeArchetypeId } from "./prompt-registry.js";
+import { normalizeArchetypeId } from "./prompts/prompt-registry.js";
 import {
   cloneAssistantOutputTarget,
   cloneSessionTranscriptAssistantOutputTarget,

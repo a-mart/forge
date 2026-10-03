@@ -17,7 +17,7 @@ import {
   updateSessionMetaStats,
   updateSessionMetaWorker,
   writeSessionMeta
-} from "./session-manifest.js";
+} from "./session/session-manifest.js";
 import { normalizeOptionalAgentId } from "./swarm-manager-utils.js";
 import type { AgentDescriptor, AgentStatus } from "./types.js";
 

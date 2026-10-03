@@ -15,7 +15,7 @@ import type {
   VersioningMutationSink,
 } from "../versioning/versioning-types.js";
 import { isEnoentError } from "../utils/fs-errors.js";
-import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
+import { ensureCanonicalAuthFilePath } from "./storage/auth-storage-paths.js";
 import type { CaptureCascadeCoordinator } from "./capture-cascade-coordinator.js";
 import type {
   CompactionRuntimeSettingsProvider,
@@ -40,13 +40,13 @@ import type {
 } from "./knowledge-service.js";
 import type { KnowledgeV2SettingsService } from "./knowledge-v2-settings-service.js";
 import { complete, getModel, type Api, type Model } from "./pi/pi-ai-compat.js";
-import { createPiModelRegistry } from "./pi-model-registry.js";
+import { createPiModelRegistry } from "./catalog/pi-model-registry.js";
 import { extractMergedMemoryText } from "./prompts/memory-merge.js";
 import {
   normalizeArchetypeId,
   resolvePromptVariables,
   type PromptCategory,
-} from "./prompt-registry.js";
+} from "./prompts/prompt-registry.js";
 import { migrateLegacyProfileKnowledgeToReferenceDoc } from "./reference-docs.js";
 import type {
   CompactAgentContextOptions,

@@ -1,4 +1,4 @@
-import { modelCatalogService } from "../model-catalog-service.js";
+import { modelCatalogService } from "../catalog/model-catalog-service.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

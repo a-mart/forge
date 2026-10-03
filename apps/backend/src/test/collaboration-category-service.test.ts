@@ -7,7 +7,7 @@ import { createCollaborationDbHelpers } from "../collaboration/collab-db-helpers
 import { CollaborationCategoryService } from "../collaboration/category-service.js";
 import { DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES } from "../collaboration/specialist-selection.js";
 import { COLLABORATION_PROFILE_ID } from "../collaboration/constants.js";
-import { resolveModelDescriptorFromPreset } from "../swarm/model-presets.js";
+import { resolveModelDescriptorFromPreset } from "../swarm/catalog/model-presets.js";
 import { createTempConfig } from "../test-support/temp-config.js";
 
 const tempRoots: string[] = [];

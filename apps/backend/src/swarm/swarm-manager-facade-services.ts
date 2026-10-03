@@ -5,7 +5,7 @@ import type { SessionAttentionCoordinator } from "./session/session-attention-co
 import type { AssistantOutputRouter } from "./assistant-output-router.js";
 import type { CodexPluginDelegationCoordinator } from "./codex-app-server/codex-plugin-delegation-coordinator.js";
 import type { CollaborationStorageProvisioner } from "./collaboration-storage-provisioner.js";
-import type { ConversationProjector } from "./conversation-projector.js";
+import type { ConversationProjector } from "./session/conversation-projector.js";
 import type { ForgeExtensionHost } from "./forge-extension-host.js";
 import type { SessionGoalCoordinator } from "./goals/session-goal-coordinator.js";
 import type { KnowledgeMemoryCoordinator } from "./knowledge-memory-coordinator.js";

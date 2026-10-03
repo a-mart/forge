@@ -3,10 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { OpenRouterModelEntry } from "@forge/protocol";
-import { resolveModelDescriptorFromPreset } from "../model-presets.js";
-import { modelCatalogService } from "../model-catalog-service.js";
-import { writeModelOverrides } from "../model-overrides.js";
-import { writeOpenRouterModels } from "../openrouter-models.js";
+import { resolveModelDescriptorFromPreset } from "../catalog/model-presets.js";
+import { modelCatalogService } from "../catalog/model-catalog-service.js";
+import { writeModelOverrides } from "../catalog/model-overrides.js";
+import { writeOpenRouterModels } from "../catalog/openrouter-models.js";
 import { resolveExactManagerModelSelection } from "../catalog/manager-model-selection.js";
 import { parseXaiOAuthModelCatalog } from "../catalog/xai-oauth-model-discovery.js";
 

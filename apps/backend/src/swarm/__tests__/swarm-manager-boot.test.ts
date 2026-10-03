@@ -6,8 +6,8 @@ import { describe, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { AuthStorage, SessionManager } from '@earendil-works/pi-coding-agent'
 import { getCatalogModelKey, type ManagerProfile } from '@forge/protocol'
-import { getConversationHistoryCacheFilePath } from '../conversation-history-cache.js'
-import { resolveModelDescriptorFromPreset } from '../model-presets.js'
+import { getConversationHistoryCacheFilePath } from '../session/conversation-history-cache.js'
+import { resolveModelDescriptorFromPreset } from '../catalog/model-presets.js'
 import {
   getCommonKnowledgePath,
   getCortexConsolidationRunsPath,
@@ -38,8 +38,8 @@ const projectAgentAnalysisMockState = vi.hoisted(() => ({
   })),
 }))
 
-vi.mock('../memory-merge.js', async () => {
-  const actual = await vi.importActual<typeof import('../memory-merge.js')>('../memory-merge.js')
+vi.mock('../prompts/memory-merge.js', async () => {
+  const actual = await vi.importActual<typeof import('../prompts/memory-merge.js')>('../prompts/memory-merge.js')
   return {
     ...actual,
     executeLLMMerge: (...args: Parameters<typeof actual.executeLLMMerge>) =>
@@ -47,8 +47,8 @@ vi.mock('../memory-merge.js', async () => {
   }
 })
 
-vi.mock('../project-agent-analysis.js', async () => {
-  const actual = await vi.importActual<typeof import('../project-agent-analysis.js')>('../project-agent-analysis.js')
+vi.mock('../agents/project-agent-analysis.js', async () => {
+  const actual = await vi.importActual<typeof import('../agents/project-agent-analysis.js')>('../agents/project-agent-analysis.js')
   return {
     ...actual,
     analyzeSessionForPromotion: (...args: Parameters<typeof actual.analyzeSessionForPromotion>) =>
@@ -56,10 +56,10 @@ vi.mock('../project-agent-analysis.js', async () => {
   }
 })
 
-import { readSessionMeta, writeSessionMeta } from '../session-manifest.js'
+import { readSessionMeta, writeSessionMeta } from '../session/session-manifest.js'
 import { loadOnboardingState, saveOnboardingPreferences } from '../onboarding-state.js'
-import { AgentRuntime } from '../agent-runtime.js'
-import { modelCatalogService } from '../model-catalog-service.js'
+import { AgentRuntime } from '../runtime/pi-agent-runtime.js'
+import { modelCatalogService } from '../catalog/model-catalog-service.js'
 import { loadModelChangeContinuityState } from '../runtime/model-change-continuity.js'
 import { runSecureSessionMigrations } from '../secure-sessions/storage/secure-session-migrations.js'
 import { SecureSessionStore } from '../secure-sessions/storage/secure-session-store.js'

@@ -6,7 +6,7 @@ import {
   extractRole,
   hasMessageErrorMessageField,
   isAbortLikeErrorMessage,
-} from "../message-utils.js";
+} from "../session/message-utils.js";
 
 export interface CleanManagerAssistantFinalMessage {
   text: string;

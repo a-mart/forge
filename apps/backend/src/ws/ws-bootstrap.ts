@@ -12,7 +12,7 @@ import {
 } from "../stats/sidebar-perf-metrics.js";
 import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
-import type { UnreadTracker } from "../swarm/unread-tracker.js";
+import type { UnreadTracker } from "../swarm/session/unread-tracker.js";
 import {
   selectBootstrapConversationHistory as selectBootstrapConversationHistoryByPolicy
 } from "../swarm/session/history-policy.js";

@@ -2,7 +2,7 @@ import type {
   BrowserAutomationInputByOperation,
   BrowserAutomationOperation,
 } from "@forge/protocol";
-import { normalizeArchetypeId } from "../prompt-registry.js";
+import { normalizeArchetypeId } from "../prompts/prompt-registry.js";
 import type { AgentDescriptor } from "../types.js";
 import {
   type BrowserAutomationInvocationResult,

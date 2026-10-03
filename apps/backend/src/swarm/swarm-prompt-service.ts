@@ -14,13 +14,13 @@ import {
   getSessionContextReferenceDir,
   getSessionReferenceDir,
 } from "./data-paths.js";
-import { modelCatalogService } from "./model-catalog-service.js";
+import { modelCatalogService } from "./catalog/model-catalog-service.js";
 import { getOnboardingSnapshot } from "./onboarding-state.js";
 import {
   normalizeArchetypeId,
   resolvePromptVariables,
   type PromptRegistry,
-} from "./prompt-registry.js";
+} from "./prompts/prompt-registry.js";
 import {
   generateProjectAgentDirectoryBlock,
   getProjectAgentPublicName,
@@ -31,7 +31,7 @@ import {
   assertRepoProjectAgentSourceAvailable,
   resolveRepoProjectAgentSource
 } from "./agents/repo-project-agent-source.js";
-import { readProjectAgentRecord, type ProjectAgentOnDiskRecord } from "./project-agent-storage.js";
+import { readProjectAgentRecord, type ProjectAgentOnDiskRecord } from "./storage/project-agent-storage.js";
 import { listRepositoryReferenceDocs } from "./project-reference-docs.js";
 import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
 import { ProjectWorkspaceResolver } from "./project-workspace-resolver.js";
@@ -44,7 +44,7 @@ import {
   readPromptFile,
   readReferenceDoc,
 } from "./storage/asset-root-storage.js";
-import type { SkillMetadata, SkillMetadataService } from "./skill-metadata-service.js";
+import type { SkillMetadata, SkillMetadataService } from "./skills/skill-metadata-service.js";
 import type { AgentDescriptor, ManagerProfile, SwarmConfig } from "./types.js";
 import {
   buildSessionMemoryRuntimeView,

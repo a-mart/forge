@@ -18,14 +18,14 @@ import {
 } from "@forge/protocol";
 import { sanitizePathSegment as sanitizePersistedPathSegment } from "./data-paths.js";
 import { formatConversationReplyTargetMetadata } from "./conversation-reply.js";
-import { modelCatalogService } from "./model-catalog-service.js";
-import { assertSwarmModelIdNotRetired } from "./model-presets.js";
+import { modelCatalogService } from "./catalog/model-catalog-service.js";
+import { assertSwarmModelIdNotRetired } from "./catalog/model-presets.js";
 import {
   isConversationBinaryAttachment,
   isConversationImageAttachment,
   isConversationTextAttachment
-} from "./conversation-validators.js";
-import { classifyRuntimeCapacityError } from "./runtime-utils.js";
+} from "./session/conversation-validators.js";
+import { classifyRuntimeCapacityError } from "./runtime/runtime-utils.js";
 import {
   normalizeAgentStatus,
   type AgentStatusInput

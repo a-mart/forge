@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getSharedModelOverridesPath } from "../data-paths.js";
-import { ModelCatalogService } from "../model-catalog-service.js";
+import { ModelCatalogService } from "../catalog/model-catalog-service.js";
 import * as modelOverrides from "../catalog/model-overrides.js";
 import * as openRouterModels from "../catalog/openrouter-models.js";
-import { readModelOverrides, writeModelOverrides } from "../model-overrides.js";
+import { readModelOverrides, writeModelOverrides } from "../catalog/model-overrides.js";
 
 const tempDirs: string[] = [];
 

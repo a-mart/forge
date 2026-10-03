@@ -16,11 +16,11 @@ import {
   normalizeRuntimeError,
   normalizeRuntimeUserMessage,
   previewForLog
-} from "../runtime-utils.js";
+} from "./runtime-utils.js";
 import {
   trimConversationForEmergencyRecovery,
   type EmergencyContextTrimMessage
-} from "../emergency-context-trim.js";
+} from "./emergency-context-trim.js";
 import type { CredentialPoolService } from "../credential-pool.js";
 import type {
   OpenAIAuthBrokerLeaseHandle,
@@ -63,7 +63,7 @@ import {
   isFreshContextBusy,
   type FreshContextHandlerRequest,
 } from "./fresh-context-checkpoint.js";
-import { prepareProviderImage, PROVIDER_UNDERSIZED_IMAGE_OMISSION } from "../image-utils.js";
+import { prepareProviderImage, PROVIDER_UNDERSIZED_IMAGE_OMISSION } from "./image-utils.js";
 import {
   createDefaultCompactionRuntimeSettingsProvider,
   type CompactionRuntimeSettingsProvider,

@@ -7,7 +7,7 @@ import {
   normalizeThinkingLevelForModelDescriptor,
   parseSwarmModelPreset,
   resolveModelDescriptorFromPreset,
-} from "../swarm/model-presets.js";
+} from "../swarm/catalog/model-presets.js";
 import type { AgentModelDescriptor, SwarmReasoningLevel } from "../swarm/types.js";
 import type { CollaborationDbHelpers } from "./collab-db-helpers.js";
 import {

@@ -7,7 +7,7 @@ import {
   buildResumePrompt,
   computeGuardThresholds,
   isAlreadyCompactedError
-} from "../agent-runtime.js";
+} from "../runtime/pi-agent-runtime.js";
 import {
   COMPACTION_GUARD_TEST_TIMEOUT_MS,
   createCompactionGuardTestSettingsProvider,
@@ -28,7 +28,7 @@ vi.mock("node:fs/promises", () => ({
   rm: vi.fn(() => Promise.resolve())
 }));
 
-vi.mock("../image-utils.js", () => ({
+vi.mock("../runtime/image-utils.js", () => ({
   prepareProviderImage: (...args: any[]) => prepareProviderImageMock(...args),
   PROVIDER_UNDERSIZED_IMAGE_OMISSION: "(image omitted: below provider 8px minimum)"
 }));

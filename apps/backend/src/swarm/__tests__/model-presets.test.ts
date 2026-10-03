@@ -14,10 +14,10 @@ import {
   parseSwarmModelPreset,
   resolveModelDescriptorFromPreset,
   resolvePersistedModelDescriptorFromPreset,
-} from "../model-presets.js";
-import { modelCatalogService } from "../model-catalog-service.js";
+} from "../catalog/model-presets.js";
+import { modelCatalogService } from "../catalog/model-catalog-service.js";
 import { mapLegacyClaudeSdkModel } from "../catalog/legacy-claude-sdk-model.js";
-import { writeOpenRouterModels } from "../openrouter-models.js";
+import { writeOpenRouterModels } from "../catalog/openrouter-models.js";
 
 const tempDirs: string[] = [];
 

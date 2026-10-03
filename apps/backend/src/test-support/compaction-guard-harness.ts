@@ -1,5 +1,5 @@
 import type { AgentDescriptor } from "../swarm/types.js";
-import { AgentRuntime, buildHandoffFilePath, buildHandoffPrompt, buildResumePrompt } from "../swarm/agent-runtime.js";
+import { AgentRuntime, buildHandoffFilePath, buildHandoffPrompt, buildResumePrompt } from "../swarm/runtime/pi-agent-runtime.js";
 import {
   createStaticCompactionRuntimeSettingsProvider,
   type CompactionRuntimeSettingsProvider,

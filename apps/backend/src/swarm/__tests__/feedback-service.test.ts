@@ -5,7 +5,7 @@ import type { FeedbackEvent, FeedbackSubmitEvent, SessionMeta } from "@forge/pro
 import { describe, expect, it } from "vitest";
 import { getSessionFeedbackPath } from "../data-paths.js";
 import { FeedbackService } from "../feedback-service.js";
-import { readSessionMeta, writeSessionMeta } from "../session-manifest.js";
+import { readSessionMeta, writeSessionMeta } from "../session/session-manifest.js";
 
 describe("feedback-service", () => {
   it("submits feedback and reads it back", async () => {

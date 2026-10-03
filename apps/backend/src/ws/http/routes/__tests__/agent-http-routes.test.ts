@@ -8,7 +8,7 @@ import {
   bootWsServerTestManager as bootWithDefaultManager,
   makeWsServerTempConfig as makeTempConfig,
 } from '../../../../test-support/ws-integration-harness.js'
-import { readSessionMeta } from '../../../../swarm/session-manifest.js'
+import { readSessionMeta } from '../../../../swarm/session/session-manifest.js'
 import { SwarmWebSocketServer } from '../../../server.js'
 
 async function createRepoProjectAgentDefinition(rootDir: string, options: {

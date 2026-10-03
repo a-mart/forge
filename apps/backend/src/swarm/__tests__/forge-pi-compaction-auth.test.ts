@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   createPiModelRegistry: vi.fn(),
 }));
 
-vi.mock("../pi-model-registry.js", () => ({
+vi.mock("../catalog/pi-model-registry.js", () => ({
   createPiModelRegistry: mocks.createPiModelRegistry,
 }));
 

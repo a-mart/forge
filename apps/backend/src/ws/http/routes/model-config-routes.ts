@@ -7,13 +7,13 @@ import {
   type OpenRouterModelEntry,
   type ServerEvent,
 } from "@forge/protocol";
-import { modelCatalogService } from "../../../swarm/model-catalog-service.js";
+import { modelCatalogService } from "../../../swarm/catalog/model-catalog-service.js";
 import {
   readModelOverrides,
   resetAllModelOverrides,
   resetModelOverride,
   setModelOverride,
-} from "../../../swarm/model-overrides.js";
+} from "../../../swarm/catalog/model-overrides.js";
 import {
   getManagedModelProviderCredentialAvailability,
   getManagedModelProviderCredentialSummaries,

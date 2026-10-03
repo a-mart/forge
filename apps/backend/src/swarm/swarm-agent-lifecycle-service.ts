@@ -8,8 +8,8 @@ import type {
   TierConfig,
 } from "@forge/protocol";
 import { getSessionFilePath, getWorkerSessionFilePath } from "./data-paths.js";
-import { normalizeThinkingLevelForModelDescriptor, resolveModelDescriptorFromPreset, inferProviderFromModelId, parseSwarmModelPreset, parseSwarmReasoningLevel, assertSwarmModelIdNotRetired } from "./model-presets.js";
-import { normalizeArchetypeId } from "./prompt-registry.js";
+import { normalizeThinkingLevelForModelDescriptor, resolveModelDescriptorFromPreset, inferProviderFromModelId, parseSwarmModelPreset, parseSwarmReasoningLevel, assertSwarmModelIdNotRetired } from "./catalog/model-presets.js";
+import { normalizeArchetypeId } from "./prompts/prompt-registry.js";
 import {
   DEFAULT_RUNTIME_SHUTDOWN_TIMEOUT_MS,
   type RuntimeAcquisitionRequirements,
@@ -69,7 +69,7 @@ import {
   resolveTierConfigs,
   DEFAULT_TIER_CONFIGS,
   EFFORT_TIER_ORDER,
-} from "./specialists/specialist-registry.js";
+} from "./agents/specialists/specialist-registry.js";
 import {
   assertForgeRuntimeEligibleDescriptor,
   interruptExternalThreadWorkerDescriptor,

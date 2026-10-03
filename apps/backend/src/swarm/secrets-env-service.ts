@@ -1,7 +1,7 @@
 import { access, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { AuthStorage, type AuthCredential } from "@earendil-works/pi-coding-agent";
-import { copyFileIfMissing } from "./copy-file-if-missing.js";
+import { copyFileIfMissing } from "./storage/copy-file-if-missing.js";
 import { CredentialPoolService } from "./credential-pool.js";
 import {
   LEGACY_OPENAI_AUTH_BROKER_TOKEN_SECRET_KEY,
@@ -9,7 +9,7 @@ import {
   OpenAIAuthSettingsService,
 } from "./openai-auth/openai-auth-settings-service.js";
 import { OpenAIAuthBrokerRuntimeService } from "./openai-auth/openai-auth-broker-runtime-service.js";
-import { normalizeEnvVarName, type ParsedSkillEnvDeclaration } from "./skill-frontmatter.js";
+import { normalizeEnvVarName, type ParsedSkillEnvDeclaration } from "./skills/skill-frontmatter.js";
 import { writeJsonFileAtomic } from "../utils/atomic-files.js";
 import { isEnoentError } from "../utils/fs-errors.js";
 import type {

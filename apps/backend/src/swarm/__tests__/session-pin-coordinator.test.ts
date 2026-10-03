@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getSessionDir } from "../data-paths.js";
-import { loadPins, savePins, type PinRegistry } from "../message-pins.js";
+import { loadPins, savePins, type PinRegistry } from "../session/message-pins.js";
 import {
   SessionPinCoordinator,
   type SessionPinCoordinatorHost,

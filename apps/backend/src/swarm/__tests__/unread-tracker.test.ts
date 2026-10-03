@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { getProfileUnreadStatePath } from "../data-paths.js";
-import { UnreadTracker } from "../unread-tracker.js";
+import { UnreadTracker } from "../session/unread-tracker.js";
 
 interface TrackerHarness {
   rootDir: string;

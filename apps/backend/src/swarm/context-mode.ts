@@ -8,7 +8,7 @@ import {
   type ContextMode,
   type SessionContextModeSnapshot,
 } from "@forge/protocol";
-import { normalizeArchetypeId } from "./prompt-registry.js";
+import { normalizeArchetypeId } from "./prompts/prompt-registry.js";
 import type { SwarmAgentRuntime } from "./runtime-contracts.js";
 import type { AgentDescriptor, ManagerProfile } from "./types.js";
 

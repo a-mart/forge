@@ -10,7 +10,7 @@ import {
   MAX_RECENT_SESSION_COUNT,
   RECENT_SESSIONS_SECTION_CHAR_BUDGET,
   scanRecentSessions
-} from "../agent-creator-context.js";
+} from "../agents/agent-creator-context.js";
 import type { AgentDescriptor } from "../types.js";
 
 function makeManagerDescriptor(

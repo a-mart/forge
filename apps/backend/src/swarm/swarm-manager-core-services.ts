@@ -1,4 +1,4 @@
-import { ConversationProjector } from "./conversation-projector.js";
+import { ConversationProjector } from "./session/conversation-projector.js";
 import {
   createDescriptorStoreAdapter,
   type DescriptorStoreAdapter,

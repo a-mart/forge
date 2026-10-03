@@ -4,7 +4,7 @@ import type {
   SessionGoalSnapshotEvent,
 } from "@forge/protocol";
 import { isNonRunningAgentStatus } from "../agent-state-machine.js";
-import { normalizeArchetypeId } from "../prompt-registry.js";
+import { normalizeArchetypeId } from "../prompts/prompt-registry.js";
 import { emptyTokenUsage, scanSessionTokenUsage } from "../session/session-token-usage.js";
 import type { SwarmToolSideEffectEvent } from "../swarm-tool-host.js";
 import type { AgentDescriptor, SendMessageReceipt } from "../types.js";

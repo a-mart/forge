@@ -4,13 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getModels } from "../swarm/pi/pi-ai-compat.js";
 import type { SwarmConfig } from "../swarm/types.js";
 import { getOpenRouterModelsPath, getSharedModelOverridesPath } from "../swarm/data-paths.js";
-import { getPiModelsProjectionPath } from "../swarm/model-catalog-projection.js";
-import * as modelOverrides from "../swarm/model-overrides.js";
+import { getPiModelsProjectionPath } from "../swarm/catalog/model-catalog-projection.js";
+import * as modelOverrides from "../swarm/catalog/model-overrides.js";
 import {
   addOpenRouterModel,
   removeOpenRouterModel,
   writeOpenRouterModels,
-} from "../swarm/openrouter-models.js";
+} from "../swarm/catalog/openrouter-models.js";
 import { resetLiveOpenRouterModelsCacheForTests } from "../ws/http/routes/openrouter-routes.js";
 import { SwarmWebSocketServer } from "../ws/server.js";
 import { TestSwarmManager, bootWithDefaultManager, createTempConfig, getAvailablePort } from "../test-support/index.js";

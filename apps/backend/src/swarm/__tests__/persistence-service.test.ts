@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { makeTempConfig } from "../../test-support/index.js";
 import { PersistenceService } from "../persistence-service.js";
-import { getConversationHistoryCacheFilePath } from "../conversation-history-cache.js";
+import { getConversationHistoryCacheFilePath } from "../session/conversation-history-cache.js";
 import { getSharedKnowledgeDir, getLegacySessionsDirPath } from "../data-paths.js";
 import { extractDescriptorAgentId, validateAgentDescriptor } from "../swarm-manager-utils.js";
 import type { AgentDescriptor, ManagerProfile, SwarmConfig } from "../types.js";

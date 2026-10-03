@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { AgentRuntime } from '../swarm/agent-runtime.js'
-import { readSessionMeta } from '../swarm/session-manifest.js'
+import { AgentRuntime } from '../swarm/runtime/pi-agent-runtime.js'
+import { readSessionMeta } from '../swarm/session/session-manifest.js'
 import { bootWithDefaultManager, createTempConfig, TestSwarmManager, type TempConfigHandle } from '../test-support/index.js'
 import type { AgentContextUsage, AgentStatus, SwarmConfig } from '../swarm/types.js'
 

@@ -3,7 +3,7 @@ import {
   analyzeSessionForPromotion,
   extractTranscriptSummary,
   parseRecommendations,
-} from '../project-agent-analysis.js'
+} from '../agents/project-agent-analysis.js'
 import type { ConversationEntryEvent } from '../types.js'
 
 function makeAssistantMessage(text: string) {

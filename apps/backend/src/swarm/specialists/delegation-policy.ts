@@ -4,7 +4,7 @@ import {
   type EffortTier,
 } from "@forge/protocol";
 import type { SpawnAgentInput } from "../types.js";
-import { resolveLegacySpecialistRewrite } from "./specialist-registry.js";
+import { resolveLegacySpecialistRewrite } from "../agents/specialists/specialist-registry.js";
 
 export type WorkerBehaviorMode = DelegationBehaviorMode;
 

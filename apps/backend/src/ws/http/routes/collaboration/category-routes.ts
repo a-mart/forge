@@ -1,5 +1,5 @@
 import type { CollaborationCategory, CollaborationSkillSelectionInput } from "@forge/protocol";
-import { parseSwarmReasoningLevel } from "../../../../swarm/model-presets.js";
+import { parseSwarmReasoningLevel } from "../../../../swarm/catalog/model-presets.js";
 import type { CollaborationReadinessRequestService } from "../../../../collaboration/readiness-service.js";
 import type { HttpRoute } from "../../shared/http-route.js";
 import { applyCorsHeaders, readJsonBody, sendJson } from "../../../http-utils.js";

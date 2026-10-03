@@ -14,8 +14,8 @@ const projectAgentAnalysisMockState = vi.hoisted(() => ({
   })),
 }))
 
-vi.mock('../swarm/memory-merge.js', async () => {
-  const actual = await vi.importActual<typeof import('../swarm/memory-merge.js')>('../swarm/memory-merge.js')
+vi.mock('../swarm/prompts/memory-merge.js', async () => {
+  const actual = await vi.importActual<typeof import('../swarm/prompts/memory-merge.js')>('../swarm/prompts/memory-merge.js')
   return {
     ...actual,
     executeLLMMerge: (...args: Parameters<typeof actual.executeLLMMerge>) =>
@@ -23,8 +23,8 @@ vi.mock('../swarm/memory-merge.js', async () => {
   }
 })
 
-vi.mock('../swarm/project-agent-analysis.js', async () => {
-  const actual = await vi.importActual<typeof import('../swarm/project-agent-analysis.js')>('../swarm/project-agent-analysis.js')
+vi.mock('../swarm/agents/project-agent-analysis.js', async () => {
+  const actual = await vi.importActual<typeof import('../swarm/agents/project-agent-analysis.js')>('../swarm/agents/project-agent-analysis.js')
   return {
     ...actual,
     analyzeSessionForPromotion: (...args: Parameters<typeof actual.analyzeSessionForPromotion>) =>

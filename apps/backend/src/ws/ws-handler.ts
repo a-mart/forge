@@ -32,11 +32,11 @@ import { FeedbackService } from "../swarm/feedback-service.js";
 import {
   getCachedSharedSpecialistHandles,
   resolveSharedRoster,
-} from "../swarm/specialists/specialist-registry.js";
+} from "../swarm/agents/specialists/specialist-registry.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { BrowserAutomationService, isEligibleLocalBuilderManager } from "../swarm/browser-automation/index.js";
 import { isCollabSession } from "../swarm/swarm-manager-utils.js";
-import type { UnreadTracker } from "../swarm/unread-tracker.js";
+import type { UnreadTracker } from "../swarm/session/unread-tracker.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
 import { WebSocketServer, type RawData, WebSocket } from "ws";
 import { evaluateApiProxyMemberAccess, evaluateBuilderCommandAccess, isInventoryCommandAllowed } from "./builder-command-access.js";

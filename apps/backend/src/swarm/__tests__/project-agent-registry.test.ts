@@ -10,7 +10,7 @@ import { ProjectAgentSettingsSnapshotReader } from "../agents/project-agent-sett
 import { findProjectAgentByHandle, listProjectAgents } from "../project-agents.js";
 import { getProjectAgentDir } from "../data-paths.js";
 import { writeProjectAgentReferenceDoc } from "../reference-docs.js";
-import { writeProjectAgentRecord } from "../project-agent-storage.js";
+import { writeProjectAgentRecord } from "../storage/project-agent-storage.js";
 import type { AgentDescriptor, ManagerProfile } from "../types.js";
 import { createWorkspaceKey } from "../project-workspace-resolver.js";
 import { ProjectResourceSettingsStore } from "../project-resource-settings.js";

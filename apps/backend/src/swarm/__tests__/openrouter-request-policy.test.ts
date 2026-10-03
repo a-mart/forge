@@ -10,8 +10,8 @@ import { AuthStorage, createAgentSession, DefaultResourceLoader, ModelRegistry, 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel, streamSimple } from "../pi/pi-ai-compat.js";
 import { installOpenRouterRequestPolicy, withOpenRouterRequestPolicy } from "../runtime/pi/openrouter-request-policy.js";
-import { modelCatalogService } from "../model-catalog-service.js";
-import { writeOpenRouterModels } from "../openrouter-models.js";
+import { modelCatalogService } from "../catalog/model-catalog-service.js";
+import { writeOpenRouterModels } from "../catalog/openrouter-models.js";
 import { getOpenRouterModelsPath } from "../data-paths.js";
 import { PiGenerationTelemetryAdapter } from "../runtime/generation-telemetry.js";
 import { shouldRetrySpecialistSpawnWithFallback } from "../swarm-manager-utils.js";

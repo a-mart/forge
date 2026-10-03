@@ -9,7 +9,7 @@ import {
 
 import { writeJsonFileAtomic } from "../../utils/atomic-files.js";
 import { isEnoentError } from "../../utils/fs-errors.js";
-import { renameWithRetry } from "../retry-rename.js";
+import { renameWithRetry } from "../storage/retry-rename.js";
 import { getSessionAttentionStorePath } from "../storage/data-paths.js";
 
 const STORE_VERSION = 1;

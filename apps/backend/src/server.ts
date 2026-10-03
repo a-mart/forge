@@ -23,8 +23,8 @@ import { isBuilderRuntimeTarget, isCollaborationServerRuntimeTarget } from "./ru
 import { FeedbackService } from "./swarm/feedback-service.js";
 import { SwarmManager } from "./swarm/swarm-manager.js";
 import { BrowserAutomationService } from "./swarm/browser-automation/index.js";
-import { seedBuiltins } from "./swarm/specialists/specialist-registry.js";
-import { UnreadTracker } from "./swarm/unread-tracker.js";
+import { seedBuiltins } from "./swarm/agents/specialists/specialist-registry.js";
+import { UnreadTracker } from "./swarm/session/unread-tracker.js";
 import type { AgentDescriptor, SessionLifecycleEvent, SwarmConfig } from "./swarm/types.js";
 import { readTerminalRuntimeConfig } from "./terminal/terminal-config.js";
 import { TerminalPersistence } from "./terminal/terminal-persistence.js";

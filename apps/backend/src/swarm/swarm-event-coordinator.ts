@@ -9,7 +9,7 @@ import type {
 } from "@forge/protocol";
 import type { SwarmAgentRuntime } from "./runtime-contracts.js";
 import { isNonRunningAgentStatus } from "./agent-state-machine.js";
-import type { ConversationProjector } from "./conversation-projector.js";
+import type { ConversationProjector } from "./session/conversation-projector.js";
 import type { SessionActiveToolsState } from "./session-active-tools.js";
 import type { ManagerToolActivityState } from "./manager-tool-activity.js";
 import type { SwarmObservabilityCoordinator } from "./swarm-observability-coordinator.js";

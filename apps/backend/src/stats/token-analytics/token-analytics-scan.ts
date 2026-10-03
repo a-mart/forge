@@ -7,8 +7,8 @@ import {
   getSessionsDir,
   getWorkersDir,
 } from "../../swarm/data-paths.js";
-import { resolveRoster } from "../../swarm/specialists/specialist-registry.js";
-import { modelCatalogService } from "../../swarm/model-catalog-service.js";
+import { resolveRoster } from "../../swarm/agents/specialists/specialist-registry.js";
+import { modelCatalogService } from "../../swarm/catalog/model-catalog-service.js";
 import { parseCursorSdkUsageCustomEntry } from "../../utils/cursor-sdk-usage-records.js";
 import {
   extractReasoningLevel,

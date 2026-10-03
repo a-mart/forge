@@ -5,8 +5,8 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { SessionManager } from '@earendil-works/pi-coding-agent'
 import { getCatalogModelKey, getOpenRouterModelOverrideKey } from '@forge/protocol'
-import { addOpenRouterModel } from '../openrouter-models.js'
-import { setModelOverride } from '../model-overrides.js'
+import { addOpenRouterModel } from '../catalog/openrouter-models.js'
+import { setModelOverride } from '../catalog/model-overrides.js'
 import {
   getSessionDir,
   getSessionGoalHistoryPath,
@@ -15,10 +15,10 @@ import {
   getSessionPlanUsagePath,
   getLegacySessionsDirPath,
 } from '../data-paths.js'
-import { loadPins, savePins } from '../message-pins.js'
-import { resolveModelDescriptorFromPreset } from '../model-presets.js'
-import { readSessionMeta } from '../session-manifest.js'
-import { modelCatalogService } from '../model-catalog-service.js'
+import { loadPins, savePins } from '../session/message-pins.js'
+import { resolveModelDescriptorFromPreset } from '../catalog/model-presets.js'
+import { readSessionMeta } from '../session/session-manifest.js'
+import { modelCatalogService } from '../catalog/model-catalog-service.js'
 import { loadModelChangeContinuityState } from '../runtime/model-change-continuity.js'
 import { ProjectResourceSettingsStore } from '../project-resource-settings.js'
 import { ProjectWorkspaceResolver } from '../project-workspace-resolver.js'

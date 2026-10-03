@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { openSessionManagerWithSizeGuard } from "../../session-file-guard.js";
+import { openSessionManagerWithSizeGuard } from "../../session/session-file-guard.js";
 import { transitionAgentStatus } from "../../agent-state-machine.js";
 import { normalizeRuntimeError, normalizeRuntimeUserMessage } from "../runtime-utils.js";
 import type {

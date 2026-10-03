@@ -11,7 +11,7 @@ import {
   type TempConfigHandle,
 } from "../../test-support/index.js";
 import { SwarmManager } from "../swarm-manager.js";
-import { generatePiProjection } from "../model-catalog-projection.js";
+import { generatePiProjection } from "../catalog/model-catalog-projection.js";
 import type { RuntimeCreationOptions, SwarmAgentRuntime } from "../runtime-contracts.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
 import { getLegacySessionsDirPath } from '../data-paths.js';
@@ -20,8 +20,8 @@ const memoryMergeMockState = vi.hoisted(() => ({
   executeLLMMerge: vi.fn(),
 }));
 
-vi.mock("../memory-merge.js", async () => {
-  const actual = await vi.importActual<typeof import("../memory-merge.js")>("../memory-merge.js");
+vi.mock("../prompts/memory-merge.js", async () => {
+  const actual = await vi.importActual<typeof import("../prompts/memory-merge.js")>("../prompts/memory-merge.js");
   return {
     ...actual,
     executeLLMMerge: (...args: Parameters<typeof actual.executeLLMMerge>) =>

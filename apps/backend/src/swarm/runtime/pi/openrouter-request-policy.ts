@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { OpenRouterRoutingPolicy } from "@forge/protocol";
-import { modelCatalogService } from "../../model-catalog-service.js";
+import { modelCatalogService } from "../../catalog/model-catalog-service.js";
 
 type StreamFn = AgentSession["agent"]["streamFn"];
 type RoutingResolver = (modelId: string) => OpenRouterRoutingPolicy;

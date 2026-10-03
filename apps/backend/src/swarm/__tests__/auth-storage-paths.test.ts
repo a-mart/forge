@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ensureCanonicalAuthFilePath } from "../auth-storage-paths.js";
+import { ensureCanonicalAuthFilePath } from "../storage/auth-storage-paths.js";
 import type { SwarmConfig } from "../types.js";
 
 function createConfig(root: string): SwarmConfig {

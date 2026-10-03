@@ -6,7 +6,7 @@ import {
   savePins,
   togglePin,
   type PinRegistry,
-} from "./message-pins.js";
+} from "./session/message-pins.js";
 import type { SetPinnedContentOptions } from "./runtime-contracts.js";
 import { collectConversationMessageIdsFromSessionFile } from "./session/conversation-timeline.js";
 import type {

@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { rm } from "node:fs/promises";
 import { getCatalogModelKey, getOpenRouterModelOverrideKey } from "@forge/protocol";
-import { modelCatalogService } from "../swarm/model-catalog-service.js";
-import { addOpenRouterModel } from "../swarm/openrouter-models.js";
-import { readModelOverrides, writeModelOverrides } from "../swarm/model-overrides.js";
+import { modelCatalogService } from "../swarm/catalog/model-catalog-service.js";
+import { addOpenRouterModel } from "../swarm/catalog/openrouter-models.js";
+import { readModelOverrides, writeModelOverrides } from "../swarm/catalog/model-overrides.js";
 import { createModelConfigRoutes } from "../ws/http/routes/model-config-routes.js";
 import { createTempConfig } from "../test-support/index.js";
 

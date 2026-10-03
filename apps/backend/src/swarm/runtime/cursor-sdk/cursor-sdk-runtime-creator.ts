@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ObservabilityFacade } from "../../../observability/observability-types.js";
 import type { ForgeExtensionHost } from "../../forge-extension-host.js";
-import { modelCatalogService } from "../../model-catalog-service.js";
+import { modelCatalogService } from "../../catalog/model-catalog-service.js";
 import type { ProjectExecutableTrustPlan } from "../../project-executable-trust.js";
 import { resolveCursorSdkApiKey } from "../../secrets-env-service.js";
 import type {

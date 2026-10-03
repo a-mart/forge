@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   extractMergedMemoryText,
   stripWrappingCodeFence,
-} from '../swarm/memory-merge.js'
+} from '../swarm/prompts/memory-merge.js'
 
 function createAssistantMessage(text: string): AssistantMessage {
   return {

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { getSessionDir, getSessionFilePath } from "./data-paths.js";
-import { normalizePersistedSwarmModelDescriptor } from "./model-presets.js";
+import { normalizePersistedSwarmModelDescriptor } from "./catalog/model-presets.js";
 import {
   parseSessionNumberFromAgentId,
   sanitizeCliSessionMetadata,

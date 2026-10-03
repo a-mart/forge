@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { createCatalogRequestBehaviorExtensionFactory } from "../model-catalog-request-behaviors.js";
-import { modelCatalogService } from "../model-catalog-service.js";
+import { createCatalogRequestBehaviorExtensionFactory } from "../catalog/model-catalog-request-behaviors.js";
+import { modelCatalogService } from "../catalog/model-catalog-service.js";
 import { parseXaiOAuthModelCatalog } from "../catalog/xai-oauth-model-discovery.js";
 
 function installExtension(webSearchEnabled: boolean) {

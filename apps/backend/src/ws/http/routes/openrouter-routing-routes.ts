@@ -1,5 +1,5 @@
 import { parseOpenRouterRoutingConfig, resolveOpenRouterRouting, type OpenRouterModelsFile, type OpenRouterRoutingSettingsResponse, type ServerEvent } from "@forge/protocol";
-import { getOpenRouterRoutingRevision, mutateOpenRouterModelsFile, readOpenRouterModels } from "../../../swarm/openrouter-models.js";
+import { getOpenRouterRoutingRevision, mutateOpenRouterModelsFile, readOpenRouterModels } from "../../../swarm/catalog/openrouter-models.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import { applyCorsHeaders, decodePathSegment, readJsonBody, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";

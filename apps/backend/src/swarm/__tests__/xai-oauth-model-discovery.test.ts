@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getSharedAuthFilePath } from "../data-paths.js";
-import { buildPiModelsProjection } from "../model-catalog-projection.js";
-import { modelCatalogService } from "../model-catalog-service.js";
-import { normalizePersistedSwarmModelDescriptor } from "../model-presets.js";
+import { buildPiModelsProjection } from "../catalog/model-catalog-projection.js";
+import { modelCatalogService } from "../catalog/model-catalog-service.js";
+import { normalizePersistedSwarmModelDescriptor } from "../catalog/model-presets.js";
 import {
   parseXaiOAuthModelCatalog,
   refreshXaiOAuthModelDiscovery,

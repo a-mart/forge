@@ -75,7 +75,7 @@ import type {
   AcceptWorkGraphNodeInput,
 } from "./planning/accept-work-graph-node-tool.js";
 import type { UpdateWorkGraphInput } from "./planning/work-graph-state.js";
-import type { ProjectAgentRecommendations } from "./project-agent-analysis.js";
+import type { ProjectAgentRecommendations } from "./agents/project-agent-analysis.js";
 import type { ProjectAgentCoordinator } from "./project-agent-coordinator.js";
 import type { ProjectExecutableTrustCoordinator } from "./project-executable-trust-coordinator.js";
 import type { AssistantOutputTarget } from "./runtime/manager-assistant-output-tracker.js";

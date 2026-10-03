@@ -1,7 +1,7 @@
 import type { AgentStatus } from "./agent-state-machine.js";
 import type { RuntimeErrorEvent, RuntimeSessionEvent } from "./runtime-contracts.js";
 import type { AgentDescriptor, ConversationMessageEvent } from "./types.js";
-import { extractMessageText } from "./message-utils.js";
+import { extractMessageText } from "./session/message-utils.js";
 import {
   appendTurnLedgerRecord,
   type TurnLedgerSessionTarget,

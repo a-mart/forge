@@ -4,7 +4,7 @@ import type {
   OpenAIAuthBrokerRuntimeService,
 } from "../../openai-auth/openai-auth-broker-runtime-service.js";
 import type { RuntimeErrorEvent, RuntimeUserMessage } from "../../runtime-contracts.js";
-import { classifyRuntimeCapacityError, normalizeRuntimeError } from "../../runtime-utils.js";
+import { classifyRuntimeCapacityError, normalizeRuntimeError } from "../runtime-utils.js";
 
 type RuntimeAuthStorage = {
   get?: (key: string) => AuthCredential | undefined;

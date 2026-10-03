@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ConversationProjector } from "../conversation-projector.js";
+import { ConversationProjector } from "../session/conversation-projector.js";
 import { SessionDescriptorFactory } from "../session-descriptor-factory.js";
 import { SessionPinCoordinator } from "../session-pin-coordinator.js";
 import {

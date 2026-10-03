@@ -7,7 +7,7 @@ import {
   getProjectAgentPromptPath,
   getProjectAgentReferenceDir
 } from "../data-paths.js";
-import { readProjectAgentRecord } from "../project-agent-storage.js";
+import { readProjectAgentRecord } from "../storage/project-agent-storage.js";
 import { SwarmManager } from "../swarm-manager.js";
 import type { RuntimeUserMessage, SwarmAgentRuntime } from "../runtime-contracts.js";
 import type { AgentContextUsage, AgentDescriptor, RequestedDeliveryMode, SendMessageReceipt, SwarmConfig } from "../types.js";

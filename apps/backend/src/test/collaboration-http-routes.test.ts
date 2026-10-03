@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getOrCreateCollaborationBetterAuthService, clearCollaborationBetterAuthService } from "../collaboration/auth/better-auth-service.js";
-import { resolveModelDescriptorFromPreset } from "../swarm/model-presets.js";
+import { resolveModelDescriptorFromPreset } from "../swarm/catalog/model-presets.js";
 import { closeCollaborationAuthDb } from "../collaboration/auth/collaboration-db.js";
 import { createCollaborationDbHelpers } from "../collaboration/collab-db-helpers.js";
 import { startServer, type StartedServer } from "../server.js";

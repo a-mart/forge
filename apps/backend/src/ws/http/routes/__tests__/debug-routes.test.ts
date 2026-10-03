@@ -5,7 +5,7 @@ import {
   makeP0HttpRouteTempConfig as makeTempConfig,
   parseP0HttpRouteJsonResponse as parseJsonResponse,
 } from '../../../../test-support/ws-integration-harness.js'
-import { resetOpenAICodexWebSocketConstructorDiagnosticsForTest } from '../../../../swarm/runtime-utils.js'
+import { resetOpenAICodexWebSocketConstructorDiagnosticsForTest } from '../../../../swarm/runtime/runtime-utils.js'
 import { SwarmWebSocketServer } from '../../../server.js'
 
 afterEach(() => {

@@ -15,7 +15,7 @@ import {
   getSharedDir,
   getWorkerSessionFilePath
 } from "./data-paths.js";
-import { rebuildSessionMeta } from "./session-manifest.js";
+import { rebuildSessionMeta } from "./session/session-manifest.js";
 import { isEnoentError, isErrnoCode } from "../utils/fs-errors.js";
 import { writeFileAtomic, writeJsonFileAtomic } from "../utils/atomic-files.js";
 import { errorToMessage, isRecord, normalizeOptionalString } from "../utils/normalize.js";

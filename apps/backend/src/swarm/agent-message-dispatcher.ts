@@ -17,7 +17,7 @@ import {
   formatProjectAgentRuntimeMessage,
   getProjectAgentPublicName,
 } from "./agents/project-agents.js";
-import { normalizeArchetypeId } from "./prompt-registry.js";
+import { normalizeArchetypeId } from "./prompts/prompt-registry.js";
 import { areSessionsReferenced } from "./session-references.js";
 import type { ExternalProjectAgentDeliveryAuthorization } from "./project-agent-sharing-service.js";
 import type { PlanStepAssignment } from "./planning/plan-usage-tracker.js";

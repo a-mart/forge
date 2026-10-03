@@ -1,4 +1,4 @@
-import { normalizeSpecialistHandle } from "../swarm/specialists/specialist-registry.js";
+import { normalizeSpecialistHandle } from "../swarm/agents/specialists/specialist-registry.js";
 
 export const DEFAULT_COLLAB_SELECTED_SPECIALIST_HANDLES = [
 ] as const;

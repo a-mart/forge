@@ -5,7 +5,7 @@ import {
   isConversationBinaryAttachment,
   isConversationImageAttachment,
   isConversationTextAttachment,
-} from "./conversation-validators.js";
+} from "./session/conversation-validators.js";
 import type { RuntimeImageAttachment } from "./runtime-contracts.js";
 import {
   formatBinaryAttachmentForPrompt,

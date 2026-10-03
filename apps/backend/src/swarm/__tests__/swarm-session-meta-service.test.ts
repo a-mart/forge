@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAgentDescriptor, createTempConfig, type TempConfigHandle } from "../../test-support/index.js";
 import { getSessionFilePath, getLegacySessionsDirPath } from "../data-paths.js";
-import { readSessionMeta, writeSessionMeta } from "../session-manifest.js";
+import { readSessionMeta, writeSessionMeta } from "../session/session-manifest.js";
 import { SwarmSessionMetaService } from "../swarm-session-meta-service.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
 

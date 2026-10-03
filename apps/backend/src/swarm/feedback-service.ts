@@ -10,7 +10,7 @@ import {
 } from "@forge/protocol";
 import type { ObservabilityFacade } from "../observability/observability-types.js";
 import { getSessionFeedbackPath } from "./data-paths.js";
-import { readSessionMeta, writeSessionMeta } from "./session-manifest.js";
+import { readSessionMeta, writeSessionMeta } from "./session/session-manifest.js";
 import { isEnoentError } from "../utils/fs-errors.js";
 import { writeFileAtomic } from "../utils/atomic-files.js";
 import { isRecord, normalizeOptionalString } from "../utils/normalize.js";

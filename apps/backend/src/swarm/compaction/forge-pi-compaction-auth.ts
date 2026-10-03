@@ -3,13 +3,13 @@ import type { Api, Model } from "../pi/pi-ai-compat.js";
 import { AuthStorage, type AuthCredential, type ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { CompactionRuntimeSettingsSnapshot } from "../compaction-runtime-settings-provider.js";
 import type { CredentialPoolService } from "../credential-pool.js";
-import { ensureCanonicalAuthFilePath } from "../auth-storage-paths.js";
+import { ensureCanonicalAuthFilePath } from "../storage/auth-storage-paths.js";
 import type {
   OpenAIAuthBrokerLeaseHandle,
   OpenAIAuthBrokerRuntimeService,
 } from "../openai-auth/openai-auth-broker-runtime-service.js";
-import { createPiModelRegistry } from "../pi-model-registry.js";
-import { normalizeRuntimeError } from "../runtime-utils.js";
+import { createPiModelRegistry } from "../catalog/pi-model-registry.js";
+import { normalizeRuntimeError } from "../runtime/runtime-utils.js";
 import { resolveExactModel } from "../swarm-manager-utils.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
 import { ForgePiCompactionError } from "./forge-pi-compaction.js";

@@ -5,7 +5,7 @@ import type {
   MessageSourceContext,
   SessionTranscriptAssistantOutputTarget,
 } from "../types.js";
-import { extractMessageText, extractRole } from "../message-utils.js";
+import { extractMessageText, extractRole } from "../session/message-utils.js";
 import type { MessageRouteDecision } from "../message-router.js";
 import {
   getToolLikeMessageBlocks,

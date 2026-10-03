@@ -5,7 +5,7 @@ import {
   isSwarmModelPreset,
   isSwarmReasoningLevel,
   parseSwarmModelPreset
-} from "../../swarm/model-presets.js";
+} from "../../swarm/catalog/model-presets.js";
 import {
   fail,
   ok,

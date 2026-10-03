@@ -14,9 +14,9 @@ import {
   getSessionsDir,
   getSharedMobileDevicesPath,
 } from '../swarm/data-paths.js'
-import { PINNED_MESSAGES_FILE_NAME } from '../swarm/message-pins.js'
-import { parseSpecialistFile } from '../swarm/specialists/specialist-registry.js'
-import { getProfileSpecialistsDir, getSharedSpecialistsDir } from '../swarm/specialists/specialist-paths.js'
+import { PINNED_MESSAGES_FILE_NAME } from '../swarm/session/message-pins.js'
+import { parseSpecialistFile } from '../swarm/agents/specialists/specialist-registry.js'
+import { getProfileSpecialistsDir, getSharedSpecialistsDir } from '../swarm/agents/specialists/specialist-paths.js'
 import type { SwarmConfig } from '../swarm/types.js'
 import type { FeatureAdoptionData } from './telemetry-payload.js'
 

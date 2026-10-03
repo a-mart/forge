@@ -18,9 +18,9 @@ import {
   resolveRepoProjectAgentSource,
   type RepoProjectAgentSourceResolution,
 } from "./agents/repo-project-agent-source.js";
-import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
+import { ensureCanonicalAuthFilePath } from "./storage/auth-storage-paths.js";
 import { getModel, type Api, type Model } from "./pi/pi-ai-compat.js";
-import { createPiModelRegistry } from "./pi-model-registry.js";
+import { createPiModelRegistry } from "./catalog/pi-model-registry.js";
 import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
 import {
   getRepoProjectAgentPlacementForgeDir,

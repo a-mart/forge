@@ -9,7 +9,7 @@ import {
   readProjectAgentRecord,
   scanProjectAgentRecords,
   writeProjectAgentRecord
-} from "../project-agent-storage.js";
+} from "../storage/project-agent-storage.js";
 import { ProjectAgentRegistry } from "../agents/project-agent-registry.js";
 import {
   getProjectAgentConfigPath,

@@ -10,7 +10,7 @@ import {
   deleteProjectAgentRecord,
   restoreProjectAgentRecordBackupForRepoLink,
   writeProjectAgentRecord
-} from "./project-agent-storage.js";
+} from "./storage/project-agent-storage.js";
 import {
   planProjectAgentReferenceDeleteMutation,
   planProjectAgentReferenceWriteMutation,

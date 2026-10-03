@@ -50,9 +50,9 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 import {
   generatePiProjection,
   getPiModelsProjectionPath,
-} from "../model-catalog-projection.js";
-import { writeModelOverrides } from "../model-overrides.js";
-import { addOpenRouterModel } from "../openrouter-models.js";
+} from "../catalog/model-catalog-projection.js";
+import { writeModelOverrides } from "../catalog/model-overrides.js";
+import { addOpenRouterModel } from "../catalog/openrouter-models.js";
 
 const authStorageStub = {
   getOAuthProviders: () => [],

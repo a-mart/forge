@@ -16,15 +16,15 @@ import {
   normalizeCursorSdkThinkingLevel,
   normalizePersistedSwarmModelDescriptor,
   resolvePersistedModelDescriptorFromPreset,
-} from "../../model-presets.js";
-import { modelCatalogService } from "../../model-catalog-service.js";
+} from "../../catalog/model-presets.js";
+import { modelCatalogService } from "../../catalog/model-catalog-service.js";
 import { sanitizePathSegment } from "../../data-paths.js";
 import {
   getBuiltinSpecialistsDir,
   getProfileSpecialistsDir,
   getSessionSpecialistsDir,
   getSharedSpecialistsDir,
-} from "../../specialists/specialist-paths.js";
+} from "./specialist-paths.js";
 import {
   assertClaudeSdkProviderNotSelected,
   CLAUDE_SDK_RETIRED_PROVIDER_MESSAGE,

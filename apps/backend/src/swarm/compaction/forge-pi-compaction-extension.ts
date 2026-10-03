@@ -1,7 +1,7 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { CompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { getSessionDir } from "../data-paths.js";
-import { combineCompactionCustomInstructions, loadPins } from "../message-pins.js";
+import { combineCompactionCustomInstructions, loadPins } from "../session/message-pins.js";
 import { appendSessionPlanCompactionInstructions } from "../planning/session-plan-context.js";
 import { SessionPlanStore } from "../planning/session-plan-store.js";
 import type { Api, Model } from "../pi/pi-ai-compat.js";

@@ -15,8 +15,8 @@ import {
   getOpenRouterModels,
   mutateOpenRouterModelsFile,
   readOpenRouterModels,
-} from "../../../swarm/openrouter-models.js";
-import { readModelOverrides, resetModelOverride, writeModelOverrides } from "../../../swarm/model-overrides.js";
+} from "../../../swarm/catalog/openrouter-models.js";
+import { readModelOverrides, resetModelOverride, writeModelOverrides } from "../../../swarm/catalog/model-overrides.js";
 import { getManagedModelProviderCredentialAvailability } from "../../../swarm/secrets-env-service.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import { applyCorsHeaders, decodePathSegment, readJsonBody, sendJson } from "../../http-utils.js";

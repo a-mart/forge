@@ -3,7 +3,7 @@ import {
   getOpenAICodexWebSocketConstructorDiagnostics,
   installOpenAICodexWebSocketDiagnostics,
   resetOpenAICodexWebSocketConstructorDiagnosticsForTest,
-} from '../runtime-utils.js'
+} from '../runtime/runtime-utils.js'
 
 const originalWebSocket = globalThis.WebSocket
 

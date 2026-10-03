@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { FileBackedPromptRegistry } from "../swarm/prompt-registry.js";
+import { FileBackedPromptRegistry } from "../swarm/prompts/prompt-registry.js";
 
 const SWARM_DIR = fileURLToPath(new URL("../swarm", import.meta.url));
 const BUILTIN_ARCHETYPES_DIR = join(SWARM_DIR, "archetypes", "builtins");

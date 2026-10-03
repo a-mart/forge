@@ -8,14 +8,14 @@ import {
 } from "@forge/protocol";
 import type { WebSocket } from "ws";
 import { ArchiveOperationError } from "../../swarm/archive/archive-service.js";
-import { inferSwarmModelPresetFromDescriptor, parseSwarmModelPreset } from "../../swarm/model-presets.js";
+import { inferSwarmModelPresetFromDescriptor, parseSwarmModelPreset } from "../../swarm/catalog/model-presets.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
   requireNonSystemProfile,
   requireNonSystemSessionProfile,
   resolveProfileIdForSessionAgent,
 } from "../../swarm/system-profile-guards.js";
-import type { UnreadTracker } from "../../swarm/unread-tracker.js";
+import type { UnreadTracker } from "../../swarm/session/unread-tracker.js";
 
 export interface SessionCommandRouteContext {
   command: ClientCommand;

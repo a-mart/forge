@@ -10,7 +10,7 @@ import type {
 import type { MobilePushService } from "../mobile/mobile-push-service.js";
 import { getGlobalSlashCommandsPath } from "../swarm/data-paths.js";
 import { FeedbackService } from "../swarm/feedback-service.js";
-import type { UnreadTracker } from "../swarm/unread-tracker.js";
+import type { UnreadTracker } from "../swarm/session/unread-tracker.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { TerminalServiceError, type TerminalService } from "../terminal/terminal-service.js";
 import { classifyCompactionErrorMessage } from "./compaction-error-utils.js";

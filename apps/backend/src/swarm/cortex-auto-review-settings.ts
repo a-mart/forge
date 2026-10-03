@@ -9,7 +9,7 @@ import {
   getCortexAutoReviewSettingsPath,
   getProfileScheduleFilePath,
 } from './data-paths.js'
-import { renameWithRetry } from './retry-rename.js'
+import { renameWithRetry } from './storage/retry-rename.js'
 
 const SETTINGS_FILE_VERSION = 1
 const CORTEX_PROFILE_ID = 'cortex'

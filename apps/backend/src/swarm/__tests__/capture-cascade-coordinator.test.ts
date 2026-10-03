@@ -9,7 +9,7 @@ import {
   type CaptureCascadeHost,
 } from "../capture-cascade-coordinator.js";
 import { getSessionMetaPath } from "../data-paths.js";
-import { readSessionMeta, writeSessionMeta } from "../session-manifest.js";
+import { readSessionMeta, writeSessionMeta } from "../session/session-manifest.js";
 
 const NOW = "2026-07-13T18:00:00.000Z";
 const PROFILE_ID = "profile";

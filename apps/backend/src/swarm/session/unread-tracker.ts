@@ -2,7 +2,7 @@ import type { Dirent } from "node:fs";
 import { readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { getProfileUnreadStatePath, getProfilesDir } from "../data-paths.js";
-import { renameWithRetry } from "../retry-rename.js";
+import { renameWithRetry } from "../storage/retry-rename.js";
 import { isEnoentError } from "../../utils/fs-errors.js";
 import { writeJsonFileAtomic } from "../../utils/atomic-files.js";
 

@@ -18,8 +18,8 @@ import {
   saveProfileSpecialist,
   saveSharedSpecialist,
   type SaveSpecialistRequest,
-} from "../../../swarm/specialists/specialist-registry.js";
-import { modelCatalogService } from "../../../swarm/model-catalog-service.js";
+} from "../../../swarm/agents/specialists/specialist-registry.js";
+import { modelCatalogService } from "../../../swarm/catalog/model-catalog-service.js";
 import { getManagedModelProviderCredentialAvailability } from "../../../swarm/secrets-env-service.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import {

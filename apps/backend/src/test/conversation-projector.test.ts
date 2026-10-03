@@ -4,8 +4,8 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { SessionManager } from '@earendil-works/pi-coding-agent'
 import type { ServerEvent } from '@forge/protocol'
-import { ConversationProjector } from '../swarm/conversation-projector.js'
-import { getConversationHistoryCacheFilePath } from '../swarm/conversation-history-cache.js'
+import { ConversationProjector } from '../swarm/session/conversation-projector.js'
+import { getConversationHistoryCacheFilePath } from '../swarm/session/conversation-history-cache.js'
 import { reconcileInterruptedToolCallsForBoot } from '../swarm/interrupted-tool-reconciliation.js'
 import { getMessageRoutingReceiptsPath } from '../swarm/session/message-routing-receipts.js'
 import {
@@ -14,7 +14,7 @@ import {
   MAX_CONVERSATION_PAGE_SCAN_BYTES,
 } from '../swarm/session/conversation-page-reader.js'
 import { MAX_CONVERSATION_HISTORY } from '../swarm/session/history-policy.js'
-import { MAX_SESSION_FILE_BYTES_FOR_OPEN } from '../swarm/session-file-guard.js'
+import { MAX_SESSION_FILE_BYTES_FOR_OPEN } from '../swarm/session/session-file-guard.js'
 import type { SwarmAgentRuntime } from '../swarm/runtime-contracts.js'
 import type { AgentDescriptor, ConversationEntryEvent } from '../swarm/types.js'
 

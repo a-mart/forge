@@ -12,12 +12,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Model } from "../../src/swarm/pi/pi-ai-compat.js";
 import { SwarmPromptService } from "../../src/swarm/swarm-prompt-service.js";
-import { FileBackedPromptRegistry } from "../../src/swarm/prompt-registry.js";
+import { FileBackedPromptRegistry } from "../../src/swarm/prompts/prompt-registry.js";
 import { HistorySearchService } from "../../src/swarm/history-recall/history-search-service.js";
 import { buildHistoryRecallTools } from "../../src/swarm/history-recall-tool.js";
 import { TaskNotesStore } from "../../src/swarm/task-notes-store.js";
 import { createTaskNotesTool } from "../../src/swarm/task-notes-tool.js";
-import { AgentRuntime } from "../../src/swarm/agent-runtime.js";
+import { AgentRuntime } from "../../src/swarm/runtime/pi-agent-runtime.js";
 import { createContextManagementTools } from "../../src/swarm/runtime/context-management-tools.js";
 import { createFreshContextHandler } from "../../src/swarm/runtime/fresh-context-checkpoint.js";
 import { getSessionFilePath } from "../../src/swarm/storage/data-paths.js";

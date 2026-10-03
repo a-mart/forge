@@ -15,13 +15,13 @@ import {
   isKnownPrompt,
   isValidPromptCategory,
   isValidPromptSourceLayer,
-} from "../../../swarm/prompt-metadata.js";
+} from "../../../swarm/prompts/prompt-metadata.js";
 import {
   listCortexPromptSurfaces,
   readCortexPromptSurface,
   resetCortexPromptSurface,
   saveCortexPromptSurface,
-} from "../../../swarm/cortex-prompt-surfaces.js";
+} from "../../../swarm/prompts/cortex-prompt-surfaces.js";
 import type {
   PromptEntry,
   PromptPreviewProvider,

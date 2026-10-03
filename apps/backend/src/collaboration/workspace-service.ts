@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { CollaborationWorkspace } from "@forge/protocol";
-import { normalizePersistedSwarmModelDescriptor } from "../swarm/model-presets.js";
+import { normalizePersistedSwarmModelDescriptor } from "../swarm/catalog/model-presets.js";
 import type { ManagerProfile, SwarmConfig } from "../swarm/types.js";
 import type {
   CollaborationDbHelpers,

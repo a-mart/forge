@@ -1,7 +1,7 @@
 import { appendFile, mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 // Atomic refers to the write operation (temp file + rename), not to concurrent access.
 import { basename, dirname, join } from "node:path";
-import { renameWithRetry } from "../swarm/retry-rename.js";
+import { renameWithRetry } from "../swarm/storage/retry-rename.js";
 import { isEnoentError } from "./fs-errors.js";
 
 interface AtomicWriteOptions {

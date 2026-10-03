@@ -5,7 +5,7 @@ import {
   readJsonBody,
   sendJson
 } from "../../http-utils.js";
-import { readSessionMeta } from "../../../swarm/session-manifest.js";
+import { readSessionMeta } from "../../../swarm/session/session-manifest.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import { classifyCompactionErrorMessage } from "../../compaction-error-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";

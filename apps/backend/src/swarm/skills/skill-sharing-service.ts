@@ -19,7 +19,7 @@ import type {
 } from "@forge/protocol";
 import { getProfilePiSkillsDir, sanitizePathSegment } from "../data-paths.js";
 import type { SwarmConfig } from "../types.js";
-import { renameWithRetry } from "../retry-rename.js";
+import { renameWithRetry } from "../storage/retry-rename.js";
 import { assertValidSkillHandle, isPathWithinRoot, normalizeSkillBundleFilePath } from "./skill-bundle-paths.js";
 import { SkillBundleService } from "./skill-bundle-service.js";
 import { SkillBundleValidationError } from "./skill-bundle-validation.js";

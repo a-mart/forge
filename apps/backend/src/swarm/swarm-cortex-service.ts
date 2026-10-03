@@ -6,7 +6,7 @@ import type {
 } from "@forge/protocol";
 import type { KnowledgeEntry, KnowledgeService } from "./knowledge-service.js";
 import type { KnowledgeV2SettingsService } from "./knowledge-v2-settings-service.js";
-import { normalizeArchetypeId } from "./prompt-registry.js";
+import { normalizeArchetypeId } from "./prompts/prompt-registry.js";
 import {
   appendCortexConsolidationRun,
   createCortexConsolidationRunId,

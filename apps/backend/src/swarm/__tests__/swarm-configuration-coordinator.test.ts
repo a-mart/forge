@@ -2,12 +2,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { modelCatalogService } from "../model-catalog-service.js";
-import { resolveModelDescriptorFromPreset } from "../model-presets.js";
-import type { PromptRegistry } from "../prompt-registry.js";
+import { modelCatalogService } from "../catalog/model-catalog-service.js";
+import { resolveModelDescriptorFromPreset } from "../catalog/model-presets.js";
+import type { PromptRegistry } from "../prompts/prompt-registry.js";
 import { SecretsEnvService } from "../secrets-env-service.js";
 import { SkillFileService } from "../skill-file-service.js";
-import { SkillMetadataService } from "../skill-metadata-service.js";
+import { SkillMetadataService } from "../skills/skill-metadata-service.js";
 import {
   SwarmConfigurationCoordinator,
   type SwarmConfigurationAccessPolicy,

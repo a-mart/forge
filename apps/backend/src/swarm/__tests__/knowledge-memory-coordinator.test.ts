@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as piAiCompat from "../pi/pi-ai-compat.js";
-import * as piModelRegistry from "../pi-model-registry.js";
+import * as piModelRegistry from "../catalog/pi-model-registry.js";
 import {
   createLiveCompactionRuntimeSettingsProvider,
 } from "../compaction-runtime-settings-provider.js";

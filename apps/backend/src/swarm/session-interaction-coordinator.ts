@@ -18,9 +18,9 @@ import type {
   UpdateWorkGraphInput,
   WorkGraphDispatchClaim,
 } from "./planning/work-graph-state.js";
-import { normalizeArchetypeId } from "./prompt-registry.js";
+import { normalizeArchetypeId } from "./prompts/prompt-registry.js";
 import { resolveManagerDelegation } from "./specialists/delegation-policy.js";
-import { normalizeSpecialistHandle } from "./specialists/specialist-registry.js";
+import { normalizeSpecialistHandle } from "./agents/specialists/specialist-registry.js";
 import type { SwarmAgentLifecycleService } from "./swarm-agent-lifecycle-service.js";
 import type { SwarmChoiceService } from "./swarm-choice-service.js";
 import {

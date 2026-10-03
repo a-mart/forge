@@ -44,7 +44,7 @@ import { isCollaborationServerRuntimeTarget } from "../runtime-target.js";
 import { pickDirectory as pickNativeDirectory } from "./directory-picker.js";
 import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
 import { ProjectWorkspaceResolver } from "./project-workspace-resolver.js";
-import { normalizeThinkingLevelForModelDescriptor, resolveModelDescriptorFromPreset } from "./model-presets.js";
+import { normalizeThinkingLevelForModelDescriptor, resolveModelDescriptorFromPreset } from "./catalog/model-presets.js";
 import {
   appendModelChangeContinuityRequest,
   createModelChangeContinuityRequest,
@@ -59,14 +59,14 @@ import {
 } from "./secrets-env-service.js";
 import { OpenAIAuthSettingsService } from "./openai-auth/openai-auth-settings-service.js";
 import type { SkillFileService } from "./skill-file-service.js";
-import type { SkillMetadataService } from "./skill-metadata-service.js";
+import type { SkillMetadataService } from "./skills/skill-metadata-service.js";
 import {
   SkillSharingError,
   SkillSharingService,
   type ImportSkillOptions
 } from "./skills/skill-sharing-service.js";
 import { requireContextMode } from "./context-mode.js";
-import { modelCatalogService } from "./model-catalog-service.js";
+import { modelCatalogService } from "./catalog/model-catalog-service.js";
 import { resolveExactManagerModelSelection } from "./catalog/manager-model-selection.js";
 import {
   normalizeDelegationRosterSettings,

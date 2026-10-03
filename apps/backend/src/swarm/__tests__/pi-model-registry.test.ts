@@ -15,7 +15,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => {
   };
 });
 
-import { createPiModelRegistry } from "../pi-model-registry.js";
+import { createPiModelRegistry } from "../catalog/pi-model-registry.js";
 
 describe("createPiModelRegistry", () => {
   beforeEach(() => {

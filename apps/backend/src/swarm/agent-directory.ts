@@ -7,7 +7,7 @@ import {
   isSessionDirectlyArchived,
 } from "./archive/archive-resolver.js";
 import { cloneDescriptorForPersistence, cloneProfile } from "./agents/descriptor-store/descriptor-clone.js";
-import { normalizeArchetypeId } from "./prompt-registry.js";
+import { normalizeArchetypeId } from "./prompts/prompt-registry.js";
 import {
   assertBuilderSession,
   assertCollabSession,

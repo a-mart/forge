@@ -10,7 +10,7 @@ const cortexPromptSurfaceState = vi.hoisted(() => ({
   saveCortexPromptSurface: vi.fn(async () => undefined),
 }));
 
-vi.mock("../../../../swarm/cortex-prompt-surfaces.js", () => ({
+vi.mock("../../../../swarm/prompts/cortex-prompt-surfaces.js", () => ({
   listCortexPromptSurfaces: (...args: unknown[]) => cortexPromptSurfaceState.listCortexPromptSurfaces(...args),
   readCortexPromptSurface: (...args: unknown[]) => cortexPromptSurfaceState.readCortexPromptSurface(...args),
   resetCortexPromptSurface: (...args: unknown[]) => cortexPromptSurfaceState.resetCortexPromptSurface(...args),

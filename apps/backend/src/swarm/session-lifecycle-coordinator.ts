@@ -26,7 +26,7 @@ import {
   parseSwarmModelPreset,
   parseSwarmReasoningLevel,
   resolveModelDescriptorFromPreset,
-} from "./model-presets.js";
+} from "./catalog/model-presets.js";
 import type { SessionPlanCoordinator } from "./planning/session-plan-coordinator.js";
 import type {
   SessionCreationBaseDescriptor,

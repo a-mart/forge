@@ -4,7 +4,7 @@ import type { ArchiveLastUsedHydrator } from "../archive/archive-last-used-hydra
 import type { ArchiveService } from "../archive/archive-service.js";
 import type { CodexDirectSidecarCoordinator } from "../codex-app-server/codex-direct-sidecar-coordinator.js";
 import type { CodexPluginDelegationCoordinator } from "../codex-app-server/codex-plugin-delegation-coordinator.js";
-import type { ConversationProjector } from "../conversation-projector.js";
+import type { ConversationProjector } from "../session/conversation-projector.js";
 import { ForgeExtensionHost } from "../forge-extension-host.js";
 import type { KnowledgeMemoryCoordinator } from "../knowledge-memory-coordinator.js";
 import type { ProjectAgentCoordinator } from "../project-agent-coordinator.js";
@@ -26,7 +26,7 @@ import type { SwarmProjectAgentService } from "../swarm-project-agent-service.js
 import type { SwarmSessionMetaService } from "../swarm-session-meta-service.js";
 import type { SwarmSessionService } from "../swarm-session-service.js";
 import type { SwarmToolHost } from "../swarm-tool-host.js";
-import type { PromptRegistry } from "../prompt-registry.js";
+import type { PromptRegistry } from "../prompts/prompt-registry.js";
 import { SessionPlanCoordinator } from "../planning/session-plan-coordinator.js";
 import type { SwarmConfig } from "../types.js";
 

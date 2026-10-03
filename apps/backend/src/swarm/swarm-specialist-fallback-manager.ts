@@ -1,6 +1,6 @@
 import type { SpecialistTargetSpace } from "@forge/protocol";
 import { isNonRunningAgentStatus } from "./agent-state-machine.js";
-import { inferProviderFromModelId, normalizeThinkingLevelForModelDescriptor } from "./model-presets.js";
+import { inferProviderFromModelId, normalizeThinkingLevelForModelDescriptor } from "./catalog/model-presets.js";
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -22,7 +22,7 @@ import {
   isCollabSession
 } from "./swarm-manager-utils.js";
 import type { SwarmWorkerHealthService } from "./swarm-worker-health-service.js";
-import { normalizeEffortTier, resolveTierConfig } from "./specialists/specialist-registry.js";
+import { normalizeEffortTier, resolveTierConfig } from "./agents/specialists/specialist-registry.js";
 
 const RUNTIME_SHUTDOWN_TIMEOUT_MS = 1_500;
 

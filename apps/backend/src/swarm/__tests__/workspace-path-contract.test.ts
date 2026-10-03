@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { PINNED_MESSAGES_FILE_NAME } from "../message-pins.js";
+import { PINNED_MESSAGES_FILE_NAME } from "../session/message-pins.js";
 import {
   getProfileDir,
   getProfileMemoryPath,

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { createTempConfig, type TempConfigHandle, TestSwarmManager as TestSwarmManagerBase, bootWithDefaultManager } from '../test-support/index.js'
-import { readSessionMeta } from '../swarm/session-manifest.js'
+import { readSessionMeta } from '../swarm/session/session-manifest.js'
 import {
   assertBuilderSession,
   cloneDescriptor,

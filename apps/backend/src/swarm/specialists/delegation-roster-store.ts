@@ -14,9 +14,9 @@ import {
 import { writeJsonFileAtomic } from "../../utils/atomic-files.js";
 import { isEnoentError } from "../../utils/fs-errors.js";
 import { getSharedConfigDir } from "../data-paths.js";
-import { normalizePersistedSwarmModelDescriptor } from "../model-presets.js";
+import { normalizePersistedSwarmModelDescriptor } from "../catalog/model-presets.js";
 import type { AgentDescriptor } from "../types.js";
-import { resolveTierConfigs } from "./specialist-registry.js";
+import { resolveTierConfigs } from "../agents/specialists/specialist-registry.js";
 
 const DELEGATION_ROSTERS_FILENAME = "delegation-rosters.json";
 const ROUTE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;

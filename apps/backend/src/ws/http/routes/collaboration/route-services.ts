@@ -30,7 +30,7 @@ import type {
 import {
   getCachedSharedSpecialistHandles,
   resolveSharedRoster,
-} from "../../../../swarm/specialists/specialist-registry.js";
+} from "../../../../swarm/agents/specialists/specialist-registry.js";
 import { createCollaborationSkillHandleProvider } from "../../../../collaboration/skill-handle-provider.js";
 import type { SwarmConfig } from "../../../../swarm/types.js";
 import type {

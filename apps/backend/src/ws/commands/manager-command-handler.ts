@@ -7,8 +7,8 @@ import {
   requireNonSystemProfile,
   requireNonSystemSessionProfile,
 } from "../../swarm/system-profile-guards.js";
-import type { UnreadTracker } from "../../swarm/unread-tracker.js";
-import { inferSwarmModelPresetFromDescriptor, parseSwarmModelPreset } from "../../swarm/model-presets.js";
+import type { UnreadTracker } from "../../swarm/session/unread-tracker.js";
+import { inferSwarmModelPresetFromDescriptor, parseSwarmModelPreset } from "../../swarm/catalog/model-presets.js";
 import type { SwarmModelPreset, SwarmReasoningLevel } from "../../swarm/types.js";
 import {
   RepositoryProjectCreationError,

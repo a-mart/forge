@@ -1,7 +1,7 @@
 import type { Dirent } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import type { PromptCategory } from "../swarm/prompt-registry.js";
+import type { PromptCategory } from "../swarm/prompts/prompt-registry.js";
 import {
   getKnowledgeArchiveDir,
   getKnowledgeEntriesDir,

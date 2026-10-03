@@ -61,7 +61,7 @@ import { isPidAlive } from "../swarm/platform.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import type { BrowserAutomationService } from "../swarm/browser-automation/index.js";
 import { isCollabSession } from "../swarm/swarm-manager-utils.js";
-import { UnreadTracker } from "../swarm/unread-tracker.js";
+import { UnreadTracker } from "../swarm/session/unread-tracker.js";
 import { isBuilderRuntimeTarget } from "../runtime-target.js";
 import { createNoopObservabilityFacade } from "../observability/noop-observability.js";
 import type { ObservabilityFacade } from "../observability/observability-types.js";

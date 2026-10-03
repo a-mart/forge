@@ -15,9 +15,9 @@ import {
   evaluateExactManagerModelSelection,
   resolveExactManagerModelSelection,
 } from "../catalog/manager-model-selection.js";
-import { modelCatalogService } from "../model-catalog-service.js";
-import { writeModelOverrides } from "../model-overrides.js";
-import { writeOpenRouterModels } from "../openrouter-models.js";
+import { modelCatalogService } from "../catalog/model-catalog-service.js";
+import { writeModelOverrides } from "../catalog/model-overrides.js";
+import { writeOpenRouterModels } from "../catalog/openrouter-models.js";
 import { validateAgentDescriptor } from "../swarm-manager-utils.js";
 
 const ALL_AVAILABLE = new Map<string, boolean>([

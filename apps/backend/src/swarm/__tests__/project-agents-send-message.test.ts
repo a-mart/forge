@@ -3,7 +3,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { getConversationHistoryCacheFilePath } from "../conversation-history-cache.js";
+import { getConversationHistoryCacheFilePath } from "../session/conversation-history-cache.js";
 import { SwarmManager } from "../swarm-manager.js";
 import type { AgentContextUsage, AgentDescriptor, RequestedDeliveryMode, SendMessageReceipt, SwarmConfig } from "../types.js";
 import type { RuntimeUserMessage, SwarmAgentRuntime } from "../runtime-contracts.js";

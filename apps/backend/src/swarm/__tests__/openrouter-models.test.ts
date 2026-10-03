@@ -5,7 +5,7 @@ import type { OpenRouterModelEntry } from "@forge/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as openRouterStorage from "../catalog/openrouter-models.js";
 import { getOpenRouterModelsPath } from "../data-paths.js";
-import { ModelCatalogService } from "../model-catalog-service.js";
+import { ModelCatalogService } from "../catalog/model-catalog-service.js";
 import {
   addOpenRouterModel,
   getOpenRouterModels,
@@ -14,7 +14,7 @@ import {
   writeOpenRouterModels,
   mutateOpenRouterModelsFile,
   getOpenRouterRoutingRevision,
-} from "../openrouter-models.js";
+} from "../catalog/openrouter-models.js";
 
 const tempDirs: string[] = [];
 

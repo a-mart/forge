@@ -8,7 +8,7 @@ import {
   resolvePersistedModelDescriptorFromPreset,
   normalizeThinkingLevelForModelDescriptor,
   resolveModelDescriptorFromPreset,
-} from "../swarm/model-presets.js";
+} from "../swarm/catalog/model-presets.js";
 import { isCollabSession, slugifySessionName } from "../swarm/swarm-manager-utils.js";
 import type {
   AgentDescriptor,

@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getPiModelsProjectionPath } from "../model-catalog-projection.js";
+import { getPiModelsProjectionPath } from "../catalog/model-catalog-projection.js";
 import { createDefaultCompactionRuntimeSettingsProvider } from "../compaction-runtime-settings-provider.js";
 import { TaskNotesStore } from "../task-notes-store.js";
 import { createModelVisibleToolResultBudget } from "../model-visible-tool-result-budget.js";
@@ -129,7 +129,7 @@ vi.mock("@earendil-works/pi-coding-agent", async () => {
   }
 });
 
-vi.mock("../session-file-guard.js", () => ({
+vi.mock("../session/session-file-guard.js", () => ({
   openSessionManagerWithSizeGuard: (...args: unknown[]) => sessionFileGuardMockState.openSessionManagerWithSizeGuard(...args),
 }));
 
@@ -142,7 +142,7 @@ vi.mock("../runtime-prompt-assembler.js", () => ({
   discoverAgentsMd: vi.fn(async () => []),
 }));
 
-vi.mock("../skill-metadata-service.js", () => ({
+vi.mock("../skills/skill-metadata-service.js", () => ({
   SkillMetadataService: class {
     async ensureSkillMetadataLoaded(): Promise<void> {}
 
@@ -156,9 +156,9 @@ vi.mock("../onboarding-state.js", () => ({
   getOnboardingSnapshot: vi.fn(async () => ({ status: "pending" })),
 }));
 
-import { savePins } from "../message-pins.js";
+import { savePins } from "../session/message-pins.js";
 import { ForgeExtensionHost } from "../forge-extension-host.js";
-import { RuntimeFactory } from "../runtime-factory.js";
+import { RuntimeFactory } from "../runtime/runtime-factory.js";
 import { resetCursorSdkLoaderForTests, setCursorSdkImporterForTests } from "../runtime/cursor-sdk/cursor-sdk-loader.js";
 import type { SkillMetadata } from "../skills/skill-metadata-service.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";

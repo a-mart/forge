@@ -8,12 +8,12 @@ import type {
   SessionMeta
 } from "@forge/protocol";
 import type { VersioningMutation } from "../versioning/versioning-types.js";
-import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
+import { ensureCanonicalAuthFilePath } from "./storage/auth-storage-paths.js";
 import { getProfileMemoryPath, getProfileMergeAuditLogPath } from "./data-paths.js";
 import { assertKnowledgeMigrationNotBusy } from "./knowledge-v2-migration-lock.js";
-import { executeLLMMerge, MEMORY_MERGE_SYSTEM_PROMPT } from "./memory-merge.js";
-import { createPiModelRegistry } from "./pi-model-registry.js";
-import type { PromptCategory } from "./prompt-registry.js";
+import { executeLLMMerge, MEMORY_MERGE_SYSTEM_PROMPT } from "./prompts/memory-merge.js";
+import { createPiModelRegistry } from "./catalog/pi-model-registry.js";
+import type { PromptCategory } from "./prompts/prompt-registry.js";
 import type { SessionMemoryMergeAttemptMetaUpdate } from "./swarm-session-meta-service.js";
 import type { AgentDescriptor, SwarmConfig } from "./types.js";
 import {

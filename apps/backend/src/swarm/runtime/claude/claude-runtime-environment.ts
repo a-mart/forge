@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, win32 } from "node:path";
 import { access, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { AuthStorage } from "@earendil-works/pi-coding-agent";
-import { ensureCanonicalAuthFilePath } from "../../auth-storage-paths.js";
+import { ensureCanonicalAuthFilePath } from "../../storage/auth-storage-paths.js";
 import type { SwarmConfig } from "../../types.js";
 import { CLAUDE_SIGN_IN_REQUIRED } from "@forge/protocol";
 

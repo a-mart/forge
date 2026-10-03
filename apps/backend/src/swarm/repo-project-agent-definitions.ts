@@ -17,7 +17,7 @@ import { isEnoentError } from "../utils/fs-errors.js";
 import {
   normalizePersistedSwarmModelDescriptor,
   resolveRemovedSwarmModelReplacementPreset,
-} from "./model-presets.js";
+} from "./catalog/model-presets.js";
 import { CLAUDE_SDK_RETIRED_PROVIDER_MESSAGE } from "./catalog/legacy-claude-sdk-model.js";
 
 const MAX_DEFINITIONS = 50;

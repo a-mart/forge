@@ -2,7 +2,7 @@ import { mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { openSessionManagerWithSizeGuard } from '../swarm/session-file-guard.js'
+import { openSessionManagerWithSizeGuard } from '../swarm/session/session-file-guard.js'
 
 function buildSessionFileContent(extraPayload: string): string {
   return [

@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolveModelDescriptorFromPreset } from "../model-presets.js";
+import { resolveModelDescriptorFromPreset } from "../catalog/model-presets.js";
 import {
   findLatestPendingModelChangeContinuityRequest,
   findLatestUnappliedModelChangeContinuityRequestForSession,

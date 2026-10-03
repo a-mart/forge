@@ -18,7 +18,7 @@ import {
   cleanupOldSharedConfigPaths,
   migrateSharedConfigLayout,
   removeRetiredPlanningArtifacts,
-} from "../shared-config-migration.js";
+} from "../storage/shared-config-migration.js";
 
 const MIGRATION_SENTINEL = ".shared-config-migration-done";
 const CLEANUP_SENTINEL = ".shared-config-cleanup-done";

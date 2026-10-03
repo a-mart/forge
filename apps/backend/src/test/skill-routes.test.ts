@@ -3,7 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { SkillFileService } from "../swarm/skill-file-service.js";
-import { SkillMetadataService } from "../swarm/skill-metadata-service.js";
+import { SkillMetadataService } from "../swarm/skills/skill-metadata-service.js";
 import { SkillBundleError } from "../swarm/skills/skill-bundle-errors.js";
 import { SkillSharingError } from "../swarm/skills/skill-sharing-service.js";
 import type { SwarmConfig } from "../swarm/types.js";

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { AgentRuntime } from '../swarm/agent-runtime.js'
+import { AgentRuntime } from '../swarm/runtime/pi-agent-runtime.js'
 import { clearForgePiCompactionFailure, rememberForgePiCompactionFailure } from '../swarm/compaction/forge-pi-compaction-extension.js'
 import type { AgentDescriptor } from '../swarm/types.js'
 

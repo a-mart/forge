@@ -1,5 +1,5 @@
 import type { CollaborationAuthor } from "@forge/protocol";
-import { extractMessageText, extractRole } from "./message-utils.js";
+import { extractMessageText, extractRole } from "./session/message-utils.js";
 import type {
   MessageRouteInternalDeliveryKind,
   MessageRouteOrigin,

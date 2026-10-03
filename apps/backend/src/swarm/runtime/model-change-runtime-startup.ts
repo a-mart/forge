@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { isConversationEntryEvent } from "../conversation-validators.js";
+import { isConversationEntryEvent } from "../session/conversation-validators.js";
 import type { AgentDescriptor, AgentModelDescriptor, ConversationEntryEvent } from "../types.js";
 import {
   buildModelChangeRecoveryContext,

@@ -11,7 +11,7 @@ import {
   savePins,
   togglePin,
   type PinRegistry,
-} from '../swarm/message-pins.js'
+} from '../swarm/session/message-pins.js'
 
 describe('message-pins', () => {
   it('loads empty registry when sidecar is missing or corrupt', async () => {

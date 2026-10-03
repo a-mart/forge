@@ -12,7 +12,7 @@ import { createCollaborationSkillHandleProvider } from "../../collaboration/skil
 import {
   getCachedSharedSpecialistHandles,
   resolveSharedRoster,
-} from "../../swarm/specialists/specialist-registry.js";
+} from "../../swarm/agents/specialists/specialist-registry.js";
 import { CollaborationChannelService } from "../../collaboration/channel-service.js";
 import type { CollaborationReadinessRequestService } from "../../collaboration/readiness-service.js";
 import { CollaborationWorkspaceService } from "../../collaboration/workspace-service.js";

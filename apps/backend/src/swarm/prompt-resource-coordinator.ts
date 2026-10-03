@@ -2,11 +2,11 @@ import type { SpecialistTargetSpace, TierConfig } from "@forge/protocol";
 import { createCollaborationDbHelpers } from "../collaboration/collab-db-helpers.js";
 import { parseCollaborationSpecialistHandlesJson } from "../collaboration/specialist-selection.js";
 import { isCollaborationServerRuntimeTarget } from "../runtime-target.js";
-import { normalizeArchetypeId, type PromptRegistry } from "./prompt-registry.js";
+import { normalizeArchetypeId, type PromptRegistry } from "./prompts/prompt-registry.js";
 import { ProjectResourceSettingsStore } from "./project-resource-settings.js";
 import { ProjectWorkspaceResolver } from "./project-workspace-resolver.js";
-import { classifyRuntimeCapacityError } from "./runtime-utils.js";
-import type { SkillMetadata, SkillMetadataService } from "./skill-metadata-service.js";
+import { classifyRuntimeCapacityError } from "./runtime/runtime-utils.js";
+import type { SkillMetadata, SkillMetadataService } from "./skills/skill-metadata-service.js";
 import { resolveCollaborationSkillRoster } from "./skills/collaboration-skill-resolver.js";
 import {
   generateRosterBlock,
@@ -15,7 +15,7 @@ import {
   resolveRoster,
   resolveTierConfigs,
   resolveWorkspaceRoster,
-} from "./specialists/specialist-registry.js";
+} from "./agents/specialists/specialist-registry.js";
 import {
   formatDelegationRosterModelContext,
   resolveDelegationRosterForManager,

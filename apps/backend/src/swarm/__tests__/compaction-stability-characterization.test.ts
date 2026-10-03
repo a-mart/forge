@@ -25,7 +25,7 @@ vi.mock("node:fs/promises", () => ({
   rm: vi.fn(() => Promise.resolve()),
 }));
 
-vi.mock("../image-utils.js", () => ({
+vi.mock("../runtime/image-utils.js", () => ({
   prepareProviderImage: (...args: unknown[]) => prepareProviderImageMock(...args),
   PROVIDER_UNDERSIZED_IMAGE_OMISSION: "(image omitted: below provider 8px minimum)",
 }));

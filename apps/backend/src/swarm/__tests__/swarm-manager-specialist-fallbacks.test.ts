@@ -12,8 +12,8 @@ const projectAgentAnalysisMockState = vi.hoisted(() => ({
   })),
 }))
 
-vi.mock('../memory-merge.js', async () => {
-  const actual = await vi.importActual<typeof import('../memory-merge.js')>('../memory-merge.js')
+vi.mock('../prompts/memory-merge.js', async () => {
+  const actual = await vi.importActual<typeof import('../prompts/memory-merge.js')>('../prompts/memory-merge.js')
   return {
     ...actual,
     executeLLMMerge: (...args: Parameters<typeof actual.executeLLMMerge>) =>
@@ -21,8 +21,8 @@ vi.mock('../memory-merge.js', async () => {
   }
 })
 
-vi.mock('../project-agent-analysis.js', async () => {
-  const actual = await vi.importActual<typeof import('../project-agent-analysis.js')>('../project-agent-analysis.js')
+vi.mock('../agents/project-agent-analysis.js', async () => {
+  const actual = await vi.importActual<typeof import('../agents/project-agent-analysis.js')>('../agents/project-agent-analysis.js')
   return {
     ...actual,
     analyzeSessionForPromotion: (...args: Parameters<typeof actual.analyzeSessionForPromotion>) =>
@@ -30,8 +30,8 @@ vi.mock('../project-agent-analysis.js', async () => {
   }
 })
 
-import { readSessionMeta, writeSessionMeta } from '../session-manifest.js'
-import { AgentRuntime } from '../agent-runtime.js'
+import { readSessionMeta, writeSessionMeta } from '../session/session-manifest.js'
+import { AgentRuntime } from '../runtime/pi-agent-runtime.js'
 import type { KnowledgeMemoryCoordinator } from '../knowledge-memory-coordinator.js'
 import type { SwarmSpecialistFallbackManager } from '../swarm-specialist-fallback-manager.js'
 import type {
