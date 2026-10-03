@@ -2,6 +2,7 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { CortexChangelogAction, CortexChangelogEntry } from "@forge/protocol";
 import { getCortexReviewLogPath } from "../data-paths.js";
+import { isEnoentError } from "../../utils/fs-errors.js";
 
 export interface AppendCortexReviewLogEntryInput {
   runId: string;
@@ -77,8 +78,4 @@ function parseStoredCortexReviewLogEntry(line: string): CortexReviewLogEntry | n
 
 function isAction(value: unknown): value is CortexChangelogAction {
   return value === "added" || value === "merged" || value === "archived" || value === "superseded" || value === "reindexed";
-}
-
-function isEnoentError(error: unknown): boolean {
-  return !!error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT";
 }

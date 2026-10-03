@@ -415,10 +415,6 @@ export function getCortexConsolidationRunsPath(dataDir: string): string {
   return join(getSharedKnowledgeDir(dataDir), ".cortex-consolidation-runs.json");
 }
 
-export function getCortexPromotionManifestsDir(dataDir: string): string {
-  return join(getSharedKnowledgeDir(dataDir), ".cortex-promotion-manifests");
-}
-
 export function getSharedAuthDir(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "auth");
 }

@@ -16,18 +16,11 @@ import {
   getProjectAgentsDir,
   sanitizePathSegment
 } from "./data-paths.js";
-import type { AgentDescriptor } from "../types.js";
 
 export interface ProjectAgentOnDiskRecord {
   config: PersistedProjectAgentConfig;
   systemPrompt: string | null;
   dirPath: string;
-}
-
-interface ReconcileProjectAgentStorageResult {
-  hydrated: string[];
-  materialized: string[];
-  orphansRemoved: string[];
 }
 
 export async function writeProjectAgentRecord(
@@ -56,23 +49,6 @@ export async function writeProjectAgentRecord(
   };
 
   await writeJsonFileAtomic(configPath, persistedConfig);
-}
-
-export async function renameProjectAgentRecord(
-  dataDir: string,
-  profileId: string,
-  oldHandle: string,
-  newHandle: string,
-  config: PersistedProjectAgentConfig,
-  systemPrompt: string | null
-): Promise<void> {
-  await writeProjectAgentRecord(dataDir, profileId, config, systemPrompt);
-
-  if (oldHandle === newHandle) {
-    return;
-  }
-
-  await deleteProjectAgentRecord(dataDir, profileId, oldHandle);
 }
 
 export async function deleteProjectAgentRecord(dataDir: string, profileId: string, handle: string): Promise<void> {
@@ -239,15 +215,6 @@ export async function scanProjectAgentRecords(
   }
 
   return records;
-}
-
-export async function reconcileProjectAgentStorage(
-  dataDir: string,
-  profileId: string,
-  descriptors: Map<string, AgentDescriptor>
-): Promise<ReconcileProjectAgentStorageResult> {
-  const { ProjectAgentRegistry } = await import("../agents/project-agent-registry.js");
-  return new ProjectAgentRegistry({ dataDir, descriptors }).reconcileProfile(profileId);
 }
 
 function coercePersistedProjectAgentConfig(value: unknown): PersistedProjectAgentConfig | null {

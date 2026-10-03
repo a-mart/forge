@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { appendImmediateCustomEntry } from "../session/immediate-custom-entry-writer.js";
+import { appendImmediateCustomEntryViaTimeline } from "../session/conversation-timeline.js";
 
 const createdDirs: string[] = [];
 
@@ -34,12 +34,12 @@ function buildSessionHeader(cwd: string): string {
   });
 }
 
-describe("appendImmediateCustomEntry", () => {
+describe("appendImmediateCustomEntryViaTimeline", () => {
   it("creates a missing session file with a header and custom entry", async () => {
     const root = await createTempDir("immediate-entry-writer-");
     const sessionFile = join(root, "sessions", "manager.jsonl");
 
-    const result = await appendImmediateCustomEntry({
+    const result = await appendImmediateCustomEntryViaTimeline({
       sessionFile,
       cwd: root,
       customType: "swarm_model_change_continuity_request",
@@ -83,7 +83,7 @@ describe("appendImmediateCustomEntry", () => {
       "utf8"
     );
 
-    const result = await appendImmediateCustomEntry({
+    const result = await appendImmediateCustomEntryViaTimeline({
       sessionFile,
       cwd: root,
       customType: "swarm_model_change_continuity_applied",
@@ -109,7 +109,7 @@ describe("appendImmediateCustomEntry", () => {
     writeFileSync(sessionFile, original, "utf8");
 
     await expect(
-      appendImmediateCustomEntry({
+      appendImmediateCustomEntryViaTimeline({
         sessionFile,
         cwd: root,
         customType: "swarm_model_change_continuity_request",
@@ -127,7 +127,7 @@ describe("appendImmediateCustomEntry", () => {
     writeFileSync(sessionFile, original, "utf8");
 
     await expect(
-      appendImmediateCustomEntry({
+      appendImmediateCustomEntryViaTimeline({
         sessionFile,
         cwd: root,
         customType: "swarm_model_change_continuity_request",
@@ -143,7 +143,7 @@ describe("appendImmediateCustomEntry", () => {
     const sessionFile = join(root, "manager.jsonl");
     writeFileSync(sessionFile, `${buildSessionHeader(root)}\n`, "utf8");
 
-    const result = await appendImmediateCustomEntry({
+    const result = await appendImmediateCustomEntryViaTimeline({
       sessionFile,
       cwd: root,
       customType: "swarm_model_change_continuity_request",
@@ -174,7 +174,7 @@ describe("appendImmediateCustomEntry", () => {
     })}`;
     writeFileSync(sessionFile, original, "utf8");
 
-    const result = await appendImmediateCustomEntry({
+    const result = await appendImmediateCustomEntryViaTimeline({
       sessionFile,
       cwd: root,
       customType: "swarm_model_change_continuity_applied",
@@ -201,7 +201,7 @@ describe("appendImmediateCustomEntry", () => {
 
     await Promise.all(
       Array.from({ length: 8 }, (_, index) =>
-        appendImmediateCustomEntry({
+        appendImmediateCustomEntryViaTimeline({
           sessionFile,
           cwd: root,
           customType: "swarm_model_change_continuity_request",
@@ -227,7 +227,7 @@ describe("appendImmediateCustomEntry", () => {
     mkdirSync(sessionFile, { recursive: true });
 
     await expect(
-      appendImmediateCustomEntry({
+      appendImmediateCustomEntryViaTimeline({
         sessionFile,
         cwd: root,
         customType: "swarm_model_change_continuity_request",

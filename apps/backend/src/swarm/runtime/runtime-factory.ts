@@ -33,8 +33,6 @@ import {
   type GetSecureRuntimeBinding,
 } from "../secure-sessions/runtime/secure-runtime-binding.js";
 
-export { resolveOpenAICodexTransport } from "./pi/pi-runtime-creator.js";
-
 interface RuntimeFactoryDependencies {
   host: SwarmToolHost;
   forgeExtensionHost: ForgeExtensionHost;

@@ -20,6 +20,7 @@ import { getSessionDir, getSessionFilePath, getWorkerSessionFilePath, getWorkers
 import { CONVERSATION_ENTRY_TYPE } from './conversation-timeline.js'
 import { normalizeProviderErrorMessage } from './message-utils.js'
 import { isCanonicalWorkerTranscriptFileName } from './worker-transcript-files.js'
+import { isEnoentError } from '../../utils/fs-errors.js'
 
 const SESSION_AUDIT_ENTRY_CATEGORY_VALUES = [
   'session_header',
@@ -189,7 +190,7 @@ export class SessionAuditService {
     const sessionSource = await this.resolveSessionSource(normalizedSessionAgentId)
     const manifest = await this.buildManifest(normalizedSessionAgentId, sessionSource.sessionDir, sessionSource.absolutePath)
     const sourceStats = await lstat(source.absolutePath).catch((error: unknown) => {
-      if (isNodeErrorCode(error, 'ENOENT')) {
+      if (isEnoentError(error)) {
         return undefined
       }
       throw error
@@ -425,7 +426,7 @@ export class SessionAuditService {
 
     const workerIds = new Set(descriptorWorkers.keys())
     const files = await readdir(workersDir).catch((error: unknown) => {
-      if (isNodeErrorCode(error, 'ENOENT')) {
+      if (isEnoentError(error)) {
         return [] as string[]
       }
       throw error
@@ -482,7 +483,7 @@ interface ReadJsonlLineDetailOptions {
 
 async function readJsonlLineDetail(options: ReadJsonlLineDetailOptions): Promise<JsonlLineAtOffset | undefined> {
   const fileHandle = await open(options.filePath, 'r').catch((error: unknown) => {
-    if (isNodeErrorCode(error, 'ENOENT')) {
+    if (isEnoentError(error)) {
       return undefined
     }
     throw error
@@ -663,7 +664,7 @@ async function scanJsonlLineDetail(
 
 async function readJsonlPage(options: ReadJsonlPageOptions): Promise<ReadJsonlPageResult> {
   const fileHandle = await open(options.filePath, 'r').catch((error: unknown) => {
-    if (isNodeErrorCode(error, 'ENOENT')) {
+    if (isEnoentError(error)) {
       return undefined
     }
     throw error
@@ -1771,7 +1772,7 @@ interface AuditFileState {
 
 async function readAuditDirectoryState(dirPath: string): Promise<AuditDirectoryState> {
   const dirStats = await lstat(dirPath).catch((error: unknown) => {
-    if (isNodeErrorCode(error, 'ENOENT')) {
+    if (isEnoentError(error)) {
       return undefined
     }
     throw error
@@ -1790,7 +1791,7 @@ async function readAuditFileState(
   containment?: { parentRealPath?: string; outsideMessage: string },
 ): Promise<AuditFileState> {
   const fileStats = await lstat(filePath).catch((error: unknown) => {
-    if (isNodeErrorCode(error, 'ENOENT')) {
+    if (isEnoentError(error)) {
       return undefined
     }
     throw error
@@ -1825,8 +1826,4 @@ function nullableStringValue(value: unknown): string | null | undefined {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === 'number' ? value : undefined
-}
-
-function isNodeErrorCode(error: unknown, code: string): boolean {
-  return error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === code
 }

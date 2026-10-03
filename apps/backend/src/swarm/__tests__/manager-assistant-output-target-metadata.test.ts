@@ -1,34 +1,32 @@
 import { describe, expect, it } from "vitest";
 import {
-  classifyAssistantOutputTarget,
   formatAssistantOutputTargetMetadata,
-  runtimeInputAllowsProjectedAssistantOutput,
   runtimeInputAssistantOutputPolicyFacts,
 } from "../runtime/manager-assistant-output-target-metadata.js";
 
 describe("manager assistant output target metadata", () => {
-  it("classifies server-owned targets into projection/warning facts", () => {
-    expect(classifyAssistantOutputTarget({ kind: "session_transcript", channel: "web" })).toEqual({
+  it("round-trips server-owned targets into projection/warning facts", () => {
+    expect(runtimeInputAssistantOutputPolicyFacts(formatAssistantOutputTargetMetadata({ kind: "session_transcript", channel: "web" }))).toEqual({
       mode: "web_transcript",
       allowsProjection: true,
       requiresVisibleCompletion: true,
     });
-    expect(classifyAssistantOutputTarget({ kind: "explicit_tool_required", reason: "agent_message" })).toEqual({
+    expect(runtimeInputAssistantOutputPolicyFacts(formatAssistantOutputTargetMetadata({ kind: "explicit_tool_required", reason: "agent_message" }))).toEqual({
       mode: "routed_required",
       allowsProjection: false,
       requiresVisibleCompletion: true,
     });
-    expect(classifyAssistantOutputTarget({ kind: "external_channel", sourceContext: { channel: "telegram", channelId: "c1" } })).toEqual({
+    expect(runtimeInputAssistantOutputPolicyFacts(formatAssistantOutputTargetMetadata({ kind: "external_channel", sourceContext: { channel: "telegram", channelId: "c1" } }))).toEqual({
       mode: "routed_required",
       allowsProjection: false,
       requiresVisibleCompletion: true,
     });
-    expect(classifyAssistantOutputTarget({ kind: "peer_agent", fromAgentId: "agent-1" })).toEqual({
+    expect(runtimeInputAssistantOutputPolicyFacts(formatAssistantOutputTargetMetadata({ kind: "peer_agent", fromAgentId: "agent-1" }))).toEqual({
       mode: "routed_required",
       allowsProjection: false,
       requiresVisibleCompletion: true,
     });
-    expect(classifyAssistantOutputTarget({ kind: "internal_only" })).toEqual({
+    expect(runtimeInputAssistantOutputPolicyFacts(formatAssistantOutputTargetMetadata({ kind: "internal_only" }))).toEqual({
       mode: "internal_only",
       allowsProjection: false,
       requiresVisibleCompletion: false,
@@ -41,7 +39,6 @@ describe("manager assistant output target metadata", () => {
       allowsProjection: true,
       requiresVisibleCompletion: true,
     });
-    expect(runtimeInputAllowsProjectedAssistantOutput('[assistantOutputTarget] {"kind":"session_transcript"}\n')).toBe(true);
     expect(runtimeInputAssistantOutputPolicyFacts('[assistantOutputTarget] {"kind":"explicit_tool_required","reason":"agent_message"}\n')).toEqual({
       mode: "routed_required",
       allowsProjection: false,

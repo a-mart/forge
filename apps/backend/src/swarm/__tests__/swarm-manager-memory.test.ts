@@ -8,7 +8,6 @@ import { getCatalogModelKey } from '@forge/protocol'
 import { getConversationHistoryCacheFilePath } from '../conversation-history-cache.js'
 import {
   getCommonKnowledgePath,
-  getCortexPromotionManifestsDir,
   getCortexReviewLogPath,
   getProfileKnowledgePath,
   getProfileMemoryPath,

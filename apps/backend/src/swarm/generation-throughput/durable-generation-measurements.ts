@@ -7,6 +7,7 @@ import {
   foldGenerationMeasurementRecords,
   type GenerationMeasurementRecordSource,
 } from "../../utils/generation-measurement-records.js";
+import { isEnoentError } from "../../utils/fs-errors.js";
 
 /**
  * Reads only compact generation custom entries for one manager session and its
@@ -42,8 +43,4 @@ async function listWorkerFiles(workersDir: string): Promise<string[]> {
     if (isEnoentError(error)) return [];
     throw error;
   }
-}
-
-function isEnoentError(error: unknown): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
 }

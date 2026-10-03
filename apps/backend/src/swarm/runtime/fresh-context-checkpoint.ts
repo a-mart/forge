@@ -168,10 +168,6 @@ export function collectUnconsumedToolEvidence(
   return evidence;
 }
 
-export function collectUnconsumedToolEvidenceIds(branchEntries: readonly SessionEntry[]): string[] {
-  return collectUnconsumedToolEvidence(branchEntries).map((entry) => entry.entryId);
-}
-
 export interface FreshContextRecoveryNote {
   path: string;
   revision: number;

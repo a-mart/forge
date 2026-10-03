@@ -15,13 +15,6 @@ export function isSessionDirectlyArchived(session: Pick<AgentDescriptor, "archiv
   return Boolean(session?.archivedAt);
 }
 
-export function isSessionEffectivelyArchived(input: {
-  session?: Pick<AgentDescriptor, "archivedAt"> | undefined | null;
-  profile?: Pick<ManagerProfile, "archivedAt"> | undefined | null;
-}): boolean {
-  return isSessionDirectlyArchived(input.session) || isProfileArchived(input.profile);
-}
-
 export function isSessionDirectlyArchivable(input: {
   session: Pick<AgentDescriptor, "agentId" | "role">;
   profile: Pick<ManagerProfile, "defaultSessionAgentId">;

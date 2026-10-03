@@ -874,8 +874,6 @@ function buildCodexMcpToolFailureResult(params: {
   };
 }
 
-export { formatCodexMcpToolFailureMessage } from "./codex-mcp-args.js";
-
 export function isToolSelectorAuthorizedInCatalog(
   requestedTool: CodexCatalogMcpTool,
   authorizedSelectors: string[],

@@ -168,25 +168,6 @@ export function inferSwarmModelPresetFromDescriptor(
   return modelCatalogService.inferFamily(descriptor);
 }
 
-export function normalizeSwarmModelDescriptor(
-  descriptor: Pick<AgentModelDescriptor, "provider" | "modelId"> | undefined,
-  fallbackPreset: SwarmModelPreset = DEFAULT_SWARM_MODEL_PRESET,
-): AgentModelDescriptor {
-  if (descriptor) {
-    const selectedModel = modelCatalogService.getModel(descriptor.modelId, descriptor.provider);
-    if (selectedModel?.provider === "xai") {
-      return {
-        provider: selectedModel.provider,
-        modelId: selectedModel.modelId,
-        thinkingLevel: selectedModel.defaultReasoningLevel,
-      };
-    }
-  }
-
-  const preset = inferSwarmModelPresetFromDescriptor(descriptor) ?? fallbackPreset;
-  return resolveModelDescriptorFromPreset(preset);
-}
-
 export function normalizeSwarmModelPresetValue(value: unknown): SwarmModelPreset | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -196,11 +177,6 @@ export function normalizeSwarmModelPresetValue(value: unknown): SwarmModelPreset
   return VALID_SWARM_MODEL_PRESET_VALUES.has(normalizedPreset)
     ? normalizedPreset
     : REMOVED_PRESET_REPLACEMENTS[normalizedPreset];
-}
-
-export function resolveRemovedSwarmModelPresetAlias(preset: string): SwarmModelPreset | undefined {
-  const normalizedPreset = preset.trim().toLowerCase();
-  return REMOVED_PRESET_REPLACEMENTS[normalizedPreset];
 }
 
 export function normalizePersistedSwarmModelPresetValue(value: string): SwarmModelPreset | undefined {

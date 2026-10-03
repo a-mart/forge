@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { isErrnoCode } from "../../utils/fs-errors.js";
 
 export interface CodexPluginArtifactFilePort {
   ensureDirectory(path: string): Promise<void>;
@@ -23,7 +24,7 @@ export function createCodexPluginArtifactFilePort(): CodexPluginArtifactFilePort
           await writeFile(candidate, body, { encoding: "utf8", flag: "wx" });
           return candidate;
         } catch (error) {
-          if (isNodeErrorCode(error, "EEXIST")) continue;
+          if (isErrnoCode(error, "EEXIST")) continue;
           throw error;
         }
       }
@@ -31,8 +32,4 @@ export function createCodexPluginArtifactFilePort(): CodexPluginArtifactFilePort
     },
     writeManifest: async (path, body) => writeFile(path, body, "utf8").then(() => undefined),
   };
-}
-
-function isNodeErrorCode(error: unknown, code: string): boolean {
-  return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === code);
 }

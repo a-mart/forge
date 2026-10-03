@@ -5,7 +5,6 @@ import {
   blockInterruptedWorkGraphWorkers,
   claimReadyWorkGraphNodes,
   findRunningWorkersToCancel,
-  isWorkGraphComplete,
   normalizePersistedWorkGraphSnapshot,
   normalizeWorkGraphInput,
   projectWorkGraphPlan,
@@ -562,15 +561,11 @@ describe('progressive work graph scenarios', () => {
     ])
   })
 
-  it('rejects cycles and reports completion without cancelled nodes', () => {
+  it('rejects cycles', () => {
     expect(() => normalizeWorkGraphInput({ nodes: [
       inputNode(node('one', 'One', { dependsOn: ['two'] }), 'pending'),
       inputNode(node('two', 'Two', { dependsOn: ['one'] }), 'pending'),
     ] })).toThrow('cycle')
-    expect(isWorkGraphComplete(graphOf([
-      node('done', 'Accepted outcome', { status: 'completed' }),
-      node('removed', 'Removed outcome', { status: 'cancelled' }),
-    ]))).toBe(true)
   })
 })
 

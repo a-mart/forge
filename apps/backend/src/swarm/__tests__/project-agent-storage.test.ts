@@ -7,11 +7,10 @@ import {
   backupProjectAgentRecordForRepoLink,
   deleteProjectAgentRecord,
   readProjectAgentRecord,
-  reconcileProjectAgentStorage,
-  renameProjectAgentRecord,
   scanProjectAgentRecords,
   writeProjectAgentRecord
 } from "../project-agent-storage.js";
+import { ProjectAgentRegistry } from "../agents/project-agent-registry.js";
 import {
   getProjectAgentConfigPath,
   getProjectAgentDir,
@@ -205,20 +204,6 @@ describe("project-agent-storage", () => {
     expect(records.find((record) => record.config.handle === "beta")?.systemPrompt).toBeNull();
   });
 
-  it("renames a project agent record by writing the new directory and deleting the old one", async () => {
-    const dataDir = await createTempDataDir();
-    const initialConfig = makeConfig({ agentId: "agent-1", handle: "old-handle", whenToUse: "Old tasks" });
-    const renamedConfig = makeConfig({ agentId: "agent-1", handle: "new-handle", whenToUse: "New tasks" });
-    await writeProjectAgentRecord(dataDir, "profile-a", initialConfig, "Old prompt");
-
-    await renameProjectAgentRecord(dataDir, "profile-a", "old-handle", "new-handle", renamedConfig, "New prompt");
-
-    await expect(access(getProjectAgentDir(dataDir, "profile-a", "old-handle"))).rejects.toMatchObject({ code: "ENOENT" });
-    const record = await readProjectAgentRecord(dataDir, "profile-a", "new-handle");
-    expect(record?.config.handle).toBe("new-handle");
-    expect(record?.systemPrompt).toBe("New prompt");
-  });
-
   it("backs up a local project-agent sidecar before local-to-repo link conversion", async () => {
     const dataDir = await createTempDataDir();
     const config = makeConfig({ agentId: "agent-1", handle: "docs", whenToUse: "Maintain docs" });
@@ -272,7 +257,7 @@ describe("project-agent-storage", () => {
       }
     });
 
-    const result = await reconcileProjectAgentStorage(dataDir, "profile-a", new Map([[descriptor.agentId, descriptor]]));
+    const result = await new ProjectAgentRegistry({ dataDir, descriptors: new Map([[descriptor.agentId, descriptor]]) }).reconcileProfile("profile-a");
 
     expect(result.materialized).toEqual(["agent-1"]);
     const record = await readProjectAgentRecord(dataDir, "profile-a", "release-notes");
@@ -296,7 +281,7 @@ describe("project-agent-storage", () => {
       }
     });
 
-    const result = await reconcileProjectAgentStorage(dataDir, "profile-a", new Map([[descriptor.agentId, descriptor]]));
+    const result = await new ProjectAgentRegistry({ dataDir, descriptors: new Map([[descriptor.agentId, descriptor]]) }).reconcileProfile("profile-a");
 
     expect(result.materialized).toEqual(["agent-1"]);
     const record = await readProjectAgentRecord(dataDir, "profile-a", "qa");
@@ -328,7 +313,7 @@ describe("project-agent-storage", () => {
       }
     });
 
-    const result = await reconcileProjectAgentStorage(dataDir, "profile-a", new Map([[descriptor.agentId, descriptor]]));
+    const result = await new ProjectAgentRegistry({ dataDir, descriptors: new Map([[descriptor.agentId, descriptor]]) }).reconcileProfile("profile-a");
 
     expect(result.hydrated).toEqual(["agent-1"]);
     expect(descriptor.projectAgent).toEqual({
@@ -361,7 +346,7 @@ describe("project-agent-storage", () => {
       }
     });
 
-    const result = await reconcileProjectAgentStorage(dataDir, "profile-a", new Map([[descriptor.agentId, descriptor]]));
+    const result = await new ProjectAgentRegistry({ dataDir, descriptors: new Map([[descriptor.agentId, descriptor]]) }).reconcileProfile("profile-a");
 
     expect(result.hydrated).toEqual(["agent-1"]);
     expect(descriptor.projectAgent?.capabilities).toEqual(["create_session"]);
@@ -376,7 +361,7 @@ describe("project-agent-storage", () => {
       "Prompt"
     );
 
-    const result = await reconcileProjectAgentStorage(dataDir, "profile-a", new Map());
+    const result = await new ProjectAgentRegistry({ dataDir, descriptors: new Map() }).reconcileProfile("profile-a");
 
     expect(result.orphansRemoved).toEqual(["orphan"]);
     await expect(access(getProjectAgentDir(dataDir, "profile-a", "orphan"))).rejects.toMatchObject({ code: "ENOENT" });
@@ -400,7 +385,7 @@ describe("project-agent-storage", () => {
       }
     });
 
-    const result = await reconcileProjectAgentStorage(dataDir, "profile-a", new Map([[descriptor.agentId, descriptor]]));
+    const result = await new ProjectAgentRegistry({ dataDir, descriptors: new Map([[descriptor.agentId, descriptor]]) }).reconcileProfile("profile-a");
 
     expect(result.orphansRemoved).toEqual(["docs"]);
     expect(result.materialized).toEqual(["agent-1"]);
@@ -445,7 +430,7 @@ describe("project-agent-storage", () => {
       "Current prompt"
     );
 
-    const result = await reconcileProjectAgentStorage(dataDir, "profile-a", new Map([[descriptor.agentId, descriptor]]));
+    const result = await new ProjectAgentRegistry({ dataDir, descriptors: new Map([[descriptor.agentId, descriptor]]) }).reconcileProfile("profile-a");
 
     expect(result.hydrated).toEqual(["agent-1"]);
     await expect(access(getProjectAgentDir(dataDir, "profile-a", "legacy-handle"))).rejects.toMatchObject({ code: "ENOENT" });
@@ -476,14 +461,13 @@ describe("project-agent-storage", () => {
       }
     });
 
-    const result = await reconcileProjectAgentStorage(
+    const result = await new ProjectAgentRegistry({
       dataDir,
-      "profile-a",
-      new Map([
+      descriptors: new Map([
         [existingDescriptor.agentId, existingDescriptor],
         [collidingDescriptor.agentId, collidingDescriptor]
       ])
-    );
+    }).reconcileProfile("profile-a");
 
     expect(result.hydrated).toEqual(["agent-1"]);
     expect(result.materialized).toEqual([]);

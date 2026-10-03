@@ -10,7 +10,7 @@ import { ProjectAgentSettingsSnapshotReader } from "../agents/project-agent-sett
 import { findProjectAgentByHandle, listProjectAgents } from "../project-agents.js";
 import { getProjectAgentDir } from "../data-paths.js";
 import { writeProjectAgentReferenceDoc } from "../reference-docs.js";
-import { reconcileProjectAgentStorage, writeProjectAgentRecord } from "../project-agent-storage.js";
+import { writeProjectAgentRecord } from "../project-agent-storage.js";
 import type { AgentDescriptor, ManagerProfile } from "../types.js";
 import { createWorkspaceKey } from "../project-workspace-resolver.js";
 import { ProjectResourceSettingsStore } from "../project-resource-settings.js";
@@ -894,22 +894,6 @@ describe("ProjectAgentRegistry", () => {
     const registry = new ProjectAgentRegistry({ dataDir, descriptors: new Map([[descriptor.agentId, descriptor]]) });
 
     await expect(registry.assertOwnedReferenceScope("agent-1")).rejects.toThrow(/repository-managed/i);
-  });
-
-  it("keeps storage reconciliation as a compatibility wrapper for registry-owned policy", async () => {
-    const dataDir = await createTempDataDir();
-    const descriptor = makeDescriptor({
-      agentId: "agent-1",
-      projectAgent: { handle: "docs", whenToUse: "Descriptor docs", systemPrompt: "Descriptor prompt" }
-    });
-    const descriptors = new Map([[descriptor.agentId, descriptor]]);
-
-    await expect(reconcileProjectAgentStorage(dataDir, "profile-a", descriptors)).resolves.toEqual({
-      hydrated: [],
-      materialized: ["agent-1"],
-      orphansRemoved: []
-    });
-    await expect(access(getProjectAgentDir(dataDir, "profile-a", "docs"))).resolves.toBeUndefined();
   });
 
   it("keeps mirror reconciliation behind the registry wrapper", async () => {
