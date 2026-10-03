@@ -115,7 +115,6 @@ import { createProjectResourceRoutes } from "./http/routes/project-resource-rout
 import { createRemoteBuildSettingsRoutes } from "./http/routes/remote-build-settings-routes.js";
 import { createPhoenixObservabilityRoutes } from "./http/routes/phoenix-observability-routes.js";
 import { createPromptRoutes } from "./http/routes/prompt-routes.js";
-import { createRestartRecoveryRoutes } from "./http/routes/restart-recovery-routes.js";
 import { createSchedulerRoutes } from "./http/routes/scheduler-routes.js";
 import { createSessionAuditRoutes } from "./http/routes/session-audit-routes.js";
 import {
@@ -885,10 +884,6 @@ export class SwarmWebSocketServer {
       }),
       ...(this.telemetryService ? createTelemetryRoutes({ telemetryService: this.telemetryService }) : []),
       ...createSchedulerRoutes({ swarmManager: this.swarmManager }),
-      ...createRestartRecoveryRoutes({
-        swarmManager: this.swarmManager,
-        broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
-      }),
       ...createSlashCommandRoutes({ swarmManager: this.swarmManager }),
       ...createMobileRoutes({ mobilePushService: this.mobilePushService }),
       ...createManagerSelectionCatalogRoutes({ swarmManager: this.swarmManager }),

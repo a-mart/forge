@@ -206,7 +206,6 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
 
   // --- project-scoped session surfaces ---------------------------------------
   { sample: "/api/managers/mgr-1/schedules", expect: { GET: "member" }, killSwitched: true },
-  { sample: "/api/restart-recovery", expect: { GET: "admin", POST: "admin" } },
   { sample: "/api/slash-commands", expect: { GET: "admin", POST: "admin" } },
   { sample: "/api/agents/agent-1/compact", expect: { POST: "member" }, killSwitched: true },
   { sample: "/api/agents/agent-1/smart-compact", expect: { POST: "member" }, killSwitched: true },
