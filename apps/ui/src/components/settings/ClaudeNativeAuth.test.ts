@@ -14,7 +14,7 @@ const signedOut: ClaudeAuthStatus = { connected: false, mode: 'subscription', ph
 beforeEach(() => {
   container = document.createElement('div'); document.body.append(container); root = createRoot(container)
 })
-afterEach(() => { flushSync(() => root.unmount()); container.remove(); vi.restoreAllMocks() })
+afterEach(() => { flushSync(() => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 function button(label: string) {
   const found = [...container.querySelectorAll('button')].find(b => b.textContent?.includes(label))
@@ -75,4 +75,45 @@ it('keeps account replacement out of API-key mode', async () => {
   flushSync(() => root.render(createElement(ClaudeNativeAuth, { apiClient: client })))
   await vi.waitFor(() => expect(container.textContent).toContain('configured Anthropic API key'))
   expect(container.textContent).not.toContain('Switch account')
+})
+
+
+it('copies the code-return link without opening a browser', async () => {
+  const url = 'https://claude.ai/oauth/authorize?state=fixture&code=true'
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('navigator', { clipboard: { writeText } })
+  const open = vi.spyOn(window, 'open')
+  const request = vi.spyOn(client, 'fetchJson').mockResolvedValue(signedOut)
+  flushSync(() => root.render(createElement(ClaudeNativeAuth, { apiClient: client })))
+  await vi.waitFor(() => expect(button('Sign in to Claude').disabled).toBe(false))
+  request.mockResolvedValue({ ...signedOut, phase: 'waiting', flowId: 'fixture', authorizationUrl: url })
+  flushSync(() => button('Sign in to Claude').click())
+  await vi.waitFor(() => expect(button('Copy sign-in link').disabled).toBe(false))
+  flushSync(() => button('Copy sign-in link').click())
+  await vi.waitFor(() => expect(container.textContent).toContain('Link copied'))
+  expect(writeText).toHaveBeenCalledWith(url)
+  expect(open).not.toHaveBeenCalled()
+  expect(container.querySelector('a')?.href).toBe(url)
+  expect(container.querySelector('input[type="password"]')).not.toBeNull()
+  request.mockResolvedValue(signedOut)
+  flushSync(() => button('Cancel sign-in').click())
+  await vi.waitFor(() => expect(container.querySelector('a')).toBeNull())
+  expect(container.textContent).not.toContain('Link copied')
+})
+
+it.each(['unavailable', 'denied'])('provides a selectable link when clipboard access is %s and keeps checking login', async failure => {
+  const url = 'https://claude.ai/oauth/authorize?state=fixture&code=true'
+  vi.stubGlobal('navigator', failure === 'unavailable' ? {} : { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('clipboard denied')) } })
+  const request = vi.spyOn(client, 'fetchJson').mockResolvedValue({ ...signedOut, phase: 'waiting', flowId: 'fixture', authorizationUrl: url })
+  flushSync(() => root.render(createElement(ClaudeNativeAuth, { apiClient: client })))
+  await vi.waitFor(() => expect(button('Copy sign-in link').disabled).toBe(false))
+  flushSync(() => button('Copy sign-in link').click())
+  await vi.waitFor(() => expect(container.textContent).toContain('Select and copy the link'))
+  const input = container.querySelector<HTMLInputElement>('input[readonly]')
+  expect(input?.value).toBe(url)
+  expect(input?.getAttribute('aria-label')).toBe('Claude sign-in link')
+  request.mockResolvedValue({ ...signedOut, connected: true })
+  await vi.waitFor(() => expect(container.textContent).toContain('Claude connected'), { timeout: 4000 })
+  expect(container.querySelector('input[readonly]')).toBeNull()
+  expect(container.textContent).not.toContain('Select and copy the link')
 })
