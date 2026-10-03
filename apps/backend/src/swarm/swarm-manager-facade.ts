@@ -771,6 +771,8 @@ export abstract class SwarmManagerFacade extends SwarmManagerSessionAttentionFac
     return this.services.agents.notifySpecialistRosterChanged(profileId, options);
   }
 
+  notifyClaudeNativeAuthChanged(): Promise<void> { return this.services.agents.notifyClaudeNativeAuthChanged(); }
+
   notifyProjectAgentsChanged(profileId: string): Promise<void> {
     return this.services.projectAgents.notifyProjectAgentsChanged(profileId);
   }

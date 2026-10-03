@@ -33,7 +33,7 @@ describe("native Claude sign-in", () => {
     const first = await service.start();
     expect((await service.start()).flowId).toBe(first.flowId);
     expect(mocks.spawn).toHaveBeenCalledOnce();
-    expect(mocks.spawn).toHaveBeenCalledWith("/bundled/claude", ["auth", "login", "--claudeai"], expect.objectContaining({ env: { HOME: "/same-home", CLAUDE_CONFIG_DIR: "/same-config" } }));
+    expect(mocks.spawn).toHaveBeenCalledWith("/bundled/claude", ["auth", "login", "--claudeai"], expect.objectContaining({ env: { HOME: "/same-home", CLAUDE_CONFIG_DIR: "/same-config", BROWSER: "/bundled/claude/forge-manual-sign-in" } }));
     child.stdout.write("Opening browser\nhttps://claude.ai/oauth/author");
     expect((await service.status()).authorizationUrl).toBeUndefined();
     child.stdout.write("ize?state=fixture&client_id=fixture\nPaste code here if prompted > ");
@@ -81,12 +81,73 @@ describe("native Claude sign-in", () => {
     expect(mocks.spawn).not.toHaveBeenCalled();
     expect(JSON.stringify(state)).not.toContain("PRIVATE_API_KEY");
   });
+  it("replaces an existing login and waits for runtime refresh before confirming success", async () => {
+    mocks.signedIn.mockResolvedValue(true);
+    let release!: () => void;
+    const refresh = vi.fn(() => new Promise<void>(resolve => { release = resolve; }));
+    service = new ClaudeAuthService({} as SwarmConfig, refresh);
+    expect((await service.status()).connected).toBe(true);
+    const flow = await service.start();
+    child.stdout.write("https://claude.ai/oauth/authorize?state=fixture\n");
+    service.submitCode(flow.flowId!, "REPLACEMENT#fixture");
+    expect(refresh).not.toHaveBeenCalled();
+    child.close(0);
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    expect((await service.status()).phase).toBe("verifying");
+    release();
+    await vi.waitFor(async () => expect((await service.status()).phase).toBe("idle"));
+    expect((await service.status()).connected).toBe(true);
+  });
+  it("keeps a failed replacement visible while the previous login is still connected", async () => {
+    mocks.signedIn.mockResolvedValue(true);
+    const refresh = vi.fn();
+    service = new ClaudeAuthService({} as SwarmConfig, refresh);
+    await service.start(); child.stderr.write("PRIVATE_FAILURE"); child.close(1);
+    await vi.waitFor(async () => expect((await service.status()).phase).toBe("error"));
+    expect((await service.status()).connected).toBe(true);
+    expect((await service.status()).message).toContain("did not finish");
+    expect(refresh).not.toHaveBeenCalled();
+    expect(JSON.stringify(await service.status())).not.toContain("PRIVATE_FAILURE");
+  });
+  it("does not refresh runtimes when replacement is canceled", async () => {
+    mocks.signedIn.mockResolvedValue(true);
+    const refresh = vi.fn();
+    service = new ClaudeAuthService({} as SwarmConfig, refresh);
+    const flow = await service.start(); await service.cancel(flow.flowId!);
+    expect((await service.status()).connected).toBe(true);
+    expect(refresh).not.toHaveBeenCalled();
+  });
+  it("reports a verified login whose old runtime could not be refreshed without exposing cleanup errors", async () => {
+    mocks.signedIn.mockResolvedValue(true);
+    service = new ClaudeAuthService({} as SwarmConfig, async () => { throw new Error("PRIVATE_CLEANUP"); });
+    await service.start(); child.close(0);
+    await vi.waitFor(async () => expect((await service.status()).phase).toBe("error"));
+    expect((await service.status()).connected).toBe(true);
+    expect((await service.status()).message).toContain("session");
+    expect(JSON.stringify(await service.status())).not.toContain("PRIVATE_CLEANUP");
+  });
+  it("clears a transient status-check failure when the saved connection can be checked again", async () => {
+    mocks.signedIn.mockRejectedValueOnce(new Error("Connection check unavailable"));
+    expect((await service.status()).phase).toBe("error");
+    mocks.signedIn.mockResolvedValue(true);
+    expect(await service.status()).toMatchObject({ connected: true, phase: "idle" });
+    expect((await service.status()).message).toBeUndefined();
+  });
+  it("requests a code while preserving the CLI's manual OAuth parameters", () => {
+    const url = new URL(extractClaudeAuthorizationUrl("https://claude.com/cai/oauth/authorize?code=false&state=fixture%23state&code_challenge=fixture-challenge&code_challenge_method=S256&client_id=fixture-client&response_type=code&scope=user%3Ainference&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback\n")!);
+    expect(url.searchParams.get("code")).toBe("true");
+    expect(url.searchParams.get("state")).toBe("fixture#state");
+    expect(url.searchParams.get("code_challenge")).toBe("fixture-challenge");
+    expect(url.searchParams.get("client_id")).toBe("fixture-client");
+    expect(url.searchParams.get("scope")).toBe("user:inference");
+    expect(url.searchParams.get("redirect_uri")).toBe("https://platform.claude.com/oauth/code/callback");
+  });
   it("allows only complete official authorization URLs", () => {
     expect(extractClaudeAuthorizationUrl("https://claude.ai/oauth/authorize?state=partial")).toBeUndefined();
     expect(extractClaudeAuthorizationUrl("https://claude.ai.evil.test/oauth/authorize\n")).toBeUndefined();
     expect(extractClaudeAuthorizationUrl("https://claude.ai/other\n")).toBeUndefined();
     expect(extractClaudeAuthorizationUrl("https://user:pass@claude.ai/oauth/authorize\n")).toBeUndefined();
-    expect(extractClaudeAuthorizationUrl("https://claude.ai/oauth/authorize?state=ok\n")).toBe("https://claude.ai/oauth/authorize?state=ok");
-    expect(extractClaudeAuthorizationUrl("https://claude.com/cai/oauth/authorize?state=ok\n")).toBe("https://claude.com/cai/oauth/authorize?state=ok");
+    expect(extractClaudeAuthorizationUrl("https://claude.ai/oauth/authorize?state=ok\n")).toBe("https://claude.ai/oauth/authorize?state=ok&code=true");
+    expect(extractClaudeAuthorizationUrl("https://claude.com/cai/oauth/authorize?state=ok\n")).toBe("https://claude.com/cai/oauth/authorize?state=ok&code=true");
   });
 });

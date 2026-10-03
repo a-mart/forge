@@ -14,10 +14,21 @@ with optional dependencies enabled. No global Claude CLI installation is require
 The default authentication mode is **native Claude login**, using your Claude
 subscription. If you already use Claude Code on the same computer/account, its login
 is reused. Otherwise, choose **Sign in to Claude** in the conversation's connection
-panel or **Settings → Authentication → Claude native**. Finish the browser steps;
-if Claude gives you an authorization code, paste the complete code into the private
-field in Forge. Forge checks the saved sign-in before showing **Claude connected**.
+panel or **Settings → Authentication → Claude native**. Forge keeps the browser
+closed. Choose **Copy sign-in link** and open it in your preferred browser, or click
+**Open Claude sign-in** to open it explicitly. The link requests an authorization
+code by default; after authorizing, paste the complete code into the private field
+in Forge. If clipboard access fails, select and copy the displayed link manually.
+Forge checks the saved sign-in before showing **Claude connected**.
 Retry your message after connecting; an application restart is unnecessary.
+
+To change subscriptions, choose **Switch account** under **Settings → Authentication →
+Claude native** and select the other account on the Claude sign-in page. The saved
+login is shared with Claude Code on this computer. Forge refreshes idle native Claude
+managers and workers after verifying the login; active turns finish before their
+runtime refreshes. Conversation history is preserved. Cancelling the flow leaves the
+saved login available. This replaces one login; saved-account selection and automatic
+balancing are not yet supported for Claude native.
 
 **Check connection** also detects a login completed with `claude auth login` in an
 external terminal, provided that terminal uses the same `CLAUDE_CONFIG_DIR` as Forge.

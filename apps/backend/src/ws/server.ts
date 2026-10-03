@@ -734,7 +734,7 @@ export class SwarmWebSocketServer {
         void this.telemetryService?.sendOnStatsRefresh(allStats);
       },
     });
-    this.claudeAuthService = isBuilder ? new ClaudeAuthService(this.swarmManager.getConfig()) : null;
+    this.claudeAuthService = isBuilder ? new ClaudeAuthService(this.swarmManager.getConfig(), () => this.swarmManager.notifyClaudeNativeAuthChanged()) : null;
     this.settingsRoutes = createSettingsRoutes({
       swarmManager: this.swarmManager,
       notificationSettingsService: this.notificationSettingsService,

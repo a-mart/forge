@@ -112,6 +112,14 @@ export class ManagerAssistantOutputTracker {
         activeTurn.openToolCalls.set(event.toolCallId, event.toolName);
         break;
 
+      case "tool_execution_update":
+        // A backgrounded call no longer blocks the model, so later text is not
+        // mid-tool commentary; treating it as open would duplicate clean finals.
+        if (event.executionState === "background") {
+          activeTurn.openToolCalls.delete(event.toolCallId);
+        }
+        break;
+
       case "tool_execution_end":
         activeTurn.openToolCalls.delete(event.toolCallId);
         activeTurn.completedToolCalls.set(event.toolCallId, {

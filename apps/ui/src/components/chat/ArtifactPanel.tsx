@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { FrontMatterBlock } from '@/components/ui/FrontMatterBlock'
 import { parseFrontMatter } from '@/lib/parse-front-matter'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
-import { Check, ClipboardCopy, ExternalLink, FileCode2, FileImage, FileText, FileType, FolderOpen, Loader2, X } from 'lucide-react'
+import { Check, ClipboardCopy, Code2, ExternalLink, Eye, FileCode2, FileImage, FileText, FileType, FolderOpen, Globe, Loader2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -17,6 +17,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 import { isElectron } from '@/lib/electron-bridge'
 import { useSelectionContainment } from '@/hooks/useSelectionContainment'
+import { useDrawerResize } from '@/hooks/use-drawer-resize'
 import { MarkdownMessage } from './MarkdownMessage'
 import { PdfPreview } from '@/components/file-browser/PdfPreview'
 import {
@@ -25,7 +26,7 @@ import {
   resolveSafeArtifactPdfTicketUrl,
   revokeArtifactPdfBlobUrl,
 } from './artifact-pdf'
-import type { ChatArtifactReadResponse } from '@forge/protocol'
+import { CHAT_ARTIFACT_MAX_TEXT_BYTES, type ChatArtifactReadResponse } from '@forge/protocol'
 
 interface ArtifactPanelProps {
   artifact: ArtifactReference | null
@@ -50,6 +51,15 @@ interface ReadFileResult {
 const TRANSCRIPT_ARTIFACT_PREVIEW_BYTES = 512 * 1024
 const MARKDOWN_FILE_PATTERN = /\.(md|markdown|mdx)$/i
 const IMAGE_FILE_PATTERN = /\.(png|jpg|jpeg|gif|webp|svg)$/i
+const ARTIFACT_PANEL_WIDTH_KEY = 'forge-artifact-panel-width'
+const DEFAULT_ARTIFACT_PANEL_WIDTH = 880
+const MIN_ARTIFACT_PANEL_WIDTH = 420
+const MAX_ARTIFACT_PANEL_WIDTH = 3200
+const getArtifactPanelAvailableWidth = () => Math.floor(window.innerWidth * 0.95)
+const HTML_FILE_PATTERN = /\.html?$/i
+// Opaque origin: page scripts run, but cannot reach Forge's DOM, storage, cookies, or top window.
+// Popups escape to the desktop window-open policy, which hands http(s) links to the system browser.
+const HTML_PREVIEW_SANDBOX = 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals'
 
 export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtifactClick }: ArtifactPanelProps) {
   const [isVisible, setIsVisible] = useState(false)
@@ -64,6 +74,13 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
   const closingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
   const { onPointerDown: onSelectionPointerDown } = useSelectionContainment(contentRef)
+  const { width: panelWidth, isResizing, handleResizeStart } = useDrawerResize({
+    storageKey: ARTIFACT_PANEL_WIDTH_KEY,
+    defaultWidth: DEFAULT_ARTIFACT_PANEL_WIDTH,
+    minWidth: MIN_ARTIFACT_PANEL_WIDTH,
+    maxWidth: MAX_ARTIFACT_PANEL_WIDTH,
+    getAvailableWidth: getArtifactPanelAvailableWidth,
+  })
 
   const editorPreference = readStoredEditorPreference()
   const editorScheme = EDITOR_URL_SCHEMES[editorPreference]
@@ -75,6 +92,13 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
   const transcriptAgentId = artifact?.transcriptAgentId ?? null
   const transcriptMessageId = artifact?.messageId ?? null
   const [pathCopied, setPathCopied] = useState(false)
+  const [htmlView, setHtmlView] = useState<'preview' | 'source'>('preview')
+  const [openError, setOpenError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setHtmlView('preview')
+    setOpenError(null)
+  }, [artifactPath])
 
   useEffect(() => {
     if (!artifactPath) {
@@ -112,6 +136,7 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
     const isImageArtifact =
       IMAGE_FILE_PATTERN.test(artifactFileName ?? '') || IMAGE_FILE_PATTERN.test(artifactPath)
     const isPdfArtifact = isArtifactPdfPath(artifactFileName, artifactPath)
+    const isHtmlArtifact = HTML_FILE_PATTERN.test(artifactFileName ?? '') || HTML_FILE_PATTERN.test(artifactPath)
     const hasTranscriptProvenance = Boolean(transcriptAgentId && transcriptMessageId)
     if (isImageArtifact && !hasTranscriptProvenance) {
       setContent('')
@@ -163,6 +188,8 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
               transcriptAgentId: transcriptAgentId!,
               messageId: transcriptMessageId!,
               path: artifactPath,
+              // A rendered page needs the whole document, not the text-preview prefix.
+              previewBytes: isHtmlArtifact ? CHAT_ARTIFACT_MAX_TEXT_BYTES : TRANSCRIPT_ARTIFACT_PREVIEW_BYTES,
               signal: abortController.signal,
             })
           : await readLegacyArtifactFile({
@@ -273,6 +300,25 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
     [artifact?.fileName, displayPath],
   )
   const isMarkdown = useMemo(() => MARKDOWN_FILE_PATTERN.test(displayPath), [displayPath])
+  const isHtml = useMemo(
+    () => HTML_FILE_PATTERN.test(artifact?.fileName ?? '') || HTML_FILE_PATTERN.test(displayPath),
+    [artifact?.fileName, displayPath],
+  )
+  const localFilePath = displayPath || artifact?.path || ''
+  const isLocalAbsolutePath = localFilePath.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(localFilePath)
+  const canRevealInFolder = isElectron() && Boolean(window.electronBridge?.revealInFolder) && isLocalAbsolutePath
+  const canOpenInBrowser = isHtml && isElectron() && isLocalAbsolutePath
+
+  const handleOpenInBrowser = useCallback(async () => {
+    const openHtmlInBrowser = window.electronBridge?.openHtmlInBrowser
+    if (!openHtmlInBrowser) {
+      // The renderer can update ahead of the desktop process; only a restart loads the new bridge.
+      setOpenError('Restart Forge to open HTML files in your browser.')
+      return
+    }
+    const result = await openHtmlInBrowser(localFilePath)
+    setOpenError(result.success ? null : result.error || 'Unable to open in browser.')
+  }, [localFilePath])
   const frontMatter = useMemo(
     () => (isMarkdown && content ? parseFrontMatter(content) : null),
     [isMarkdown, content],
@@ -294,7 +340,8 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
     return null
   }
 
-  const FileIcon = isImage ? FileImage : isPdf ? FileType : isMarkdown ? FileText : FileCode2
+  const FileIcon = isImage ? FileImage : isPdf ? FileType : isMarkdown ? FileText : isHtml ? Globe : FileCode2
+  const showHtmlPreview = isHtml && htmlView === 'preview' && !isLoading && !error
   const isOpen = Boolean(artifactPath) || isClosing
 
   return (
@@ -323,14 +370,15 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
           onPointerDown={onSelectionPointerDown}
           className={cn(
             'fixed right-0 top-0 z-50 flex h-full w-full flex-col',
-            'max-md:max-w-full md:max-w-[min(880px,90vw)]',
+            'max-md:max-w-full md:w-[var(--artifact-panel-width)] md:max-w-[95vw]',
             'border-l border-border/80 bg-background',
             'shadow-[-8px_0_32px_-4px_rgba(0,0,0,0.12)] outline-none',
-            'transition-all duration-[260ms] ease-[cubic-bezier(0.32,0.72,0,1)]',
+            'transition-[transform,opacity] duration-[260ms] ease-[cubic-bezier(0.32,0.72,0,1)]',
             isVisible
               ? 'translate-x-0 opacity-100'
               : 'translate-x-[40%] opacity-0',
           )}
+          style={{ '--artifact-panel-width': `${panelWidth}px` } as CSSProperties}
           onEscapeKeyDown={(event) => {
             event.preventDefault()
             handleAnimatedClose()
@@ -340,6 +388,21 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
             event.preventDefault()
           }}
         >
+          {/* Resize handle on left edge (desktop only) */}
+          <div
+            className={cn(
+              'absolute left-0 top-0 bottom-0 z-10 hidden w-1.5 -translate-x-1/2 cursor-col-resize select-none md:block',
+              'hover:bg-primary/20',
+              isResizing && 'bg-primary/30',
+            )}
+            onMouseDown={handleResizeStart}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize artifact panel"
+            aria-valuenow={panelWidth}
+            aria-valuemin={MIN_ARTIFACT_PANEL_WIDTH}
+            aria-valuemax={MAX_ARTIFACT_PANEL_WIDTH}
+          />
           <DialogTitle className="sr-only">{artifact ? `Artifact: ${artifact.fileName}` : 'Artifact panel'}</DialogTitle>
           {/* Header */}
           <header className="flex h-[62px] shrink-0 items-center justify-between gap-3 border-b border-border/80 bg-card/80 px-5 backdrop-blur">
@@ -372,43 +435,70 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
             </div>
 
             <div className="flex shrink-0 items-center gap-1.5">
-              <a
-                href={toEditorHref(displayPath || artifact?.path || '', editorScheme)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={cn(
-                  'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium',
-                  'text-muted-foreground transition-colors',
-                  'hover:bg-muted hover:text-foreground',
-                )}
-              >
-                <ExternalLink className="size-3" aria-hidden="true" />
-                <span className="hidden sm:inline">Open in {editorLabel}</span>
-                <span className="sm:hidden">{editorLabel}</span>
-              </a>
+              {isHtml && (
+                <div className="mr-1 inline-flex items-center rounded-md border border-border/60 p-0.5" role="group" aria-label="HTML view">
+                  {([
+                    { view: 'preview', label: 'Preview', ariaLabel: 'Show rendered preview', Icon: Eye },
+                    { view: 'source', label: 'Source', ariaLabel: 'Show HTML source', Icon: Code2 },
+                  ] as const).map(({ view, label, ariaLabel, Icon }) => (
+                    <button
+                      key={view}
+                      type="button"
+                      onClick={() => setHtmlView(view)}
+                      aria-label={ariaLabel}
+                      aria-pressed={htmlView === view}
+                      className={cn(
+                        'inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors',
+                        htmlView === view
+                          ? 'bg-muted text-foreground'
+                          : 'text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      <Icon className="size-3" aria-hidden="true" />
+                      <span className="hidden sm:inline">{label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
 
-              {isElectron() && window.electronBridge?.revealInFolder && (() => {
-                const pathToReveal = displayPath || artifact?.path || ''
-                const isAbsolute = pathToReveal.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(pathToReveal)
-                if (!pathToReveal || !isAbsolute) return null
-                return (
-                  <button
-                    type="button"
-                    className={cn(
-                      'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium',
-                      'text-muted-foreground transition-colors',
-                      'hover:bg-muted hover:text-foreground',
-                    )}
-                    onClick={() => {
-                      window.electronBridge?.revealInFolder?.(pathToReveal)
-                    }}
-                    aria-label="Show in folder"
-                  >
-                    <FolderOpen className="size-3" aria-hidden="true" />
-                    <span className="hidden sm:inline">Show in folder</span>
-                  </button>
-                )
-              })()}
+              {canOpenInBrowser && (
+                <button
+                  type="button"
+                  className={HEADER_ACTION_CLASS}
+                  onClick={() => void handleOpenInBrowser()}
+                  aria-label="Open in browser"
+                >
+                  <Globe className="size-3" aria-hidden="true" />
+                  <span className="hidden sm:inline">Open in browser</span>
+                </button>
+              )}
+
+              {!isHtml && (
+                <a
+                  href={toEditorHref(localFilePath, editorScheme)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={HEADER_ACTION_CLASS}
+                >
+                  <ExternalLink className="size-3" aria-hidden="true" />
+                  <span className="hidden sm:inline">Open in {editorLabel}</span>
+                  <span className="sm:hidden">{editorLabel}</span>
+                </a>
+              )}
+
+              {canRevealInFolder && (
+                <button
+                  type="button"
+                  className={HEADER_ACTION_CLASS}
+                  onClick={() => {
+                    void window.electronBridge?.revealInFolder?.(localFilePath)
+                  }}
+                  aria-label="Show in folder"
+                >
+                  <FolderOpen className="size-3" aria-hidden="true" />
+                  <span className="hidden sm:inline">Show in folder</span>
+                </button>
+              )}
 
               <div className="mx-0.5 h-4 w-px bg-border/60" aria-hidden="true" />
 
@@ -429,8 +519,34 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
             </div>
           </header>
 
+          {openError && (
+            <div role="alert" className="flex shrink-0 items-center justify-between gap-3 border-b border-destructive/30 bg-destructive/5 px-5 py-2 text-xs text-destructive">
+              <span className="min-w-0 truncate">{openError}</span>
+              <button type="button" onClick={() => setOpenError(null)} aria-label="Dismiss" className="shrink-0 opacity-70 hover:opacity-100">
+                <X className="size-3" aria-hidden="true" />
+              </button>
+            </div>
+          )}
+
           {/* Content */}
-          {isPdf && pdfPreviewUrl && !isLoading && !error ? (
+          {showHtmlPreview ? (
+            <div className="flex min-h-0 flex-1 flex-col">
+              {previewInfo?.truncated && (
+                <div className="shrink-0 border-b border-border/60 bg-muted/40 px-5 py-2 text-xs text-muted-foreground">
+                  Rendering the first {CHAT_ARTIFACT_MAX_TEXT_BYTES.toLocaleString()} of {previewInfo.totalBytes.toLocaleString()} bytes.
+                </div>
+              )}
+              <iframe
+                key={displayPath}
+                title={artifact?.fileName ?? 'HTML preview'}
+                srcDoc={content}
+                sandbox={HTML_PREVIEW_SANDBOX}
+                referrerPolicy="no-referrer"
+                // An iframe captures mouse events, which would strand an in-progress panel resize.
+                className={cn('min-h-0 w-full flex-1 border-0 bg-white', isResizing && 'pointer-events-none')}
+              />
+            </div>
+          ) : isPdf && pdfPreviewUrl && !isLoading && !error ? (
             <div className="flex min-h-0 flex-1 flex-col">
               <PdfPreview
                 sourceUrl={pdfPreviewUrl}
@@ -508,6 +624,12 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
   )
 }
 
+const HEADER_ACTION_CLASS = cn(
+  'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium',
+  'text-muted-foreground transition-colors',
+  'hover:bg-muted hover:text-foreground',
+)
+
 async function readLegacyArtifactFile({
   wsUrl,
   path,
@@ -532,12 +654,14 @@ async function readTranscriptArtifactFile({
   transcriptAgentId,
   messageId,
   path,
+  previewBytes,
   signal,
 }: {
   wsUrl: string
   transcriptAgentId: string
   messageId: string
   path: string
+  previewBytes: number
   signal: AbortSignal
 }): Promise<ReadFileResult> {
   return readArtifactFileResponse(
@@ -546,7 +670,7 @@ async function readTranscriptArtifactFile({
       transcriptAgentId,
       messageId,
       path,
-      previewBytes: TRANSCRIPT_ARTIFACT_PREVIEW_BYTES,
+      previewBytes,
       imageTransport: 'http_ticket',
     },
     path,

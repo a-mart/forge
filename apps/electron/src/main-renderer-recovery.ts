@@ -15,7 +15,7 @@ export type MainRendererRecoveryReason =
 
 export type MainRendererRecoveryEvent =
   | { type: 'ready'; recovered: boolean }
-  | { type: 'scheduled'; reason: MainRendererRecoveryReason }
+  | { type: 'scheduled'; reason: MainRendererRecoveryReason; processGoneReason?: string; exitCode?: number }
   | { type: 'attempt'; reason: MainRendererRecoveryReason; attempt: number }
   | { type: 'exhausted'; reason: MainRendererRecoveryReason; attempts: number }
 
@@ -74,7 +74,10 @@ export function installMainRendererRecovery(options: {
     recoveryTimer = null
   }
 
-  const scheduleRecovery = (reason: MainRendererRecoveryReason): void => {
+  const scheduleRecovery = (
+    reason: MainRendererRecoveryReason,
+    processGone?: Electron.RenderProcessGoneDetails,
+  ): void => {
     clearReadyTimer()
     if (!canRecover() || recoveryTimer || recoveryInFlight) return
     if (recoveryAttempts >= maxRecoveryAttempts) {
@@ -82,7 +85,11 @@ export function installMainRendererRecovery(options: {
       return
     }
 
-    options.onEvent?.({ type: 'scheduled', reason })
+    options.onEvent?.({
+      type: 'scheduled',
+      reason,
+      ...(processGone ? { processGoneReason: processGone.reason, exitCode: processGone.exitCode } : {}),
+    })
     recoveryTimer = setTimeout(() => {
       recoveryTimer = null
       if (!canRecover()) return
@@ -117,8 +124,9 @@ export function installMainRendererRecovery(options: {
       armReadyTimer()
     }
   }
-  const onRenderProcessGone = (): void => {
-    scheduleRecovery('render-process-gone')
+  const onRenderProcessGone = (_event: Electron.Event, details: Electron.RenderProcessGoneDetails): void => {
+    // Keep Electron's reason (for example `oom` or `crashed`) and exit code in the lifecycle log.
+    scheduleRecovery('render-process-gone', details)
   }
   const onDidFailLoad = (
     _event: Electron.Event,

@@ -2678,6 +2678,36 @@ describe("SwarmAgentLifecycleService", () => {
     expect(runtimeRecoveryState.hasPendingManagerRuntimeRecycle("m1")).toBe(false);
   });
 
+  it("refreshes only local native Claude logins, deferring active workers and preserving failed writers", async () => {
+    const manager = createAgentDescriptor({ agentId: "claude-manager", status: "idle", model: { provider: "claude-native", modelId: "claude-opus-5-5", thinkingLevel: "medium" } });
+    const worker = createWorkerDescriptor("/p", manager.agentId, { agentId: "claude-worker", status: "streaming", model: { ...manager.model } });
+    const failed = createAgentDescriptor({ ...manager, agentId: "claude-failed" });
+    const pi = createAgentDescriptor({ agentId: "pi-manager", status: "idle" });
+    const collab = createAgentDescriptor({ ...manager, agentId: "collab-manager", sessionSurface: "collab" });
+    const descriptors = new Map([manager, worker, failed, pi, collab].map(d => [d.agentId, d]));
+    const runtimes = new Map([...descriptors.values()].map(d => [d.agentId, makeRuntimeStub({ descriptor: d, getStatus: () => d.status })]));
+    const managerRuntime = runtimes.get(manager.agentId)!;
+    const workerRuntime = runtimes.get(worker.agentId)!;
+    const failedRuntime = runtimes.get(failed.agentId)!;
+    vi.mocked(failedRuntime.recycle).mockRejectedValueOnce(new Error("cleanup failed"));
+    const runtimeRecoveryState = new RuntimeRecoveryState();
+    const svc = new SwarmAgentLifecycleService(baseLifecycleOptions({ descriptors, runtimes, runtimeRecoveryState }));
+    await expect(svc.notifyClaudeNativeAuthChanged()).rejects.toThrow();
+    expect(managerRuntime.recycle).toHaveBeenCalledOnce();
+    expect(runtimes.has(manager.agentId)).toBe(false);
+    expect(workerRuntime.recycle).not.toHaveBeenCalled();
+    expect(runtimeRecoveryState.getPendingManagerRuntimeRecycleReason(worker.agentId)).toBe("auth_source_change");
+    expect(runtimes.get(failed.agentId)).toBe(failedRuntime);
+    expect(runtimeRecoveryState.getPendingManagerRuntimeRecycleReason(failed.agentId)).toBe("auth_source_change");
+    expect(runtimes.get(pi.agentId)!.recycle).not.toHaveBeenCalled();
+    expect(runtimes.get(collab.agentId)!.recycle).not.toHaveBeenCalled();
+    worker.status = "idle";
+    await expect(svc.applyAgentRuntimeRecyclePolicy(worker.agentId, "idle_transition")).resolves.toBe("recycled");
+    expect(workerRuntime.recycle).toHaveBeenCalledOnce();
+    await expect(svc.notifyClaudeNativeAuthChanged()).resolves.toBeUndefined();
+    expect(runtimes.has(failed.agentId)).toBe(false);
+  });
+
   it("recycles an idle secure worker runtime without touching team authority", async () => {
     const worker = createWorkerDescriptor("/p", "m1", {
       agentId: "secure-worker-recycle",

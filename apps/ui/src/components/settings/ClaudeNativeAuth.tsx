@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { Check, ExternalLink, Loader2 } from 'lucide-react'
+import { Check, Copy, ExternalLink, Loader2 } from 'lucide-react'
 import type { ClaudeAuthStatus } from '@forge/protocol'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -15,6 +15,8 @@ export function ClaudeNativeAuth({ apiClient, inConversation = false }: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [code, setCode] = useState('')
+  const [copied, setCopied] = useState(false)
+  const [copyError, setCopyError] = useState<string | null>(null)
   const codeId = useId()
   const generation = useRef(0)
   const invalidate = useCallback(() => { generation.current++ }, [])
@@ -40,6 +42,22 @@ export function ClaudeNativeAuth({ apiClient, inConversation = false }: {
     void request()
     return invalidate
   }, [request, invalidate])
+
+  useEffect(() => {
+    setCopied(false)
+    setCopyError(null)
+  }, [status?.authorizationUrl])
+
+  const copyLink = async () => {
+    if (!status?.authorizationUrl) return
+    setCopyError(null)
+    try {
+      await navigator.clipboard.writeText(status.authorizationUrl)
+      setCopied(true)
+    } catch {
+      setCopyError('Could not copy the link. Select and copy the link below, then open it in your preferred browser.')
+    }
+  }
 
   // Poll only while the CLI owns an active login, without overlapping requests.
   useEffect(() => {
@@ -68,14 +86,14 @@ export function ClaudeNativeAuth({ apiClient, inConversation = false }: {
           <p className="max-w-prose text-xs text-muted-foreground">
             {status?.connected
               ? status.mode === 'api_key' ? 'Using your configured Anthropic API key.'
-                : inConversation ? 'Your subscription is connected. Send your message again to continue.' : 'Using your Claude subscription on this computer.'
-              : active ? 'Finish signing in on the Claude page. Forge will check the connection automatically.'
+                : inConversation ? 'Your subscription is connected. Send your message again to continue.' : 'Using your Claude subscription. Sign-in is shared with Claude Code on this computer.'
+              : active ? 'Copy the sign-in link and open it in your preferred browser. To switch accounts, choose a different account there, then paste the authorization code below.'
                 : 'Use your Claude subscription. Sign-in is shared with Claude Code on this computer.'}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {!status?.connected && !active ? (
-            <Button size="sm" disabled={busy} onClick={() => mutate('start')}>Sign in to Claude</Button>
+          {status && status.mode === 'subscription' && !active ? (
+            <Button size="sm" disabled={busy} onClick={() => mutate('start')}>{status.connected ? 'Switch account' : 'Sign in to Claude'}</Button>
           ) : null}
           {active ? <Button variant="outline" size="sm" disabled={busy} onClick={() => mutate('cancel')}>Cancel sign-in</Button> : null}
           {!active || error ? <Button variant="outline" size="sm" disabled={busy} onClick={() => void request()}>
@@ -86,9 +104,15 @@ export function ClaudeNativeAuth({ apiClient, inConversation = false }: {
       </div>
       {active && status?.authorizationUrl ? (
         <div className="mt-3 space-y-3">
-          <a className={buttonVariants({ variant: 'outline', size: 'sm' })} href={status.authorizationUrl} target="_blank" rel="noreferrer">Open Claude sign-in <ExternalLink className="size-3.5" aria-hidden="true" /></a>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={() => void copyLink()}>
+              {copied ? <Check className="size-3.5" aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}
+              {copied ? 'Link copied' : 'Copy sign-in link'}
+            </Button>
+            <a className={buttonVariants({ variant: 'outline', size: 'sm' })} href={status.authorizationUrl} target="_blank" rel="noreferrer">Open Claude sign-in <ExternalLink className="size-3.5" aria-hidden="true" /></a>
+          </div>
           <form className="max-w-lg space-y-2" onSubmit={event => { event.preventDefault(); mutate('code') }}>
-            <label htmlFor={codeId} className="text-xs text-muted-foreground">If Claude gives you an authorization code, paste it here.</label>
+            <label htmlFor={codeId} className="text-xs text-muted-foreground">After authorizing on the Claude page, paste the complete authorization code here.</label>
             <div className="flex gap-2">
               <Input id={codeId} type="password" value={code} onChange={event => setCode(event.target.value)}
                 autoComplete="off" spellCheck={false} placeholder="Authorization code" className="min-w-0"
@@ -96,6 +120,9 @@ export function ClaudeNativeAuth({ apiClient, inConversation = false }: {
               <Button size="sm" type="submit" disabled={busy || !code.trim()}>Submit code</Button>
             </div>
           </form>
+          <Input aria-label="Claude sign-in link" readOnly value={status.authorizationUrl}
+            onFocus={event => event.currentTarget.select()} className="max-w-lg text-xs" />
+          {copyError ? <p role="alert" className="max-w-prose text-sm">{copyError}</p> : null}
         </div>
       ) : null}
       {error || status?.message ? <p role="alert" className="mt-3 max-w-prose break-words text-sm text-foreground">{error ?? status?.message}</p> : null}

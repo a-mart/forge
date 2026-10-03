@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import type { ClaudeAuthStatus } from "@forge/protocol";
 import type { SwarmConfig } from "../../types.js";
@@ -19,7 +20,7 @@ export class ClaudeAuthService {
   private disposed = false;
   private state: ClaudeAuthStatus = { connected: false, mode: "subscription", phase: "idle" };
 
-  constructor(private readonly config: SwarmConfig) {}
+  constructor(private readonly config: SwarmConfig, private readonly onConnected?: () => Promise<void>) {}
 
   async status(): Promise<ClaudeAuthStatus> {
     if (this.flow) return { ...this.state };
@@ -29,11 +30,11 @@ export class ClaudeAuthService {
       // A flow may have started while this check was in flight.
       if (!this.flow) this.state = {
         connected, mode: env.ANTHROPIC_API_KEY ? "api_key" : "subscription",
-        phase: connected ? "idle" : this.state.phase,
-        ...(!connected && this.state.message ? { message: this.state.message } : {}),
+        phase: this.state.phase === "error" ? "error" : connected ? "idle" : this.state.phase,
+        ...(this.state.message ? { message: this.state.message } : {}),
       };
     } catch (error) {
-      if (!this.flow) this.state = { connected: false, mode: "subscription", phase: "error", message: safeSetupError(error) };
+      if (!this.flow) return { connected: false, mode: "subscription", phase: "error", message: safeSetupError(error) };
     }
     return { ...this.state };
   }
@@ -50,7 +51,12 @@ export class ClaudeAuthService {
       if (env.ANTHROPIC_API_KEY) throw new Error("Forge is configured for API-key billing. Switch FORGE_CLAUDE_AUTH_MODE to cli before connecting a subscription.");
       const executable = await resolveClaudeExecutable();
       if (flow.stopped) { this.release(flow); return { ...this.state }; }
-      const child = spawn(executable, ["auth", "login", "--claudeai"], { env, windowsHide: true, stdio: "pipe" });
+      // auth login has no --no-browser flag. BROWSER overrides its system opener
+      // without fallback. A path beneath the executable file cannot be launched
+      // on any platform, so only an explicit UI click opens a browser.
+      const child = spawn(executable, ["auth", "login", "--claudeai"], {
+        env: { ...env, BROWSER: join(executable, "forge-manual-sign-in") }, windowsHide: true, stdio: "pipe",
+      });
       flow.child = child;
       let output = "";
       let spawnFailed = false;
@@ -89,6 +95,15 @@ export class ClaudeAuthService {
           }
           try {
             const connected = await isClaudeSignedIn(executable, env);
+            if (flow.stopped) return;
+            if (connected) {
+              try { await this.onConnected?.(); }
+              catch {
+                if (!flow.stopped) this.state = { connected: true, mode: "subscription", phase: "error",
+                  message: "Claude saved the login, but an existing session could not refresh. Stop that session and retry your message to use the saved login." };
+                return;
+              }
+            }
             if (!flow.stopped) this.state = { connected, mode: "subscription", phase: connected ? "idle" : "error",
               ...(!connected ? { message: "Claude finished sign-in, but Forge cannot read the saved login. Check access to Claude's credential store on this computer, then try again." } : {}) };
           } catch (error) {
@@ -154,7 +169,12 @@ export function extractClaudeAuthorizationUrl(output: string): string | undefine
       const url = new URL(match[0]);
       const supported = (url.hostname === "claude.com" && url.pathname === "/cai/oauth/authorize")
         || (["claude.ai", "console.anthropic.com", "platform.claude.com"].includes(url.hostname) && url.pathname === "/oauth/authorize");
-      if (supported && !url.username && !url.password && !url.port) return url.href;
+      if (supported && !url.username && !url.password && !url.port) {
+        // The CLI prints its manual redirect URL; keep its state/PKCE/redirect
+        // intact while explicitly asking Claude to display the code.
+        url.searchParams.set("code", "true");
+        return url.href;
+      }
     } catch { /* Wait for the rest of a split output chunk. */ }
   }
   return undefined;
