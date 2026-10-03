@@ -2,10 +2,7 @@
 /*  Shared API helpers for settings components                        */
 /* ------------------------------------------------------------------ */
 
-import type {
-  SettingsAuthOAuthFlowState,
-  SkillInfo,
-} from './settings-types'
+import type { SettingsAuthOAuthFlowState } from './settings-types'
 import type {
   SettingsAuthLoginAuthUrlEvent,
   SettingsAuthLoginCompleteEvent,
@@ -29,7 +26,6 @@ import type {
   UpdateOpenAIBrokerSettingsRequest,
   CredentialPoolState,
   CredentialPoolStrategy,
-  SkillInventoryResponse,
 } from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
 
@@ -444,32 +440,6 @@ export async function submitSettingsAuthOAuthPrompt(client: SettingsApiClient, p
     body: JSON.stringify({ value, ...(requestId ? { requestId } : {}) }),
   })
   if (!response.ok) throw new Error(await client.readApiError(response))
-}
-
-/* ------------------------------------------------------------------ */
-/*  Skills metadata API                                               */
-/* ------------------------------------------------------------------ */
-
-function isSkillInfo(value: unknown): value is SkillInfo {
-  if (!value || typeof value !== 'object') return false
-  const v = value as Partial<SkillInfo>
-  return (
-    typeof v.name === 'string' && v.name.trim().length > 0 &&
-    (v.description === undefined || typeof v.description === 'string') &&
-    typeof v.envCount === 'number' &&
-    typeof v.hasRichConfig === 'boolean'
-  )
-}
-
-export async function fetchSkillsList(client: SettingsApiClient, profileId?: string): Promise<SkillInfo[]> {
-  const path = profileId
-    ? `/api/settings/skills?profileId=${encodeURIComponent(profileId)}`
-    : '/api/settings/skills'
-  const response = await client.fetch(path)
-  if (!response.ok) throw new Error(await client.readApiError(response))
-  const payload = (await response.json()) as Partial<SkillInventoryResponse>
-  if (!payload || !Array.isArray(payload.skills)) return []
-  return payload.skills.filter(isSkillInfo)
 }
 
 /* ------------------------------------------------------------------ */
