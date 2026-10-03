@@ -96,7 +96,7 @@ interface SettingsGeneralProps {
    * Explicit runtime capability for Clone repository settings.
    * Direct collaboration-server Builder must pass false even when target.kind is builder.
    */
-  repositoryCloneAvailable?: boolean
+  repositoryCloneAvailable: boolean
 }
 
 interface CompactionModelOption {
@@ -206,12 +206,6 @@ export function SettingsGeneral({
 
   const isCollab = target?.kind === 'collab'
   const isBuilder = !isCollab
-  /**
-   * Prefer the explicit runtime capability. Fall back to builder target only when
-   * the caller omitted the prop (legacy tests); never enable for collab targets.
-   */
-  const repositoriesSettingsEnabled =
-    repositoryCloneAvailable ?? (target?.kind === 'builder')
 
   // Use apiClient for onboarding when available, fall back to wsUrl
   const onboardingSource = apiClient ?? wsUrl
@@ -623,7 +617,7 @@ export function SettingsGeneral({
   const repositorySettingsSource = apiClient ?? wsUrl
 
   useEffect(() => {
-    if (!repositoriesSettingsEnabled) return
+    if (!repositoryCloneAvailable) return
     let cancelled = false
     setRepositoryLoading(true)
     setRepositoryError(null)
@@ -645,7 +639,7 @@ export function SettingsGeneral({
     return () => {
       cancelled = true
     }
-  }, [repositoriesSettingsEnabled, repositorySettingsSource])
+  }, [repositoryCloneAvailable, repositorySettingsSource])
 
   const handleSaveRepositoryHome = useCallback(() => {
     if (repositoryUpdating) return
@@ -821,7 +815,7 @@ export function SettingsGeneral({
         </SettingsSection>
       )}
 
-      {repositoriesSettingsEnabled && (
+      {repositoryCloneAvailable && (
         <SettingsSection
           label="Repositories"
           description="Default base path for Clone repository when creating a project. Configured home wins over last-used clone base; otherwise Forge uses your home directory."

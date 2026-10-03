@@ -334,7 +334,7 @@ async function flush(): Promise<void> {
 function renderGeneral(): void {
   root = createRoot(container)
   flushSync(() => {
-    root?.render(createElement(SettingsGeneral, { wsUrl: 'ws://127.0.0.1:47187' }))
+    root?.render(createElement(SettingsGeneral, { wsUrl: 'ws://127.0.0.1:47187', repositoryCloneAvailable: false }))
   })
 }
 
@@ -588,8 +588,8 @@ describe('SettingsGeneral', () => {
         .mockResolvedValueOnce({ available: true, response: knowledgeV2SettingsView(false, false) })
 
       root = createRoot(container)
-      flushSync(() => root?.render(createElement(SettingsGeneral, { wsUrl: 'ws://first' })))
-      flushSync(() => root?.render(createElement(SettingsGeneral, { wsUrl: 'ws://second' })))
+      flushSync(() => root?.render(createElement(SettingsGeneral, { wsUrl: 'ws://first', repositoryCloneAvailable: false })))
+      flushSync(() => root?.render(createElement(SettingsGeneral, { wsUrl: 'ws://second', repositoryCloneAvailable: false })))
       await flush()
       resolveFirst({ available: true, response: knowledgeV2SettingsView(false, true) })
       await flush()
@@ -740,6 +740,7 @@ describe('SettingsGeneral — collab target', () => {
       root?.render(
         createElement(SettingsGeneral, {
           wsUrl: 'wss://collab.example.com',
+          repositoryCloneAvailable: false,
           target: {
             kind: 'collab',
             label: 'Collab backend',
@@ -852,6 +853,7 @@ describe('SettingsGeneral — collab target', () => {
       root?.render(
         createElement(SettingsGeneral, {
           wsUrl: 'wss://collab.example.com',
+          repositoryCloneAvailable: false,
           target: mockClient.target,
           apiClient: mockClient,
         }),
@@ -890,6 +892,7 @@ describe('SettingsGeneral — collab target', () => {
       root?.render(
         createElement(SettingsGeneral, {
           wsUrl: 'wss://collab.example.com',
+          repositoryCloneAvailable: false,
           target: client.target,
           apiClient: client,
         }),
@@ -1045,6 +1048,7 @@ describe('SettingsGeneral — builder target repositories', () => {
       root?.render(
         createElement(SettingsGeneral, {
           wsUrl: 'ws://127.0.0.1:47187',
+          repositoryCloneAvailable: true,
           target: {
             kind: 'builder',
             label: 'Local Builder',
