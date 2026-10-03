@@ -19,7 +19,7 @@ export class ClaudeAuthService {
   private disposed = false;
   private state: ClaudeAuthStatus = { connected: false, mode: "subscription", phase: "idle" };
 
-  constructor(private readonly config: SwarmConfig) {}
+  constructor(private readonly config: SwarmConfig, private readonly onConnected?: () => Promise<void>) {}
 
   async status(): Promise<ClaudeAuthStatus> {
     if (this.flow) return { ...this.state };
@@ -29,11 +29,11 @@ export class ClaudeAuthService {
       // A flow may have started while this check was in flight.
       if (!this.flow) this.state = {
         connected, mode: env.ANTHROPIC_API_KEY ? "api_key" : "subscription",
-        phase: connected ? "idle" : this.state.phase,
-        ...(!connected && this.state.message ? { message: this.state.message } : {}),
+        phase: this.state.phase === "error" ? "error" : connected ? "idle" : this.state.phase,
+        ...(this.state.message ? { message: this.state.message } : {}),
       };
     } catch (error) {
-      if (!this.flow) this.state = { connected: false, mode: "subscription", phase: "error", message: safeSetupError(error) };
+      if (!this.flow) return { connected: false, mode: "subscription", phase: "error", message: safeSetupError(error) };
     }
     return { ...this.state };
   }
@@ -89,6 +89,15 @@ export class ClaudeAuthService {
           }
           try {
             const connected = await isClaudeSignedIn(executable, env);
+            if (flow.stopped) return;
+            if (connected) {
+              try { await this.onConnected?.(); }
+              catch {
+                if (!flow.stopped) this.state = { connected: true, mode: "subscription", phase: "error",
+                  message: "Claude saved the login, but an existing session could not refresh. Stop that session and retry your message to use the saved login." };
+                return;
+              }
+            }
             if (!flow.stopped) this.state = { connected, mode: "subscription", phase: connected ? "idle" : "error",
               ...(!connected ? { message: "Claude finished sign-in, but Forge cannot read the saved login. Check access to Claude's credential store on this computer, then try again." } : {}) };
           } catch (error) {

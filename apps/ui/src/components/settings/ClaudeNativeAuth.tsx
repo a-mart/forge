@@ -68,14 +68,14 @@ export function ClaudeNativeAuth({ apiClient, inConversation = false }: {
           <p className="max-w-prose text-xs text-muted-foreground">
             {status?.connected
               ? status.mode === 'api_key' ? 'Using your configured Anthropic API key.'
-                : inConversation ? 'Your subscription is connected. Send your message again to continue.' : 'Using your Claude subscription on this computer.'
-              : active ? 'Finish signing in on the Claude page. Forge will check the connection automatically.'
+                : inConversation ? 'Your subscription is connected. Send your message again to continue.' : 'Using your Claude subscription. Sign-in is shared with Claude Code on this computer.'
+              : active ? 'Finish signing in on the Claude page. To switch accounts, choose a different account there. Forge will check the connection automatically.'
                 : 'Use your Claude subscription. Sign-in is shared with Claude Code on this computer.'}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {!status?.connected && !active ? (
-            <Button size="sm" disabled={busy} onClick={() => mutate('start')}>Sign in to Claude</Button>
+          {status && status.mode === 'subscription' && !active ? (
+            <Button size="sm" disabled={busy} onClick={() => mutate('start')}>{status.connected ? 'Switch account' : 'Sign in to Claude'}</Button>
           ) : null}
           {active ? <Button variant="outline" size="sm" disabled={busy} onClick={() => mutate('cancel')}>Cancel sign-in</Button> : null}
           {!active || error ? <Button variant="outline" size="sm" disabled={busy} onClick={() => void request()}>

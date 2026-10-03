@@ -81,6 +81,58 @@ describe("native Claude sign-in", () => {
     expect(mocks.spawn).not.toHaveBeenCalled();
     expect(JSON.stringify(state)).not.toContain("PRIVATE_API_KEY");
   });
+  it("replaces an existing login and waits for runtime refresh before confirming success", async () => {
+    mocks.signedIn.mockResolvedValue(true);
+    let release!: () => void;
+    const refresh = vi.fn(() => new Promise<void>(resolve => { release = resolve; }));
+    service = new ClaudeAuthService({} as SwarmConfig, refresh);
+    expect((await service.status()).connected).toBe(true);
+    const flow = await service.start();
+    child.stdout.write("https://claude.ai/oauth/authorize?state=fixture\n");
+    service.submitCode(flow.flowId!, "REPLACEMENT#fixture");
+    expect(refresh).not.toHaveBeenCalled();
+    child.close(0);
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    expect((await service.status()).phase).toBe("verifying");
+    release();
+    await vi.waitFor(async () => expect((await service.status()).phase).toBe("idle"));
+    expect((await service.status()).connected).toBe(true);
+  });
+  it("keeps a failed replacement visible while the previous login is still connected", async () => {
+    mocks.signedIn.mockResolvedValue(true);
+    const refresh = vi.fn();
+    service = new ClaudeAuthService({} as SwarmConfig, refresh);
+    await service.start(); child.stderr.write("PRIVATE_FAILURE"); child.close(1);
+    await vi.waitFor(async () => expect((await service.status()).phase).toBe("error"));
+    expect((await service.status()).connected).toBe(true);
+    expect((await service.status()).message).toContain("did not finish");
+    expect(refresh).not.toHaveBeenCalled();
+    expect(JSON.stringify(await service.status())).not.toContain("PRIVATE_FAILURE");
+  });
+  it("does not refresh runtimes when replacement is canceled", async () => {
+    mocks.signedIn.mockResolvedValue(true);
+    const refresh = vi.fn();
+    service = new ClaudeAuthService({} as SwarmConfig, refresh);
+    const flow = await service.start(); await service.cancel(flow.flowId!);
+    expect((await service.status()).connected).toBe(true);
+    expect(refresh).not.toHaveBeenCalled();
+  });
+  it("reports a verified login whose old runtime could not be refreshed without exposing cleanup errors", async () => {
+    mocks.signedIn.mockResolvedValue(true);
+    service = new ClaudeAuthService({} as SwarmConfig, async () => { throw new Error("PRIVATE_CLEANUP"); });
+    await service.start(); child.close(0);
+    await vi.waitFor(async () => expect((await service.status()).phase).toBe("error"));
+    expect((await service.status()).connected).toBe(true);
+    expect((await service.status()).message).toContain("session");
+    expect(JSON.stringify(await service.status())).not.toContain("PRIVATE_CLEANUP");
+  });
+  it("clears a transient status-check failure when the saved connection can be checked again", async () => {
+    mocks.signedIn.mockRejectedValueOnce(new Error("Connection check unavailable"));
+    expect((await service.status()).phase).toBe("error");
+    mocks.signedIn.mockResolvedValue(true);
+    expect(await service.status()).toMatchObject({ connected: true, phase: "idle" });
+    expect((await service.status()).message).toBeUndefined();
+  });
   it("allows only complete official authorization URLs", () => {
     expect(extractClaudeAuthorizationUrl("https://claude.ai/oauth/authorize?state=partial")).toBeUndefined();
     expect(extractClaudeAuthorizationUrl("https://claude.ai.evil.test/oauth/authorize\n")).toBeUndefined();

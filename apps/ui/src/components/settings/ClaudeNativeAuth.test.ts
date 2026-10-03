@@ -50,3 +50,29 @@ it('recovers a failed connection check without claiming that the account is sign
   await vi.waitFor(() => expect(container.textContent).toContain('Claude connected'))
   expect(container.querySelector('[role="alert"]')).toBeNull()
 })
+
+
+it('lets a connected subscription start account replacement and cancel back to its saved login', async () => {
+  const connected = { ...signedOut, connected: true }
+  const request = vi.spyOn(client, 'fetchJson').mockResolvedValue(connected)
+  flushSync(() => root.render(createElement(ClaudeNativeAuth, { apiClient: client })))
+  await vi.waitFor(() => expect(button('Switch account').disabled).toBe(false))
+  expect(container.textContent).toContain('shared with Claude Code')
+  request.mockResolvedValue({ ...signedOut, phase: 'waiting', flowId: 'switch-fixture', authorizationUrl: 'https://claude.ai/oauth/authorize?state=fixture' })
+  flushSync(() => button('Switch account').click())
+  await vi.waitFor(() => expect(container.querySelector('a')).not.toBeNull())
+  expect(request).toHaveBeenLastCalledWith('/api/settings/claude-native', expect.objectContaining({ method: 'POST', body: expect.stringContaining('"action":"start"') }))
+  expect(container.textContent).toContain('different account')
+  request.mockResolvedValue(connected)
+  flushSync(() => button('Cancel sign-in').click())
+  await vi.waitFor(() => expect(button('Switch account').disabled).toBe(false))
+  expect(request).toHaveBeenLastCalledWith('/api/settings/claude-native', expect.objectContaining({ method: 'DELETE', body: expect.stringContaining('switch-fixture') }))
+  expect(container.querySelector('input')).toBeNull()
+})
+
+it('keeps account replacement out of API-key mode', async () => {
+  vi.spyOn(client, 'fetchJson').mockResolvedValue({ ...signedOut, connected: true, mode: 'api_key' })
+  flushSync(() => root.render(createElement(ClaudeNativeAuth, { apiClient: client })))
+  await vi.waitFor(() => expect(container.textContent).toContain('configured Anthropic API key'))
+  expect(container.textContent).not.toContain('Switch account')
+})

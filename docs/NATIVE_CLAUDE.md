@@ -19,6 +19,14 @@ if Claude gives you an authorization code, paste the complete code into the priv
 field in Forge. Forge checks the saved sign-in before showing **Claude connected**.
 Retry your message after connecting; an application restart is unnecessary.
 
+To change subscriptions, choose **Switch account** under **Settings → Authentication →
+Claude native** and select the other account on the Claude sign-in page. The saved
+login is shared with Claude Code on this computer. Forge refreshes idle native Claude
+managers and workers after verifying the login; active turns finish before their
+runtime refreshes. Conversation history is preserved. Cancelling the flow leaves the
+saved login available. This replaces one login; saved-account selection and automatic
+balancing are not yet supported for Claude native.
+
 **Check connection** also detects a login completed with `claude auth login` in an
 external terminal, provided that terminal uses the same `CLAUDE_CONFIG_DIR` as Forge.
 Forge's in-app flow always uses the same executable and configuration as its native
