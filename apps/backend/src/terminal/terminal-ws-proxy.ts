@@ -8,6 +8,7 @@ import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { TerminalRuntimeConfig } from "./terminal-config.js";
 import { validateTerminalWsOrigin } from "./terminal-access-policy.js";
 import { TerminalServiceError, type TerminalService } from "./terminal-service.js";
+import { toErrorMessage } from "./terminal-service-helpers.js";
 
 const TERMINAL_WS_PATH_PATTERN = /^\/terminal\/ws\/([^/]+)$/;
 
@@ -333,10 +334,6 @@ function toServerErrorMessage(error: unknown): TerminalWsServerControlMessage {
     code: "INTERNAL_ERROR",
     message: toErrorMessage(error),
   };
-}
-
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function rawDataToBuffer(data: RawData): Buffer {

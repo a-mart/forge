@@ -9,6 +9,7 @@ import {
   type VersionedPathsOptions
 } from "./versioned-paths.js";
 import type { VersioningMutation, VersioningMutationSink } from "./versioning-types.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 const DEFAULT_DEBOUNCE_MS = 1_500;
 const DEFAULT_RECONCILE_INTERVAL_MS = 5 * 60 * 1_000;
@@ -568,15 +569,6 @@ function parseReconcileIntervalEnv(): number {
 
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_RECONCILE_INTERVAL_MS;
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }
 
 function stringifyError(error: unknown): string {

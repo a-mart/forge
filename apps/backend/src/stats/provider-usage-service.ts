@@ -11,6 +11,7 @@ import {
   type ProviderUsageHistoryProvider
 } from "./provider-usage-history.js";
 import { fetchXaiOAuthUsage } from "./xai-oauth-usage.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 const CACHE_TTL_MS = 3 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 10_000;
@@ -988,15 +989,6 @@ function toSafeNumber(value: unknown, fallback = 0): number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }
 
 function toErrorMessage(error: unknown): string {

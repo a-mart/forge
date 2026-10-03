@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { dirname, extname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyCorsHeaders, matchPathPattern, sendJson } from "../../http-utils.js";
+import { applyCorsHeaders, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
 
 const MERMAID_PREVIEW_PREFIX = "/mermaid-preview";
@@ -97,7 +97,7 @@ async function handleAssetRequest(
     return;
   }
 
-  const match = matchPathPattern(requestUrl.pathname, MERMAID_PREVIEW_ASSET_PATH);
+  const match = requestUrl.pathname.match(MERMAID_PREVIEW_ASSET_PATH);
   if (!match) {
     sendJson(response, 404, { error: "Not Found" });
     return;

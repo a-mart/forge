@@ -12,6 +12,7 @@ import {
   getProfilesDir,
   getSharedKnowledgeDir,
 } from "../swarm/data-paths.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 export interface VersionedPathsOptions {
   trackSessionMemory?: boolean;
@@ -276,13 +277,4 @@ async function addTrackedPathIfPresent(
   if (metadata) {
     tracked.add(metadata.relativePath);
   }
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }

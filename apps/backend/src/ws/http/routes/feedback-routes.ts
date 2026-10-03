@@ -1,7 +1,7 @@
 import { FEEDBACK_REASON_CODES, type FeedbackEvent, type FeedbackSubmitValue } from "@forge/protocol";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import { FeedbackService, type FeedbackListOptions } from "../../../swarm/feedback-service.js";
-import { applyCorsHeaders, decodePathSegment, matchPathPattern, readJsonBody, sendJson } from "../../http-utils.js";
+import { applyCorsHeaders, decodePathSegment, readJsonBody, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
 
 const SESSION_FEEDBACK_ENDPOINT_PATTERN = /^\/api\/v1\/profiles\/([^/]+)\/sessions\/([^/]+)\/feedback$/;
@@ -130,7 +130,7 @@ export function createFeedbackRoutes(options: { swarmManager: SwarmManager; feed
 }
 
 function resolveSessionRoute(pathname: string, pattern: RegExp): { profileId: string; sessionId: string } | null {
-  const matched = matchPathPattern(pathname, pattern);
+  const matched = pathname.match(pattern);
   if (!matched) {
     return null;
   }

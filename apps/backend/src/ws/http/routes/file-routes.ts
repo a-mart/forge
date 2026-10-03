@@ -4,7 +4,7 @@ import { isPathWithinRoots } from "../../../swarm/cwd-policy.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import {
   applyCorsHeaders,
-  parseJsonBody,
+  readJsonBody,
   resolveReadFileContentType,
   sendJson
 } from "../../http-utils.js";
@@ -156,7 +156,7 @@ export function createFileRoutes(options: { swarmManager: SwarmManager }): HttpR
             const worktreeIdFromQuery = requestUrl.searchParams.get("worktreeId")?.trim();
             worktreeId = worktreeIdFromQuery ? worktreeIdFromQuery : undefined;
           } else {
-            const payload = await parseJsonBody(request, MAX_READ_FILE_BODY_BYTES);
+            const payload = await readJsonBody(request, MAX_READ_FILE_BODY_BYTES);
             if (!payload || typeof payload !== "object") {
               sendJson(response, 400, { error: "Request body must be a JSON object." });
               return;
@@ -246,7 +246,7 @@ export function createFileRoutes(options: { swarmManager: SwarmManager }): HttpR
             return;
           }
 
-          if (message.includes("Request body exceeds")) {
+          if (message.includes("Request body too large")) {
             sendJson(response, 413, { error: message });
             return;
           }

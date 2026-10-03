@@ -2,6 +2,7 @@ import type { AvailableTerminalShell } from "@forge/protocol";
 import { readFile } from "node:fs/promises";
 import { win32 } from "node:path";
 import { resolveCommand } from "./terminal-pty-runtime.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 interface ShellCandidate {
   path: string;
@@ -156,10 +157,4 @@ function humanizeShellName(pathValue: string): string {
       return normalized.charAt(0).toUpperCase() + normalized.slice(1);
     }
   }
-}
-
-function isEnoentError(error: unknown): boolean {
-  return Boolean(
-    error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "ENOENT",
-  );
 }

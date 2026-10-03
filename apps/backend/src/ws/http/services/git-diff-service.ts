@@ -12,6 +12,7 @@ import type {
 } from "@forge/protocol";
 import { GitCli } from "../../../versioning/git-cli.js";
 import { parseVersioningCommitMetadata } from "../../../versioning/versioning-commit-metadata.js";
+import { isEnoentError } from "../../../utils/fs-errors.js";
 
 const MAX_DIFF_FILE_BYTES = 1 * 1024 * 1024;
 const MAX_STATUS_FILES = 500;
@@ -626,15 +627,6 @@ async function readUtf8FileAllowMissing(path: string): Promise<{ exists: boolean
 
     throw error;
   }
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }
 
 function isBinaryBuffer(content: Buffer): boolean {

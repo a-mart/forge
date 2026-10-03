@@ -9,6 +9,7 @@ import {
   getSharedMobileNotificationPreferencesPath
 } from "../swarm/data-paths.js";
 import { writeJsonFileAtomic } from "../utils/atomic-files.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 const MOBILE_DEVICES_FILE_VERSION = 1;
 const MOBILE_NOTIFICATION_PREFERENCES_VERSION = 1;
@@ -561,14 +562,4 @@ function validatePreferencesPatch(patch: MobileNotificationPreferencesPatch): vo
       throw new Error(`${key} must be a boolean`);
     }
   }
-}
-
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }

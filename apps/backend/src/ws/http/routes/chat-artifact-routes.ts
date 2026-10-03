@@ -6,7 +6,7 @@ import {
   chatArtifactStatus,
   readPresentedChatArtifact,
 } from "../../../swarm/session/presented-chat-artifact.js";
-import { applyCorsHeaders, parseJsonBody, sendJson } from "../../http-utils.js";
+import { applyCorsHeaders, readJsonBody, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
 
 const READ_PATH = "/api/chat-artifacts/read";
@@ -59,7 +59,7 @@ export function createChatArtifactRoutes(options: {
         return;
       }
       try {
-        const body = await parseJsonBody(request, 64 * 1024);
+        const body = await readJsonBody(request, 64 * 1024);
         const result = await readPresentedChatArtifact(options.swarmManager, body as any, {
           securityPlatform: options.artifactSecurityPlatform,
           ticketStore,
@@ -72,7 +72,7 @@ export function createChatArtifactRoutes(options: {
           return;
         }
         const message = error instanceof Error ? error.message : "";
-        if (message.includes("exceeds")) { sendJson(response, 413, { error: "request_too_large", code: "request_too_large" }); return; }
+        if (message.includes("Request body too large")) { sendJson(response, 413, { error: "request_too_large", code: "request_too_large" }); return; }
         if (message.includes("valid JSON")) { sendJson(response, 400, { error: "invalid_request", code: "invalid_request" }); return; }
         sendJson(response, 500, { error: "Unable to read chat artifact.", code: "transcript_read_failed" });
       }

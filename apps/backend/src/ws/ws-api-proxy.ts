@@ -42,6 +42,7 @@ import {
   readPresentedChatArtifact,
 } from "../swarm/session/presented-chat-artifact.js";
 import { MAX_WS_EVENT_BYTES } from "./ws-send.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 const API_PROXY_SMART_COMPACT_ENDPOINT_PATTERN = /^\/api\/agents\/([^/]+)\/smart-compact$/;
 const API_PROXY_PROFILE_CONTEXT_MODE_PATTERN = /^\/api\/profiles\/([^/]+)\/context-mode$/;
@@ -903,13 +904,4 @@ function resolveApiProxyErrorStatusCode(message: string): number {
   }
 
   return 500;
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "ENOENT"
-  );
 }

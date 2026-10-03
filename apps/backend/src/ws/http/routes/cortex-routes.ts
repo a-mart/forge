@@ -14,7 +14,7 @@ import { estimateTokens, type KnowledgeEntry, type KnowledgeEntryScope } from ".
 import { getOnboardingSnapshot, renderOnboardingCommonKnowledge, saveOnboardingPreferences, skipOnboarding } from "../../../swarm/onboarding-state.js";
 import { readCortexReviewLogEntries } from "../../../swarm/scripts/cortex-review-state.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
-import { applyCorsHeaders, parseJsonBody, sendJson } from "../../http-utils.js";
+import { applyCorsHeaders, readJsonBody, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
 
 const ONBOARDING_STATE_ENDPOINT_PATH = "/api/onboarding/state";
@@ -56,7 +56,7 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager; cortex
         if (request.method !== "POST") return methodNotAllowed(request, response, ONBOARDING_PREFERENCES_METHODS);
         applyCorsHeaders(request, response, ONBOARDING_PREFERENCES_METHODS);
         try {
-          const payload = await parseJsonBody(request, 8 * 1024);
+          const payload = await readJsonBody(request, 8 * 1024);
           const mutation = parseOnboardingPreferencesPayload(payload);
           if (!mutation) {
             sendJson(response, 400, { error: "Request body must include onboarding preferences or skipped status." });
@@ -73,7 +73,7 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager; cortex
           sendJson(response, 200, { state: buildOnboardingStateResponse(snapshot) });
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unable to save onboarding preferences.";
-          sendJson(response, message.includes("Request body exceeds") ? 413 : 400, { error: message });
+          sendJson(response, message.includes("Request body too large") ? 413 : 400, { error: message });
         }
       },
     },
