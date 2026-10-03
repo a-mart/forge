@@ -115,8 +115,6 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   { sample: "/api/git/status", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/diff", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/log", expect: { GET: "member" }, killSwitched: true },
-  { sample: "/api/git/file-log", expect: { GET: "member" }, killSwitched: true },
-  { sample: "/api/git/file-section-provenance", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/commit", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/commit-diff", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/worktrees", expect: { GET: "member" }, killSwitched: true },

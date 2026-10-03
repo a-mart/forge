@@ -177,8 +177,6 @@ describe("collaboration HTTP auth middleware", () => {
       ["/api/git/status", "GET"],
       ["/api/git/diff", "GET"],
       ["/api/git/log", "GET"],
-      ["/api/git/file-log", "GET"],
-      ["/api/git/file-section-provenance", "GET"],
       ["/api/git/commit", "GET"],
       ["/api/git/commit-diff", "GET"],
       ["/api/git/worktrees", "GET"],

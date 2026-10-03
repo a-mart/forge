@@ -61,8 +61,6 @@ const MEMBER_GIT_READ_PATHS = new Set([
   "/api/git/status",
   "/api/git/diff",
   "/api/git/log",
-  "/api/git/file-log",
-  "/api/git/file-section-provenance",
   "/api/git/commit",
   "/api/git/commit-diff",
   "/api/git/worktrees",

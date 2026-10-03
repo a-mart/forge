@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   isTrackedVersionedPath,
-  resolveTrackedVersionedPathReference,
   resolveVersionedPathMetadata
 } from "../versioned-paths.js";
 
@@ -45,34 +44,9 @@ describe("versioned-paths", () => {
     });
   });
 
-  it("maps absolute tracked files to git paths and preserves relative tracked paths", () => {
-    expect(
-      resolveTrackedVersionedPathReference(dataDir, `${dataDir}/profiles/alpha/memory.md`)
-    ).toEqual({
-      gitPath: "profiles/alpha/memory.md",
-      relativePath: "profiles/alpha/memory.md",
-      profileId: "alpha",
-      surface: "memory"
-    });
-
-    expect(resolveTrackedVersionedPathReference(dataDir, "shared/knowledge/common.md")).toEqual({
-      gitPath: "shared/knowledge/common.md",
-      relativePath: "shared/knowledge/common.md",
-      profileId: "cortex",
-      surface: "knowledge"
-    });
-
-    expect(resolveTrackedVersionedPathReference(dataDir, "profiles/alpha/knowledge/entries/pref-pnpm.md")).toEqual({
-      gitPath: "profiles/alpha/knowledge/entries/pref-pnpm.md",
-      relativePath: "profiles/alpha/knowledge/entries/pref-pnpm.md",
-      profileId: "alpha",
-      surface: "entry"
-    });
-  });
-
   it("rejects non-tracked and outside-repo path references", () => {
-    expect(resolveTrackedVersionedPathReference(dataDir, `${dataDir}/shared/config/secrets.json`)).toBeUndefined();
-    expect(resolveTrackedVersionedPathReference(dataDir, `/etc/passwd`)).toBeUndefined();
-    expect(resolveTrackedVersionedPathReference(dataDir, "../outside.md")).toBeUndefined();
+    expect(resolveVersionedPathMetadata(dataDir, `${dataDir}/shared/config/secrets.json`)).toBeUndefined();
+    expect(resolveVersionedPathMetadata(dataDir, `/etc/passwd`)).toBeUndefined();
+    expect(resolveVersionedPathMetadata(dataDir, "../outside.md")).toBeUndefined();
   });
 });

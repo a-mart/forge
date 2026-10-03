@@ -26,10 +26,6 @@ export interface VersionedPathMetadata {
   surface: "knowledge" | "memory" | "reference" | "prompt" | "index" | "entry";
 }
 
-export interface TrackedVersionedPathReference extends VersionedPathMetadata {
-  gitPath: string;
-}
-
 export function isTrackedVersionedPath(
   dataDir: string,
   filePath: string,
@@ -121,22 +117,6 @@ export function resolveVersionedPathMetadata(
   }
 
   return undefined;
-}
-
-export function resolveTrackedVersionedPathReference(
-  dataDir: string,
-  filePath: string,
-  options?: VersionedPathsOptions
-): TrackedVersionedPathReference | undefined {
-  const metadata = resolveVersionedPathMetadata(dataDir, filePath, options);
-  if (!metadata) {
-    return undefined;
-  }
-
-  return {
-    ...metadata,
-    gitPath: metadata.relativePath
-  };
 }
 
 export async function enumerateExistingTrackedPaths(
