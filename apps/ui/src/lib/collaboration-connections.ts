@@ -167,22 +167,6 @@ export function buildSameOriginTarget(): CollaborationEndpointTarget {
   }
 }
 
-/** Build a same-origin connection record (for explicit persistence). */
-function buildSameOriginRecord(): CollaborationConnectionRecord {
-  const target = buildSameOriginTarget()
-  const now = new Date().toISOString()
-  return {
-    id: SAME_ORIGIN_CONNECTION_ID,
-    kind: 'same-origin',
-    label: target.label,
-    apiBaseUrl: target.apiBaseUrl,
-    wsUrl: target.wsUrl,
-    createdAt: now,
-    updatedAt: now,
-    source: 'same-origin',
-  }
-}
-
 // ---------------------------------------------------------------------------
 // localStorage helpers (safe for SSR / no-window)
 // ---------------------------------------------------------------------------
@@ -496,18 +480,6 @@ export function getDefaultCollaborationConnection(): CollaborationEndpointTarget
   return buildSameOriginTarget()
 }
 
-/**
- * Update the last-active/default connection and mirror legacy URL.
- */
-export function setLastActiveCollaborationConnection(connectionId: string | null): void {
-  const registry = loadRegistry()
-  registry.lastActiveConnectionId = connectionId ?? undefined
-  persistRegistry(registry)
-  mirrorLegacyUrl(registry)
-  notifyRegistryChange()
-  notifyLegacyChange()
-}
-
 // ---------------------------------------------------------------------------
 // Registry mutations
 // ---------------------------------------------------------------------------
@@ -562,95 +534,6 @@ export function upsertCollaborationConnection(input: {
   notifyRegistryChange()
   notifyLegacyChange()
   return id
-}
-
-/**
- * Edit a connection's server URL. Because origin is identity, a URL change
- * creates a new deterministic ID. If the new origin already exists, returns
- * the existing record's ID (dedup). Returns the resulting connection ID.
- */
-export function editCollaborationConnectionUrl(
-  connectionId: string,
-  input: { serverUrl: string; label?: string },
-): string {
-  if (connectionId === SAME_ORIGIN_CONNECTION_ID) {
-    throw new Error('Cannot edit the same-origin connection URL')
-  }
-
-  const normalized = normalizeServerUrl(input.serverUrl)
-  if (!normalized) throw new Error('Invalid server URL')
-
-  const registry = loadRegistry()
-  const newId = connectionIdFromOrigin(normalized)
-
-  // If the new origin matches an existing record, select it instead of duping
-  const existingByNewOrigin = registry.connections.find((c) => c.id === newId)
-  if (existingByNewOrigin && existingByNewOrigin.id !== connectionId) {
-    // Update label if provided
-    if (input.label) {
-      existingByNewOrigin.label = input.label
-      existingByNewOrigin.updatedAt = new Date().toISOString()
-    }
-    // Remove old record
-    registry.connections = registry.connections.filter((c) => c.id !== connectionId)
-    // Transfer lastActive
-    if (registry.lastActiveConnectionId === connectionId) {
-      registry.lastActiveConnectionId = newId
-    }
-    persistRegistry(registry)
-    mirrorLegacyUrl(registry)
-    notifyRegistryChange()
-    notifyLegacyChange()
-    return newId
-  }
-
-  // Same origin → just update in place
-  if (newId === connectionId) {
-    const existing = registry.connections.find((c) => c.id === connectionId)
-    if (existing) {
-      existing.serverUrl = normalized
-      existing.apiBaseUrl = deriveApiBaseUrl(normalized)
-      existing.wsUrl = deriveWsUrl(normalized)
-      if (input.label) existing.label = input.label
-      existing.updatedAt = new Date().toISOString()
-    }
-    persistRegistry(registry)
-    mirrorLegacyUrl(registry)
-    notifyRegistryChange()
-    notifyLegacyChange()
-    return connectionId
-  }
-
-  // Different origin → replace old record with new-id record
-  const now = new Date().toISOString()
-  const oldRecord = registry.connections.find((c) => c.id === connectionId)
-  const newRecord: CollaborationConnectionRecord = {
-    id: newId,
-    kind: 'remote',
-    label: input.label ?? oldRecord?.label ?? hostFromOrigin(normalized),
-    serverUrl: normalized,
-    apiBaseUrl: deriveApiBaseUrl(normalized),
-    wsUrl: deriveWsUrl(normalized),
-    createdAt: oldRecord?.createdAt ?? now,
-    updatedAt: now,
-    source: oldRecord?.source ?? 'manual',
-  }
-
-  // Replace in-place to preserve ordering
-  registry.connections = registry.connections.map((c) =>
-    c.id === connectionId ? newRecord : c,
-  )
-
-  // Transfer lastActive
-  if (registry.lastActiveConnectionId === connectionId) {
-    registry.lastActiveConnectionId = newId
-  }
-
-  persistRegistry(registry)
-  mirrorLegacyUrl(registry)
-  notifyRegistryChange()
-  notifyLegacyChange()
-  return newId
 }
 
 /**
@@ -739,20 +622,6 @@ export function removeCollaborationConnection(connectionId: string): void {
   notifyLegacyChange()
 }
 
-/**
- * Add same-origin as an explicit connection alongside remotes.
- */
-export function addSameOriginConnection(): string {
-  const registry = loadRegistry()
-  if (registry.connections.some((c) => c.id === SAME_ORIGIN_CONNECTION_ID)) {
-    return SAME_ORIGIN_CONNECTION_ID
-  }
-  registry.connections.push(buildSameOriginRecord())
-  persistRegistry(registry)
-  notifyRegistryChange()
-  return SAME_ORIGIN_CONNECTION_ID
-}
-
 // ---------------------------------------------------------------------------
 // Target resolution
 // ---------------------------------------------------------------------------
@@ -820,52 +689,6 @@ export function resolveCollaborationTarget(
 
   // Stale ID — fall back to default
   return getDefaultCollaborationConnection()
-}
-
-/**
- * Resolve API base URL for a connection target.
- * Accepts a connectionId, a target object, or nothing (default).
- */
-export function resolveCollaborationApiBaseUrlForTarget(
-  connectionIdOrTarget?: string | CollaborationEndpointTarget,
-): string {
-  if (!connectionIdOrTarget) {
-    return getDefaultCollaborationConnection().apiBaseUrl
-  }
-  if (typeof connectionIdOrTarget === 'string') {
-    return resolveCollaborationTarget(connectionIdOrTarget).apiBaseUrl
-  }
-  return connectionIdOrTarget.apiBaseUrl
-}
-
-/**
- * Resolve WS URL for a connection target.
- */
-export function resolveCollaborationWsUrlForTarget(
-  connectionIdOrTarget?: string | CollaborationEndpointTarget,
-): string {
-  if (!connectionIdOrTarget) {
-    return getDefaultCollaborationConnection().wsUrl
-  }
-  if (typeof connectionIdOrTarget === 'string') {
-    return resolveCollaborationTarget(connectionIdOrTarget).wsUrl
-  }
-  return connectionIdOrTarget.wsUrl
-}
-
-/**
- * Whether a connection target is remote.
- */
-export function isCollabConnectionRemote(
-  connectionIdOrTarget?: string | CollaborationEndpointTarget,
-): boolean {
-  if (!connectionIdOrTarget) {
-    return getDefaultCollaborationConnection().isRemote
-  }
-  if (typeof connectionIdOrTarget === 'string') {
-    return resolveCollaborationTarget(connectionIdOrTarget).isRemote
-  }
-  return connectionIdOrTarget.isRemote
 }
 
 // ---------------------------------------------------------------------------

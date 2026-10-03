@@ -59,6 +59,31 @@ const REGISTRY_KEY = 'forge:collab:connections:v1'
 const MALFORMED_KEY = 'forge:collab:connections:v1:malformed'
 const LEGACY_URL_KEY = 'forge-collab-server-url'
 
+/** Edit the persisted registry directly, e.g. to seed state from older builds. */
+function patchStoredRegistry(
+  patch: (registry: { lastActiveConnectionId?: string; connections: Record<string, unknown>[] }) => void,
+): void {
+  const registry = JSON.parse(localStorageMock.getItem(REGISTRY_KEY) ?? '{"version":1,"connections":[]}')
+  patch(registry)
+  localStorageMock.setItem(REGISTRY_KEY, JSON.stringify(registry))
+}
+
+/** Persist an explicit same-origin record, as older builds could. */
+function storeExplicitSameOriginRecord(): void {
+  patchStoredRegistry((registry) => {
+    registry.connections.push({
+      id: 'conn_same_origin',
+      kind: 'same-origin',
+      label: 'Local',
+      apiBaseUrl: 'http://127.0.0.1:47187/',
+      wsUrl: 'ws://127.0.0.1:47187',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      source: 'same-origin',
+    })
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -792,12 +817,12 @@ describe('collaboration-connections', () => {
     })
 
     it('includes explicit same-origin alongside remotes', async () => {
-      const { upsertCollaborationConnection, addSameOriginConnection, getCollaborationConnectionOptions, SAME_ORIGIN_CONNECTION_ID } =
+      const { upsertCollaborationConnection, getCollaborationConnectionOptions, SAME_ORIGIN_CONNECTION_ID } =
         await import('./collaboration-connections')
       upsertCollaborationConnection({
         serverUrl: 'https://collab.example.com',
       })
-      addSameOriginConnection()
+      storeExplicitSameOriginRecord()
       const options = getCollaborationConnectionOptions()
       expect(options).toHaveLength(2)
       expect(options.some((o) => o.kind === 'remote')).toBe(true)
@@ -821,7 +846,7 @@ describe('collaboration-connections', () => {
     })
 
     it('returns the last-active connection', async () => {
-      const { upsertCollaborationConnection, setLastActiveCollaborationConnection, getDefaultCollaborationConnection } =
+      const { upsertCollaborationConnection, getDefaultCollaborationConnection } =
         await import('./collaboration-connections')
       upsertCollaborationConnection({
         serverUrl: 'https://a.com',
@@ -829,7 +854,9 @@ describe('collaboration-connections', () => {
       const id2 = upsertCollaborationConnection({
         serverUrl: 'https://b.com',
       })
-      setLastActiveCollaborationConnection(id2)
+      patchStoredRegistry((registry) => {
+        registry.lastActiveConnectionId = id2
+      })
       const def = getDefaultCollaborationConnection()
       expect(def.connectionId).toBe(id2)
     })
@@ -982,120 +1009,6 @@ describe('collaboration-connections', () => {
   })
 
   // -----------------------------------------------------------------------
-  // editCollaborationConnectionUrl
-  // -----------------------------------------------------------------------
-
-  describe('editCollaborationConnectionUrl', () => {
-    it('creates a new ID when origin changes', async () => {
-      const {
-        upsertCollaborationConnection,
-        editCollaborationConnectionUrl,
-        loadRegistry,
-      } = await import('./collaboration-connections')
-      const oldId = upsertCollaborationConnection({
-        serverUrl: 'https://old.com',
-      })
-      const newId = editCollaborationConnectionUrl(oldId, {
-        serverUrl: 'https://new.com',
-      })
-
-      expect(newId).not.toBe(oldId)
-      const reg = loadRegistry()
-      expect(reg.connections).toHaveLength(1)
-      expect(reg.connections[0]!.id).toBe(newId)
-      expect(reg.connections[0]!.serverUrl).toBe('https://new.com')
-    })
-
-    it('preserves ID when origin is unchanged', async () => {
-      const {
-        upsertCollaborationConnection,
-        editCollaborationConnectionUrl,
-        loadRegistry,
-      } = await import('./collaboration-connections')
-      const id = upsertCollaborationConnection({
-        serverUrl: 'https://same.com',
-        label: 'Old Label',
-      })
-      const resultId = editCollaborationConnectionUrl(id, {
-        serverUrl: 'https://same.com',
-        label: 'New Label',
-      })
-
-      expect(resultId).toBe(id)
-      const reg = loadRegistry()
-      expect(reg.connections[0]!.label).toBe('New Label')
-    })
-
-    it('deduplicates when new origin already exists', async () => {
-      const {
-        upsertCollaborationConnection,
-        editCollaborationConnectionUrl,
-        loadRegistry,
-      } = await import('./collaboration-connections')
-      const idA = upsertCollaborationConnection({
-        serverUrl: 'https://a.com',
-        label: 'A',
-      })
-      const idB = upsertCollaborationConnection({
-        serverUrl: 'https://b.com',
-        label: 'B',
-      })
-
-      // Edit A's URL to match B's origin → should return B's ID, remove A
-      const resultId = editCollaborationConnectionUrl(idA, {
-        serverUrl: 'https://b.com',
-      })
-      expect(resultId).toBe(idB)
-
-      const reg = loadRegistry()
-      expect(reg.connections).toHaveLength(1)
-      expect(reg.connections[0]!.id).toBe(idB)
-    })
-
-    it('transfers lastActiveConnectionId when origin changes', async () => {
-      const {
-        upsertCollaborationConnection,
-        setLastActiveCollaborationConnection,
-        editCollaborationConnectionUrl,
-        loadRegistry,
-      } = await import('./collaboration-connections')
-      const id = upsertCollaborationConnection({
-        serverUrl: 'https://old.com',
-      })
-      setLastActiveCollaborationConnection(id)
-
-      const newId = editCollaborationConnectionUrl(id, {
-        serverUrl: 'https://new.com',
-      })
-      const reg = loadRegistry()
-      expect(reg.lastActiveConnectionId).toBe(newId)
-    })
-
-    it('throws for same-origin connection', async () => {
-      const { editCollaborationConnectionUrl, SAME_ORIGIN_CONNECTION_ID } =
-        await import('./collaboration-connections')
-      expect(() =>
-        editCollaborationConnectionUrl(SAME_ORIGIN_CONNECTION_ID, {
-          serverUrl: 'https://new.com',
-        }),
-      ).toThrow('Cannot edit the same-origin connection URL')
-    })
-
-    it('throws for invalid URL', async () => {
-      const {
-        upsertCollaborationConnection,
-        editCollaborationConnectionUrl,
-      } = await import('./collaboration-connections')
-      const id = upsertCollaborationConnection({
-        serverUrl: 'https://old.com',
-      })
-      expect(() =>
-        editCollaborationConnectionUrl(id, { serverUrl: 'bad' }),
-      ).toThrow('Invalid server URL')
-    })
-  })
-
-  // -----------------------------------------------------------------------
   // renameCollaborationConnection
   // -----------------------------------------------------------------------
 
@@ -1136,12 +1049,11 @@ describe('collaboration-connections', () => {
 
     it('renames explicitly persisted same-origin', async () => {
       const {
-        addSameOriginConnection,
         renameCollaborationConnection,
         loadRegistry,
         SAME_ORIGIN_CONNECTION_ID,
       } = await import('./collaboration-connections')
-      addSameOriginConnection()
+      storeExplicitSameOriginRecord()
       renameCollaborationConnection(SAME_ORIGIN_CONNECTION_ID, 'My Local')
       const reg = loadRegistry()
       const conn = reg.connections.find((c) => c.id === SAME_ORIGIN_CONNECTION_ID)
@@ -1186,7 +1098,6 @@ describe('collaboration-connections', () => {
     it('transfers lastActive to next remote when active is removed', async () => {
       const {
         upsertCollaborationConnection,
-        setLastActiveCollaborationConnection,
         removeCollaborationConnection,
         loadRegistry,
       } = await import('./collaboration-connections')
@@ -1196,7 +1107,9 @@ describe('collaboration-connections', () => {
       const id2 = upsertCollaborationConnection({
         serverUrl: 'https://b.com',
       })
-      setLastActiveCollaborationConnection(id1)
+      patchStoredRegistry((registry) => {
+        registry.lastActiveConnectionId = id1
+      })
       removeCollaborationConnection(id1)
       const reg = loadRegistry()
       expect(reg.lastActiveConnectionId).toBe(id2)
@@ -1221,7 +1134,6 @@ describe('collaboration-connections', () => {
     it('mirrors next remote to legacy when active remote is removed but others exist', async () => {
       const {
         upsertCollaborationConnection,
-        setLastActiveCollaborationConnection,
         removeCollaborationConnection,
       } = await import('./collaboration-connections')
       const id1 = upsertCollaborationConnection({
@@ -1230,7 +1142,9 @@ describe('collaboration-connections', () => {
       upsertCollaborationConnection({
         serverUrl: 'https://b.com',
       })
-      setLastActiveCollaborationConnection(id1)
+      patchStoredRegistry((registry) => {
+        registry.lastActiveConnectionId = id1
+      })
 
       removeCollaborationConnection(id1)
       // Should now mirror b.com
@@ -1251,38 +1165,6 @@ describe('collaboration-connections', () => {
         .mocked(window.dispatchEvent)
         .mock.calls.map((c) => (c[0] as Event).type)
       expect(events).toContain('forge-collab-connections-change')
-    })
-  })
-
-  // -----------------------------------------------------------------------
-  // addSameOriginConnection
-  // -----------------------------------------------------------------------
-
-  describe('addSameOriginConnection', () => {
-    it('adds explicit same-origin record', async () => {
-      const { addSameOriginConnection, loadRegistry, SAME_ORIGIN_CONNECTION_ID } =
-        await import('./collaboration-connections')
-      const id = addSameOriginConnection()
-      expect(id).toBe(SAME_ORIGIN_CONNECTION_ID)
-
-      const reg = loadRegistry()
-      const conn = reg.connections.find(
-        (c) => c.id === SAME_ORIGIN_CONNECTION_ID,
-      )
-      expect(conn).toBeTruthy()
-      expect(conn!.kind).toBe('same-origin')
-    })
-
-    it('is idempotent', async () => {
-      const { addSameOriginConnection, loadRegistry } = await import(
-        './collaboration-connections'
-      )
-      addSameOriginConnection()
-      addSameOriginConnection()
-      const reg = loadRegistry()
-      expect(
-        reg.connections.filter((c) => c.kind === 'same-origin'),
-      ).toHaveLength(1)
     })
   })
 
@@ -1336,68 +1218,6 @@ describe('collaboration-connections', () => {
   })
 
   // -----------------------------------------------------------------------
-  // resolveCollaborationApiBaseUrlForTarget / WsUrl / isRemote
-  // -----------------------------------------------------------------------
-
-  describe('target-aware resolution helpers', () => {
-    it('resolveCollaborationApiBaseUrlForTarget with no arg returns default', async () => {
-      const { resolveCollaborationApiBaseUrlForTarget } = await import(
-        './collaboration-connections'
-      )
-      const url = resolveCollaborationApiBaseUrlForTarget()
-      expect(url).toBe('http://127.0.0.1:47187/')
-    })
-
-    it('resolveCollaborationApiBaseUrlForTarget with connectionId', async () => {
-      const {
-        upsertCollaborationConnection,
-        resolveCollaborationApiBaseUrlForTarget,
-      } = await import('./collaboration-connections')
-      const id = upsertCollaborationConnection({
-        serverUrl: 'https://test.com',
-      })
-      expect(resolveCollaborationApiBaseUrlForTarget(id)).toBe(
-        'https://test.com/',
-      )
-    })
-
-    it('resolveCollaborationApiBaseUrlForTarget with target object', async () => {
-      const { buildSameOriginTarget, resolveCollaborationApiBaseUrlForTarget } =
-        await import('./collaboration-connections')
-      const target = buildSameOriginTarget()
-      expect(resolveCollaborationApiBaseUrlForTarget(target)).toBe(
-        target.apiBaseUrl,
-      )
-    })
-
-    it('resolveCollaborationWsUrlForTarget returns correct WS URL', async () => {
-      const {
-        upsertCollaborationConnection,
-        resolveCollaborationWsUrlForTarget,
-      } = await import('./collaboration-connections')
-      const id = upsertCollaborationConnection({
-        serverUrl: 'https://test.com',
-      })
-      expect(resolveCollaborationWsUrlForTarget(id)).toBe('wss://test.com')
-    })
-
-    it('isCollabConnectionRemote is false for same-origin', async () => {
-      const { isCollabConnectionRemote, SAME_ORIGIN_CONNECTION_ID } =
-        await import('./collaboration-connections')
-      expect(isCollabConnectionRemote(SAME_ORIGIN_CONNECTION_ID)).toBe(false)
-    })
-
-    it('isCollabConnectionRemote is true for remote', async () => {
-      const { upsertCollaborationConnection, isCollabConnectionRemote } =
-        await import('./collaboration-connections')
-      const id = upsertCollaborationConnection({
-        serverUrl: 'https://remote.com',
-      })
-      expect(isCollabConnectionRemote(id)).toBe(true)
-    })
-  })
-
-  // -----------------------------------------------------------------------
   // subscribeToRegistryChanges
   // -----------------------------------------------------------------------
 
@@ -1420,55 +1240,6 @@ describe('collaboration-connections', () => {
 
       unsub()
       expect(window.removeEventListener).toHaveBeenCalledTimes(2)
-    })
-  })
-
-  // -----------------------------------------------------------------------
-  // setLastActiveCollaborationConnection
-  // -----------------------------------------------------------------------
-
-  describe('setLastActiveCollaborationConnection', () => {
-    it('updates lastActiveConnectionId', async () => {
-      const {
-        upsertCollaborationConnection,
-        setLastActiveCollaborationConnection,
-        loadRegistry,
-      } = await import('./collaboration-connections')
-      upsertCollaborationConnection({
-        serverUrl: 'https://a.com',
-      })
-      const id2 = upsertCollaborationConnection({
-        serverUrl: 'https://b.com',
-      })
-      setLastActiveCollaborationConnection(id2)
-      const reg = loadRegistry()
-      expect(reg.lastActiveConnectionId).toBe(id2)
-    })
-
-    it('clears lastActiveConnectionId with null', async () => {
-      const {
-        upsertCollaborationConnection,
-        setLastActiveCollaborationConnection,
-        loadRegistry,
-      } = await import('./collaboration-connections')
-      upsertCollaborationConnection({ serverUrl: 'https://a.com' })
-      setLastActiveCollaborationConnection(null)
-      const reg = loadRegistry()
-      expect(reg.lastActiveConnectionId).toBeUndefined()
-    })
-
-    it('mirrors the active remote URL to legacy key', async () => {
-      const {
-        upsertCollaborationConnection,
-        setLastActiveCollaborationConnection,
-      } = await import('./collaboration-connections')
-      const id = upsertCollaborationConnection({
-        serverUrl: 'https://mirrored.com',
-      })
-      setLastActiveCollaborationConnection(id)
-      expect(localStorageMock.getItem(LEGACY_URL_KEY)).toBe(
-        'https://mirrored.com',
-      )
     })
   })
 
@@ -1568,7 +1339,6 @@ describe('collaboration-connections', () => {
     it('returns lastActiveConnectionId when it exists in targets — [A, B] with lastActive=B returns B', async () => {
       const {
         upsertCollaborationConnection,
-        setLastActiveCollaborationConnection,
         getCollaborationConnectionOptions,
         getDefaultConnectionIdFromTargets,
       } = await import('./collaboration-connections')
@@ -1581,7 +1351,9 @@ describe('collaboration-connections', () => {
         serverUrl: 'https://b.com',
         label: 'B',
       })
-      setLastActiveCollaborationConnection(idB)
+      patchStoredRegistry((registry) => {
+        registry.lastActiveConnectionId = idB
+      })
 
       const targets = getCollaborationConnectionOptions()
       // Verify insertion order: A is first
@@ -1628,7 +1400,6 @@ describe('collaboration-connections', () => {
       // converge on B, not A.
       const {
         upsertCollaborationConnection,
-        setLastActiveCollaborationConnection,
         getCollaborationConnectionOptions,
         getDefaultConnectionIdFromTargets,
         getDefaultCollaborationConnection,
@@ -1642,7 +1413,9 @@ describe('collaboration-connections', () => {
         serverUrl: 'https://b.com',
         label: 'B',
       })
-      setLastActiveCollaborationConnection(idB)
+      patchStoredRegistry((registry) => {
+        registry.lastActiveConnectionId = idB
+      })
 
       // getDefaultCollaborationConnection should return B
       const defaultConn = getDefaultCollaborationConnection()
