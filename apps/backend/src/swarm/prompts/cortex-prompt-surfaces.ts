@@ -9,6 +9,7 @@ import type {
 } from "@forge/protocol";
 import type { VersioningMutationSink } from "../../versioning/versioning-types.js";
 import type { PromptRegistryForRoutes } from "../prompt-contracts.js";
+import { isEnoentError } from "../../utils/fs-errors.js";
 
 const CORTEX_PROFILE_ID = "cortex";
 
@@ -395,13 +396,4 @@ export async function resetCortexPromptSurface(options: {
     broadcastEvent: options.broadcastEvent,
     versioning: options.versioning,
   });
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    !!error &&
-    typeof error === "object" &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "ENOENT"
-  );
 }
