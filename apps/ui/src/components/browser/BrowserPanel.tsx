@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from 'react'
+import { useEffect, useState } from 'react'
 import { ArrowLeft, ArrowRight, Camera, Circle, ExternalLink, Globe2, PanelTopClose, Plus, RefreshCw, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import {
   BROWSER_VIEWPORT_PRESETS,
@@ -9,11 +9,8 @@ import {
   type BrowserViewportPresetId,
   type BrowserViewportSetting,
 } from '@forge/protocol'
-import type { BrowserAutomationHostHandle } from './BrowserAutomationHost'
 import { HelpTrigger } from '@/components/help/HelpTrigger'
-import type { ManagerWsClient } from '@/lib/ws-client'
 import type { ManagedBrowserWorkspaceMode } from '@/lib/electron-bridge'
-import { isElectron } from '@/lib/electron-bridge'
 import { cn } from '@/lib/utils'
 
 export interface BrowserWorkspaceCommandPort {
@@ -35,21 +32,15 @@ export interface BrowserWorkspaceCommandPort {
 }
 
 interface BrowserPanelProps {
-  sessionAgentId: string
-  profileId: string
   snapshot: BrowserSessionSnapshot | null
   host: BrowserHostConnectionSnapshot
-  commandPort?: BrowserWorkspaceCommandPort
+  commandPort: BrowserWorkspaceCommandPort
   mode?: ManagedBrowserWorkspaceMode
   popoutAvailable?: boolean
-  /** @deprecated Local compatibility adapter; BrowserPanel itself never opens a transport. */
-  client?: ManagerWsClient | null
-  /** @deprecated Local compatibility adapter. */
-  hostRef?: RefObject<BrowserAutomationHostHandle | null>
 }
 
 export function BrowserPanel({
-  client = null, sessionAgentId, profileId, snapshot, host, hostRef, commandPort,
+  snapshot, host, commandPort: commands,
   mode = 'docked', popoutAvailable = Boolean(window.electronBridge?.browserWorkspace?.capability.popoutAvailable),
 }: BrowserPanelProps) {
   const openTabs = (snapshot?.tabs ?? []).filter((tab) => tab.lifecycle !== 'closed' && tab.targetAffinity === 'managed-electron')
@@ -61,12 +52,9 @@ export function BrowserPanel({
   const [customHeight, setCustomHeight] = useState(800)
   useEffect(() => setAddress(activeTab?.url ?? ''), [activeTab?.tabId, activeTab?.url])
 
-  const commands = commandPort ?? createLegacyLocalPort(client, sessionAgentId, profileId, hostRef)
-  const unavailableMessage = !commandPort && !isElectron()
-    ? 'Browser is available in the Forge desktop app. This web session will not attempt local browser IPC.'
-    : !host.connected
-      ? 'The local browser host is reconnecting. Browser metadata remains visible but controls are unavailable.'
-      : null
+  const unavailableMessage = !host.connected
+    ? 'The local browser host is reconnecting. Browser metadata remains visible but controls are unavailable.'
+    : null
   const controlsUnavailable = unavailableMessage !== null
   const run = async (action: () => Promise<unknown> | unknown): Promise<void> => {
     setError(null)
@@ -154,26 +142,6 @@ export function BrowserPanel({
   )
 }
 
-function createLegacyLocalPort(client: ManagerWsClient | null, sessionAgentId: string, profileId: string, hostRef?: RefObject<BrowserAutomationHostHandle | null>): BrowserWorkspaceCommandPort {
-  const handle = () => { if (!hostRef?.current) throw new Error('Browser host is unavailable'); return hostRef.current }
-  return {
-    open: async (autoOpenAttemptKey) => { if (hostRef?.current) await hostRef.current.open(autoOpenAttemptKey); else await client?.openBrowserTab(sessionAgentId, profileId, { activate: true }) },
-    activate: async (tabId) => { if (hostRef?.current) await hostRef.current.activate(tabId); else await client?.activateBrowserTab(sessionAgentId, tabId) },
-    close: async (tabId) => { if (hostRef?.current) await hostRef.current.close(tabId); else await client?.closeBrowserTab(sessionAgentId, tabId) },
-    resize: async (tabId, viewport) => { if (hostRef?.current) await hostRef.current.resize(tabId, viewport); else await client?.resizeBrowserTab(sessionAgentId, tabId, viewport) },
-    navigate: (tabId, url) => handle().navigate(tabId, url),
-    history: async (tabId, direction) => handle().history(tabId, direction),
-    reload: async (tabId, hard) => handle().reload(tabId, hard),
-    zoom: async (tabId, factor) => handle().setZoom(tabId, factor),
-    capture: (tabId) => handle().captureScreenshot(tabId),
-    startRecording: async (tabId) => { if (hostRef?.current) await hostRef.current.startRecording(tabId); else await client?.startBrowserRecording(sessionAgentId, tabId) },
-    stopRecording: async (tabId, recordingId) => { if (hostRef?.current) await hostRef.current.stopRecording(tabId, recordingId); else await client?.stopBrowserRecording(sessionAgentId, tabId, recordingId) },
-    reveal: (tabId) => handle().reveal(tabId),
-    takeControl: (tabId) => handle().takeControl(tabId),
-    popOut: hostRef ? () => handle().popOut() : undefined,
-    dock: hostRef ? () => handle().dock() : undefined,
-  }
-}
 function IconButton({ label, disabled, onClick, children }: { label: string; disabled?: boolean; onClick: () => void; children: React.ReactElement<{ className?: string }> }) { return <button type="button" aria-label={label} title={label} disabled={disabled} onClick={onClick} className="inline-flex size-8 items-center justify-center rounded hover:bg-muted disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 [&_svg]:size-4">{children}</button> }
 function TabStatus({ tab }: { tab: BrowserTabSnapshot }) { const label = tab.controller === 'agent' ? 'Agent controlling' : tab.controller === 'agent-idle' ? 'Agent attached · idle' : tab.controller === 'human' ? 'Human controlling' : 'Ready'; return <span className="ml-auto flex items-center gap-1 text-muted-foreground"><span className={cn('size-1.5 rounded-full', tab.loading ? 'bg-amber-400' : tab.error ? 'bg-destructive' : 'bg-emerald-500')} />{label}{tab.recording ? ' · Recording' : ''}</span> }
 function ScreenshotPreview({ dataUrl, onClose }: { dataUrl: string; onClose: () => void }) { return <aside aria-label="Browser screenshot" className="ml-2 flex w-80 shrink-0 flex-col rounded-lg border bg-background p-3 shadow"><div className="mb-2 flex items-center"><strong className="text-sm">Screenshot</strong><button type="button" aria-label="Close screenshot" className="ml-auto rounded p-1 hover:bg-muted" onClick={onClose}><X className="size-4" /></button></div><img src={dataUrl} alt="Captured browser viewport" className="min-h-0 flex-1 object-contain" /></aside> }

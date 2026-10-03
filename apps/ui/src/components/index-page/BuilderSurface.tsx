@@ -13,9 +13,8 @@ import { ArtifactsSidebar } from '@/components/chat/ArtifactsSidebar'
 import { shouldRevealBrowserPanel } from '@/components/index-page/activity-rail-workspace'
 import { BrowserAutomationHost, type BrowserAutomationHostHandle } from '@/components/browser/BrowserAutomationHost'
 import { BrowserPreviewSurface } from '@/components/browser/BrowserPreviewSurface'
-import { type BrowserWorkspaceCommandPort } from '@/components/browser/BrowserPanel'
+import { BrowserPanel, type BrowserWorkspaceCommandPort } from '@/components/browser/BrowserPanel'
 import { countOpenBrowserTabs, projectRuntimeBrowserTabState } from '@/components/browser/browser-runtime-state'
-import { BuilderBrowserPanel } from '@/components/index-page/BuilderBrowserPanel'
 import type { ManagedBrowserWorkspaceMode } from '@/lib/electron-bridge'
 import { ArchiveView } from '@/components/index-page/ArchiveView'
 import { type MessageSourceView } from '@/components/chat/ChatHeader'
@@ -2428,10 +2427,7 @@ export function BuilderSurface({
                     </div>
                   </div>
                 </section>
-              ) : <BuilderBrowserPanel
-                client={localClient}
-                sessionAgentId={browserSessionAgentId}
-                profileId={browserProfileId}
+              ) : <BrowserPanel
                 snapshot={browserSessionSnapshot}
                 host={localState.browserHost}
                 commandPort={browserCommandPort}
