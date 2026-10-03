@@ -3,12 +3,10 @@ import {
   FORGE_MODEL_CATALOG,
   getCatalogContextWindow,
   getCatalogFamily,
-  getCatalogFamilyForModel,
   getCatalogModel,
   getCatalogModelsByFamily,
   getCatalogProvider,
   getChangeManagerFamilies,
-  getCreateManagerFamilies,
   getDefaultManagerEnabled,
   getDefaultOpenRouterManagerEnabled,
   getEffectiveCompactionEnabled,
@@ -21,12 +19,10 @@ import {
   inferCatalogFamily,
   inferCatalogProvider,
   isCatalogModelCompactionSupported,
-  isCatalogModelId,
   isCatalogModelManagerSupported,
   isCompactionModelSelectionSupported,
   isCompactionProviderSupported,
   isOpenRouterModelManagerSupported,
-  isOpenRouterModelOverrideKey,
   isRetiredForgeModel,
   parseOpenRouterModelOverrideKey,
 } from '../model-catalog.js'
@@ -429,8 +425,6 @@ describe('model-catalog', () => {
     expect(getCatalogFamily('cursor-acp')).toBeUndefined()
     expect(getSpecialistFamilies().map((family) => family.familyId)).toContain('cursor-composer')
     expect(getSpecialistFamilies().map((family) => family.familyId)).toContain('cursor-grok-45')
-    expect(getCreateManagerFamilies().map((family) => family.familyId)).toContain('cursor-composer')
-    expect(getCreateManagerFamilies().map((family) => family.familyId)).toContain('cursor-grok-45')
     expect(getChangeManagerFamilies().map((family) => family.familyId)).toContain('cursor-composer')
     expect(getChangeManagerFamilies().map((family) => family.familyId)).toContain('cursor-grok-45')
     expect(getSpawnPresetFamilies().map((family) => family.familyId)).toContain('cursor-composer')
@@ -457,11 +451,6 @@ describe('model-catalog', () => {
     expect(getCatalogModel(' GPT-5.3-CODEX ')).toBeUndefined()
     expect(getCatalogFamily('pi-grok')?.defaultModelId).toBe('grok-4.6')
     expect(getCatalogProvider('xai')?.projectionScope).toBe('approved-provider-models')
-    expect(getCatalogFamilyForModel('claude-opus-4-6')?.familyId).toBe('pi-opus')
-    expect(getCatalogFamilyForModel('claude-sonnet-5')?.familyId).toBe('pi-sonnet')
-    expect(getCatalogFamilyForModel('claude-sonnet-5', 'anthropic')?.familyId).toBe('pi-sonnet')
-    expect(getCatalogFamilyForModel('claude-fable-5-1', 'anthropic')?.familyId).toBe('pi-fable')
-    expect(getCatalogFamilyForModel('claude-fable-5', 'anthropic')?.familyId).toBe('pi-fable')
     expect(getCatalogContextWindow('grok-4.5')).toBe(500_000)
     expect(getCatalogContextWindow('default')).toBeUndefined()
     expect(getCatalogContextWindow('default', 'cursor-acp')).toBeUndefined()
@@ -509,8 +498,6 @@ describe('model-catalog', () => {
     expect(inferCatalogFamily('anthropic', 'claude-fable-5')).toBe('pi-fable')
     expect(inferCatalogFamily('xai', 'grok-3')).toBe('pi-grok')
     expect(inferCatalogFamily('anthropic', 'grok-4')).toBeUndefined()
-    expect(isCatalogModelId('default')).toBe(false)
-    expect(isCatalogModelId('gpt-5.4-nano')).toBe(false)
   })
 
   it('derives manager-selectable exact model availability from family support, global enabled, and managerEnabled overrides', () => {
@@ -582,8 +569,6 @@ describe('model-catalog', () => {
       expect(getOpenRouterModelOverrideKey('anthropic/claude-3.5-sonnet')).toBe(
         'openrouter:anthropic/claude-3.5-sonnet',
       )
-      expect(isOpenRouterModelOverrideKey('openrouter:anthropic/claude-3.5-sonnet')).toBe(true)
-      expect(isOpenRouterModelOverrideKey('claude-opus-4-7')).toBe(false)
       expect(parseOpenRouterModelOverrideKey('openrouter:anthropic/claude-3.5-sonnet')).toBe(
         'anthropic/claude-3.5-sonnet',
       )
@@ -611,19 +596,6 @@ describe('model-catalog', () => {
   })
 
   it('returns the expected visibility subsets', () => {
-    expect(getCreateManagerFamilies().map((family) => family.familyId)).toEqual([
-      'pi-5.5',
-      'pi-6',
-      'pi-opus',
-      'pi-sonnet',
-      'pi-fable',
-      'pi-grok',
-      'cursor-composer',
-      'cursor-grok-45',
-      'claude-native',
-      'codex-native',
-    ])
-
     expect(getChangeManagerFamilies().map((family) => family.familyId)).toEqual([
       'pi-5.5',
       'pi-6',
