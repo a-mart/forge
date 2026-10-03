@@ -318,8 +318,11 @@ describe("ProjectAgentSharingService", () => {
 
     await service.replaceSharingTargets("docs--s1", ["mobile"]);
 
-    await expect(service.hasActiveExternalAccess("docs--s1", "mobile")).resolves.toBe(true);
-    await expect(service.hasActiveExternalAccess("docs--s1", "web")).resolves.toBe(false);
+    await expect(service.authorizeExternalDelivery({
+      senderAgentId: "web-session-1",
+      senderProfileId: "web",
+      targetAgentId: "docs--s1",
+    })).resolves.toBeNull();
     await expect(service.authorizeExternalDelivery({
       senderAgentId: "mobile-session-1",
       senderProfileId: "mobile",

@@ -33,7 +33,6 @@ import {
   normalizeMessageTargetContext,
   normalizeOptionalAgentId,
   normalizeOptionalModelId,
-  normalizeThinkingLevelForProvider,
   parseCompactSlashCommand,
   parseSessionNumberFromAgentId,
   parseTimestampToMillis,
@@ -53,8 +52,7 @@ import {
   toDisplayToolName,
   toRuntimeDispatchAttachments,
   toRuntimeImageAttachments,
-  validateAgentDescriptor,
-  withManagerTimeout
+  validateAgentDescriptor
 } from "../swarm-manager-utils.js";
 
 function baseDescriptor(overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
@@ -202,18 +200,6 @@ describe("clampModelCapacityBlockDurationMs", () => {
     [8 * 24 * 60 * 60 * 1_000, 7 * 24 * 60 * 60 * 1_000]
   ])("clampModelCapacityBlockDurationMs(%s)", (input, expected) => {
     expect(clampModelCapacityBlockDurationMs(input)).toBe(expected);
-  });
-});
-
-describe("normalizeThinkingLevelForProvider", () => {
-  it("maps Anthropic aliases", () => {
-    expect(normalizeThinkingLevelForProvider("anthropic", "none")).toBe("low");
-    expect(normalizeThinkingLevelForProvider("anthropic", "xhigh")).toBe("high");
-    expect(normalizeThinkingLevelForProvider("anthropic", "X-HIGH")).toBe("high");
-  });
-
-  it("passes through for non-Anthropic", () => {
-    expect(normalizeThinkingLevelForProvider("openai", "none")).toBe("none");
   });
 });
 
@@ -1096,17 +1082,5 @@ describe("readFileHead", () => {
     const fp = join(dir, "t.txt");
     await writeFile(fp, "hello world", "utf8");
     await expect(readFileHead(fp, 5)).resolves.toBe("hello");
-  });
-});
-
-describe("withManagerTimeout", () => {
-  it("resolves when promise finishes in time", async () => {
-    await expect(withManagerTimeout(Promise.resolve(7), 1_000, "x")).resolves.toBe(7);
-  });
-
-  it("rejects when promise exceeds timeout", async () => {
-    await expect(
-      withManagerTimeout(new Promise(() => {}), 15, "op")
-    ).rejects.toThrow(/op timed out after 15ms/);
   });
 });

@@ -277,10 +277,6 @@ export class TurnContextCoordinator<
     return active ? { ...active } : undefined;
   }
 
-  getActiveObservabilityRootTurnId(agentId: string): string | undefined {
-    return this.options.observability.getActiveRootTurnId(agentId);
-  }
-
   async enqueue(
     agentId: string,
     context: InboundTurnContextInput<TCodexGate, TCodexDelegation, TCodexRetryAuthorization>,

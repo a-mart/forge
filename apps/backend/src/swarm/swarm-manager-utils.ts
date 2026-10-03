@@ -932,23 +932,6 @@ export function clampModelCapacityBlockDurationMs(durationMs: number): number | 
   return rounded;
 }
 
-export function normalizeThinkingLevelForProvider(provider: string, thinkingLevel: string): string {
-  if (provider.trim().toLowerCase() !== "anthropic") {
-    return thinkingLevel;
-  }
-
-  const normalized = thinkingLevel.trim().toLowerCase();
-  if (normalized === "none") {
-    return "low";
-  }
-
-  if (normalized === "xhigh" || normalized === "x-high" || normalized === "max" || normalized === "ultra") {
-    return "high";
-  }
-
-  return thinkingLevel;
-}
-
 /** @visibleForTesting Root/profile memory composition is part of the Phase 3 ownership contract. */
 export function buildSessionMemoryRuntimeView(profileMemoryContent: string, sessionMemoryContent: string): string {
   const normalizedProfileMemory = profileMemoryContent.trimEnd();
@@ -1361,25 +1344,6 @@ export function toRuntimeDispatchAttachments(
       filePath: persistedPath
     };
   });
-}
-
-export async function withManagerTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  let timeoutHandle: NodeJS.Timeout | undefined;
-
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(() => {
-          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
-        }, timeoutMs);
-      })
-    ]);
-  } finally {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
-    }
-  }
 }
 
 function computeAttachmentSizeBytes(attachment: ConversationAttachment): number | undefined {
