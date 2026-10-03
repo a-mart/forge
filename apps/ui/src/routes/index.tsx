@@ -15,7 +15,6 @@ import {
   type ActiveSurface,
 } from '@/hooks/index-page/use-route-state'
 import { useCollaborationSession } from '@/hooks/use-collaboration-session'
-import type { AgentDescriptor } from '@forge/protocol'
 import { resolveBackendWsUrl } from '@/lib/backend-url'
 import { resolveCollaborationWsUrl } from '@/lib/collaboration-endpoints'
 import { getCollaborationConnectionOptions, getDefaultConnectionIdFromTargets, subscribeToRegistryChanges, type CollaborationEndpointTarget } from '@/lib/collaboration-connections'
@@ -28,17 +27,6 @@ import { useElectronRendererReady } from '@/hooks/use-electron-renderer-ready'
 export const Route = createFileRoute('/')({
   component: IndexPage,
 })
-
-export function isCortexDiffViewerSession(agent: AgentDescriptor | null | undefined): boolean {
-  return Boolean(
-    agent &&
-      (agent.profileId === 'cortex' ||
-        agent.archetypeId === 'cortex' ||
-        agent.sessionPurpose === 'cortex_review'),
-  )
-}
-
-export { getProjectAgentSuggestions } from '@/hooks/index-page/project-agent-suggestions'
 
 type RouteSearch = {
   view?: string

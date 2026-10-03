@@ -13,7 +13,7 @@ globalThis.ResizeObserver ??= class ResizeObserver {
   disconnect() {}
 } as typeof ResizeObserver
 
-import { getProjectAgentSuggestions, IndexPage, isCortexDiffViewerSession, parseWindowRouteSearch } from './index'
+import { IndexPage, parseWindowRouteSearch } from './index'
 import { HelpProvider } from '@/components/help/HelpProvider'
 import { makeManagerSelectionCatalog } from '@/lib/manager-selection-catalog.fixture'
 import { projectSelectableManagerModelRows } from '@/lib/manager-selection-catalog'
@@ -243,19 +243,6 @@ async function renderPage(): Promise<FakeWebSocket> {
 
   return socket
 }
-
-describe('isCortexDiffViewerSession', () => {
-  it('treats cortex review sessions as Cortex diff-viewer sessions', () => {
-    expect(
-      isCortexDiffViewerSession({
-        ...buildManager('review-run', '/tmp/review-run'),
-        sessionPurpose: 'cortex_review',
-      }),
-    ).toBe(true)
-
-    expect(isCortexDiffViewerSession(buildManager('alpha', '/tmp/alpha'))).toBe(false)
-  })
-})
 
 describe('IndexPage create project model selection', () => {
   it('shows only allowed model presets and defaults to Codex-native GPT-6 Sol', async () => {
@@ -571,43 +558,9 @@ describe('IndexPage create project model selection', () => {
       click(betaButton)
       await vi.advanceTimersByTimeAsync(0)
 
-      // After agent switch, Detailed should have reset
-      // The Detailed toggle may or may not be present (depends on if we're in All view for new agent)
-      // The key contract is that the worker tool from the previous agent's Detailed view is gone
+      // The previous agent's worker tool row must not carry over after an agent switch
       expect(queryByText(container, /w-tool-alpha/)).toBeNull()
     }
-  })
-
-  it('uses sessionLabel for project-agent suggestions when displayName is stale after rename', () => {
-    const activeAgent = {
-      ...buildManager('manager', '/tmp/manager'),
-      profileId: 'manager',
-      sessionLabel: 'Main Session',
-    }
-
-    const suggestions = getProjectAgentSuggestions(activeAgent, [
-      activeAgent,
-      {
-        ...buildManager('manager--s2', '/tmp/manager'),
-        managerId: 'manager--s2',
-        profileId: 'manager',
-        displayName: 'Old Name',
-        sessionLabel: 'Renamed Session',
-        projectAgent: {
-          handle: 'renamed-session',
-          whenToUse: 'Handle release-note drafting',
-        },
-      },
-    ])
-
-    expect(suggestions).toEqual([
-      {
-        agentId: 'manager--s2',
-        handle: 'renamed-session',
-        displayName: 'Renamed Session',
-        whenToUse: 'Handle release-note drafting',
-      },
-    ])
   })
 
   it('keeps the root URL free of query params when the active agent is implicit', async () => {

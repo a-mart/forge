@@ -55,7 +55,7 @@ import { BitwardenUnlockDialog } from '@/components/chat/secure-session/Bitwarde
 import { StatsPage } from '@/components/index-page/StatsPage'
 import { shouldEnableCodexMention } from '@/components/index-page/codex-mention-utils'
 import { defaultMessageSourceViewForAgentRole } from '@/components/index-page/message-source-view'
-import { resolveWorkerFetchManagerId } from '@/lib/agent-hierarchy'
+import { isCortexDiffViewerSession, resolveWorkerFetchManagerId } from '@/lib/agent-hierarchy'
 import { hasProjectManagers } from '@/lib/onboarding-ui'
 import {
   DEFAULT_MANAGER_AGENT_ID,
@@ -156,15 +156,6 @@ import {
 type FileEditorCoordinator = ReturnType<typeof useFileEditorCoordinator>
 
 const selectLocalConnected = (s: ManagerWsState): boolean => s.connected
-
-function isCortexDiffViewerSession(agent: AgentDescriptor | null | undefined): boolean {
-  return Boolean(
-    agent &&
-      (agent.profileId === 'cortex' ||
-        agent.archetypeId === 'cortex' ||
-        agent.sessionPurpose === 'cortex_review'),
-  )
-}
 
 type BuilderNavigationState =
   | {

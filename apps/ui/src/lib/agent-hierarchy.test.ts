@@ -8,6 +8,7 @@ import {
   getDirectlyArchivedSessionRows,
   getPrimaryManagerId,
   getProfileRowLastUserMessageAt,
+  isCortexDiffViewerSession,
   resolveWorkerFetchManagerId,
   findSideChatForSource,
 } from './agent-hierarchy'
@@ -330,4 +331,8 @@ describe('agent-hierarchy', () => {
     expect(chooseFallbackAgentId([collabSession, builderSession], collabSession.agentId)).toBe('manager')
   })
 
+  it('treats cortex review sessions as Cortex diff-viewer sessions', () => {
+    expect(isCortexDiffViewerSession({ ...manager('review-run'), sessionPurpose: 'cortex_review' })).toBe(true)
+    expect(isCortexDiffViewerSession(manager('alpha'))).toBe(false)
+  })
 })
