@@ -5,6 +5,7 @@ import { makeTempConfig } from "../../test-support/index.js";
 import { AgentDescriptorStore } from "../agents/agent-descriptor-store.js";
 import { createDescriptorStoreAdapter } from "../agents/descriptor-store/live-map-adapter.js";
 import type { AgentDescriptor, ManagerProfile, SwarmConfig } from "../types.js";
+import { getLegacySessionsDirPath } from "../data-paths.js";
 
 function descriptor(config: SwarmConfig): AgentDescriptor {
   return {
@@ -18,7 +19,7 @@ function descriptor(config: SwarmConfig): AgentDescriptor {
     updatedAt: "2026-01-01T00:00:00.000Z",
     cwd: config.defaultCwd,
     model: config.defaultModel,
-    sessionFile: join(config.paths.sessionsDir, "manager.jsonl"),
+    sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), "manager.jsonl"),
   };
 }
 

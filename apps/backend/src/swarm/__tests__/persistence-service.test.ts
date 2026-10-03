@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { makeTempConfig } from "../../test-support/index.js";
 import { PersistenceService } from "../persistence-service.js";
 import { getConversationHistoryCacheFilePath } from "../conversation-history-cache.js";
-import { getSharedKnowledgeDir } from "../data-paths.js";
+import { getSharedKnowledgeDir, getLegacySessionsDirPath } from "../data-paths.js";
 import { extractDescriptorAgentId, validateAgentDescriptor } from "../swarm-manager-utils.js";
 import type { AgentDescriptor, ManagerProfile, SwarmConfig } from "../types.js";
 
@@ -20,7 +20,7 @@ function descriptor(config: SwarmConfig, overrides: Partial<AgentDescriptor> = {
     updatedAt: "2026-01-01T00:00:00.000Z",
     cwd: config.defaultCwd,
     model: config.defaultModel,
-    sessionFile: join(config.paths.sessionsDir, "manager.jsonl"),
+    sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), "manager.jsonl"),
     ...overrides,
   };
 }
@@ -79,9 +79,9 @@ describe("PersistenceService", () => {
     await service.ensureAgentMemoryFile(memoryPath, "replacement");
     expect(await readFile(memoryPath, "utf8")).toBe("user-authored");
 
-    const sessionFile = join(config.paths.sessionsDir, "manager.jsonl");
+    const sessionFile = join(getLegacySessionsDirPath(config.paths.dataDir), "manager.jsonl");
     const cacheFile = getConversationHistoryCacheFilePath(sessionFile);
-    await mkdir(join(config.paths.sessionsDir, "..", "cache"), { recursive: true });
+    await mkdir(join(getLegacySessionsDirPath(config.paths.dataDir), "..", "cache"), { recursive: true });
     await writeFile(sessionFile, "session", "utf8");
     await writeFile(cacheFile, "cache", "utf8");
     await service.deleteManagerSessionFile(sessionFile);
@@ -186,7 +186,6 @@ describe("PersistenceService", () => {
         dataDir,
         swarmDir: join(dataDir, "swarm"),
         agentsStoreFile: join(dataDir, "swarm", "agents.json"),
-        sessionsDir: join(dataDir, "sessions"),
       },
     };
     const legacySessionFile = join(legacyDataDir, "profiles", "manager", "sessions", "manager", "session.jsonl");

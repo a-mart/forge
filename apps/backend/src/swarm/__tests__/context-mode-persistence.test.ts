@@ -5,8 +5,9 @@ import { makeTempConfig } from "../../test-support/index.js";
 import { AgentDescriptorStore } from "../agents/agent-descriptor-store.js";
 import { SwarmSettingsService } from "../swarm-settings-service.js";
 import type { AgentDescriptor, ManagerProfile } from "../types.js";
+import { getLegacySessionsDirPath } from "../data-paths.js";
 
-function descriptor(config: { defaultCwd: string; defaultModel: AgentDescriptor["model"]; paths: { sessionsDir: string } }, overrides: Partial<AgentDescriptor> = {}): AgentDescriptor & { role: "manager"; profileId: string } {
+function descriptor(config: { defaultCwd: string; defaultModel: AgentDescriptor["model"]; paths: { dataDir: string } }, overrides: Partial<AgentDescriptor> = {}): AgentDescriptor & { role: "manager"; profileId: string } {
   return {
     agentId: "manager",
     displayName: "Manager",
@@ -18,7 +19,7 @@ function descriptor(config: { defaultCwd: string; defaultModel: AgentDescriptor[
     updatedAt: "2026-01-01T00:00:00.000Z",
     cwd: config.defaultCwd,
     model: config.defaultModel,
-    sessionFile: join(config.paths.sessionsDir, "manager.jsonl"),
+    sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), "manager.jsonl"),
     ...overrides,
   };
 }

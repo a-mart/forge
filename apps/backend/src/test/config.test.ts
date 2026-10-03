@@ -126,7 +126,6 @@ describe('createConfig', () => {
       expect(config.paths.sharedConfigDir).toBe(resolve(dataDir, 'shared', 'config'))
       expect(config.paths.sharedCacheDir).toBe(resolve(dataDir, 'shared', 'cache'))
       expect(config.paths.sharedStateDir).toBe(resolve(dataDir, 'shared', 'state'))
-      expect(config.paths.collaborationConfigDir).toBe(resolve(dataDir, 'shared', 'config', 'collaboration'))
       expect(config.paths.collaborationAuthDbPath).toBe(resolve(dataDir, 'shared', 'config', 'collaboration', 'auth.db'))
       expect(config.paths.collaborationAuthSecretPath).toBe(resolve(dataDir, 'shared', 'config', 'collaboration', 'auth-secret.key'))
     })
@@ -158,7 +157,6 @@ describe('createConfig', () => {
     await withEnv({ FORGE_RESOURCES_DIR: resourcesDir }, () => {
       const config = createConfig()
       expect(config.paths.resourcesDir).toBe(resourcesDir)
-      expect(config.paths.repoArchetypesDir).toBe(join(resourcesDir, '.swarm', 'archetypes'))
       expect(config.paths.repoMemorySkillFile).toBe(join(resourcesDir, '.swarm', 'skills', 'memory', 'SKILL.md'))
     })
   })

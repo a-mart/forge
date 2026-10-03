@@ -273,18 +273,11 @@ export interface SwarmPaths {
   sharedAuthDir: string;
   sharedAuthFile: string;
   sharedSecretsFile: string;
-  collaborationConfigDir?: string;
   collaborationAuthDbPath?: string;
   collaborationAuthSecretPath?: string;
   remoteUpdateAwarenessDbPath?: string;
 
   // Legacy compatibility fields (flat layout)
-  /** @deprecated Use profilesDir-based paths instead. */
-  sessionsDir: string;
-  /** @deprecated Use profilesDir-based paths instead. */
-  memoryDir: string;
-  /** @deprecated Use sharedAuthDir/sharedAuthFile instead. */
-  authDir: string;
   /** @deprecated Use sharedAuthFile instead. */
   authFile: string;
   /** @deprecated Use sharedSecretsFile instead. */
@@ -292,10 +285,7 @@ export interface SwarmPaths {
 
   agentDir: string;
   managerAgentDir: string;
-  repoArchetypesDir: string;
-  memoryFile?: string;
   repoMemorySkillFile: string;
-  schedulesFile?: string;
 }
 
 export type {

@@ -21,6 +21,7 @@ import {
   getRootSessionMemoryPath,
   getSessionDir,
   getSessionMemoryPath,
+  getLegacySessionsDirPath,
 } from '../data-paths.js'
 import { makeTempConfig as buildTempConfig } from '../../test-support/index.js'
 const memoryMergeMockState = vi.hoisted(() => ({
@@ -335,7 +336,7 @@ function seedManagerDescriptorForRuntimeEventTests(manager: TestSwarmManager, co
     updatedAt: createdAt,
     cwd: config.defaultCwd,
     model: config.defaultModel,
-    sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+    sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), 'manager.jsonl'),
   })
   state.conversationEntriesByAgentId.set('manager', [])
 }
@@ -850,7 +851,7 @@ describe('SwarmManager', () => {
 
     const persistedMemory = '# Swarm Memory\n\n## Project Facts\n- release train: friday\n'
     const rootSessionMemoryPath = getRootSessionMemoryPath(config.paths.dataDir, 'manager')
-    await writeFile(config.paths.memoryFile!, persistedMemory, 'utf8')
+    await writeFile(getProfileMemoryPath(config.paths.dataDir, 'manager'), persistedMemory, 'utf8')
 
     const resources = await manager.getMemoryRuntimeResourcesForTest()
     expect(resources.memoryContextFile.path).toBe(rootSessionMemoryPath)
@@ -1475,7 +1476,7 @@ describe('SwarmManager', () => {
   it('does not inject model-specific instructions when a custom manager prompt omits the placeholder', async () => {
     const config = await makeTempConfig()
     await writeFile(
-      join(config.paths.repoArchetypesDir, 'manager.md'),
+      join(join(config.paths.rootDir, '.swarm', 'archetypes'), 'manager.md'),
       'You are the repo manager override.\n\n${SPECIALIST_ROSTER}\n', // eslint-disable-line no-template-curly-in-string
       'utf8',
     )

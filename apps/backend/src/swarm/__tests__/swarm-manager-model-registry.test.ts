@@ -14,6 +14,7 @@ import { SwarmManager } from "../swarm-manager.js";
 import { generatePiProjection } from "../model-catalog-projection.js";
 import type { RuntimeCreationOptions, SwarmAgentRuntime } from "../runtime-contracts.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
+import { getLegacySessionsDirPath } from '../data-paths.js';
 
 const memoryMergeMockState = vi.hoisted(() => ({
   executeLLMMerge: vi.fn(),
@@ -64,7 +65,7 @@ function buildDescriptor(config: SwarmConfig): AgentDescriptor {
       modelId: "gpt-5.5",
       thinkingLevel: "medium",
     },
-    sessionFile: join(config.paths.sessionsDir, "session-1.jsonl"),
+    sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), "session-1.jsonl"),
   });
 }
 

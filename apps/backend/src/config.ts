@@ -6,17 +6,13 @@ import {
   getAgentsStoreFilePath,
   getCollaborationAuthDbPath,
   getCollaborationAuthSecretPath,
-  getLegacyAuthDirPath,
   getLegacyAuthFilePath,
-  getLegacyMemoryDirPath,
   getLegacySecretsFilePath,
-  getLegacySessionsDirPath,
   getProfilesDir,
   getRemoteUpdateAwarenessDbPath,
   getSharedAuthDir,
   getSharedAuthFilePath,
   getSharedCacheDir,
-  getSharedCollaborationConfigDir,
   getSharedConfigDir,
   getSharedDir,
   getSharedSecretsFilePath,
@@ -52,23 +48,17 @@ export function createConfig(): SwarmConfig {
   const sharedAuthDir = getSharedAuthDir(dataDir);
   const sharedAuthFile = getSharedAuthFilePath(dataDir);
   const sharedSecretsFile = getSharedSecretsFilePath(dataDir);
-  const collaborationConfigDir = getSharedCollaborationConfigDir(dataDir);
   const collaborationAuthDbPath = getCollaborationAuthDbPath(dataDir);
   const collaborationAuthSecretPath = getCollaborationAuthSecretPath(dataDir);
   const remoteUpdateAwarenessDbPath = getRemoteUpdateAwarenessDbPath(dataDir);
   // Legacy flat-layout paths retained for backward compatibility.
-  const sessionsDir = getLegacySessionsDirPath(dataDir);
-  const authDir = getLegacyAuthDirPath(dataDir);
   const authFile = getLegacyAuthFilePath(dataDir);
-  const memoryDir = getLegacyMemoryDirPath(dataDir);
   const secretsFile = getLegacySecretsFilePath(dataDir);
 
   migrateLegacyPiAuthFileIfNeeded(authFile);
 
   const agentDir = resolve(dataDir, "agent");
   const managerAgentDir = resolve(agentDir, "manager");
-  const repoArchetypesDir = resolve(resourcesDir, ".swarm", "archetypes");
-  const memoryFile = undefined;
   const repoMemorySkillFile = resolve(resourcesDir, ".swarm", "skills", "memory", "SKILL.md");
   const defaultCwd = rootDir;
 
@@ -154,21 +144,14 @@ export function createConfig(): SwarmConfig {
       sharedAuthDir,
       sharedAuthFile,
       sharedSecretsFile,
-      collaborationConfigDir,
       collaborationAuthDbPath,
       collaborationAuthSecretPath,
       remoteUpdateAwarenessDbPath,
-      sessionsDir,
-      memoryDir,
-      authDir,
       authFile,
       secretsFile,
       agentDir,
       managerAgentDir,
-      repoArchetypesDir,
-      memoryFile,
-      repoMemorySkillFile,
-      schedulesFile: undefined
+      repoMemorySkillFile
     }
   };
 }

@@ -20,6 +20,7 @@ import {
   getSessionContextReferenceDir,
   getSessionReferenceDir,
   resolveMemoryFilePath,
+  getLegacySessionsDirPath,
 } from "../data-paths.js";
 import type { PersistedProjectAgentConfig } from "@forge/protocol";
 import { createTempConfig, type TempConfigHandle } from "../../test-support/index.js";
@@ -108,7 +109,7 @@ function createManagerDescriptor(
       modelId: "gpt-5.4",
       thinkingLevel: "medium"
     },
-    sessionFile: join(config.paths.sessionsDir, `${agentId}.jsonl`),
+    sessionFile: join(getLegacySessionsDirPath(config.paths.dataDir), `${agentId}.jsonl`),
     ...overrides
   } as AgentDescriptor & { role: "manager"; profileId: string };
 }
