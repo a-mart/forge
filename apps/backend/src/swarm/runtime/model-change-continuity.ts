@@ -2,9 +2,9 @@ import { readFile } from "node:fs/promises";
 import type { AgentModelDescriptor, ConversationMessageEvent } from "../types.js";
 import { modelCatalogService } from "../catalog/model-catalog-service.js";
 import {
-  appendImmediateCustomEntry,
-  type ImmediateCustomEntryWriteResult
-} from "../session/immediate-custom-entry-writer.js";
+  appendImmediateCustomEntryViaTimeline,
+  type ImmediateCustomEntryTimelineResult
+} from "../session/conversation-timeline.js";
 import { isEnoentError } from "../../utils/fs-errors.js";
 
 const MODEL_CHANGE_CONTINUITY_REQUEST_ENTRY_TYPE = "swarm_model_change_continuity_request";
@@ -142,8 +142,8 @@ export async function appendModelChangeContinuityRequest(options: {
   cwd: string;
   request: ModelChangeContinuityRequest;
   now?: () => string;
-}): Promise<ImmediateCustomEntryWriteResult> {
-  return appendImmediateCustomEntry({
+}): Promise<ImmediateCustomEntryTimelineResult> {
+  return appendImmediateCustomEntryViaTimeline({
     sessionFile: options.sessionFile,
     cwd: options.cwd,
     customType: MODEL_CHANGE_CONTINUITY_REQUEST_ENTRY_TYPE,
@@ -157,8 +157,8 @@ export async function appendModelChangeContinuityApplied(options: {
   cwd: string;
   applied: ModelChangeContinuityApplied;
   now?: () => string;
-}): Promise<ImmediateCustomEntryWriteResult> {
-  return appendImmediateCustomEntry({
+}): Promise<ImmediateCustomEntryTimelineResult> {
+  return appendImmediateCustomEntryViaTimeline({
     sessionFile: options.sessionFile,
     cwd: options.cwd,
     customType: MODEL_CHANGE_CONTINUITY_APPLIED_ENTRY_TYPE,
