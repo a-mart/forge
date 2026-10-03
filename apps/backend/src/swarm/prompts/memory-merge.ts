@@ -101,32 +101,3 @@ export async function executeLLMMerge(
 
   return mergedContent;
 }
-
-export async function executeLLMMergeWithFallback(
-  model: Model<Api>,
-  profileContent: string,
-  sessionContent: string,
-  options: ExecuteLLMMergeOptions & { fallback: () => string }
-): Promise<{ mergedContent: string; usedFallback: boolean; errorMessage?: string }> {
-  try {
-    const mergedContent = await executeLLMMerge(model, profileContent, sessionContent, options);
-    return {
-      mergedContent,
-      usedFallback: false
-    };
-  } catch (error) {
-    return {
-      mergedContent: options.fallback(),
-      usedFallback: true,
-      errorMessage: toErrorMessage(error)
-    };
-  }
-}
-
-function toErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return String(error);
-}

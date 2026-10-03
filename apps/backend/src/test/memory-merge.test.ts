@@ -1,25 +1,9 @@
-import type { Api, AssistantMessage, Model } from '../swarm/pi/pi-ai-compat.js'
+import type { AssistantMessage } from '../swarm/pi/pi-ai-compat.js'
 import { describe, expect, it } from 'vitest'
 import {
-  executeLLMMergeWithFallback,
   extractMergedMemoryText,
   stripWrappingCodeFence,
 } from '../swarm/memory-merge.js'
-
-function createTestModel(): Model<Api> {
-  return {
-    id: 'test-model',
-    name: 'Test Model',
-    api: 'openai-responses',
-    provider: 'openai',
-    baseUrl: 'https://example.com',
-    reasoning: false,
-    input: ['text'],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128000,
-    maxTokens: 4096,
-  }
-}
 
 function createAssistantMessage(text: string): AssistantMessage {
   return {
@@ -49,18 +33,5 @@ describe('memory-merge', () => {
     const extracted = extractMergedMemoryText(createAssistantMessage('```markdown\n# Swarm Memory\n- merged\n```'))
 
     expect(stripWrappingCodeFence(extracted)).toBe('# Swarm Memory\n- merged')
-  })
-
-  it('returns fallback content when the LLM call throws', async () => {
-    const result = await executeLLMMergeWithFallback(createTestModel(), '# Profile', '# Session', {
-      fallback: () => 'raw-append',
-      completeFn: async () => {
-        throw new Error('boom')
-      },
-    })
-
-    expect(result.usedFallback).toBe(true)
-    expect(result.mergedContent).toBe('raw-append')
-    expect(result.errorMessage).toContain('boom')
   })
 })
