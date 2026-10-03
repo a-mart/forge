@@ -482,7 +482,6 @@ export class SwarmManager extends SwarmManagerFacade implements SwarmToolHost {
       },
       collaboration: this.collaborationStorageProvisioner,
       trust: this.projectExecutableTrustCoordinator,
-      codexDirect: this.codexDirectSidecarCoordinator,
       observability: this.observabilityCoordinator,
       persistence: this.sessionMetaService,
       extensions: this.forgeExtensionHost,

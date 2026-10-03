@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   getModelCacheVisualizationEnabled,
-  getModelCacheVisualizationSettings,
   setModelCacheVisualizationEnabled,
 } from '../model-cache-visualization-settings.js'
 import { getModelCacheVisualizationSettingsPath } from '../data-paths.js'
@@ -22,10 +21,6 @@ describe('model-cache-visualization-settings', () => {
   it('defaults to disabled when the settings file is missing', async () => {
     dataDir = await mkdtemp(join(tmpdir(), 'model-cache-visualization-settings-'))
     await expect(getModelCacheVisualizationEnabled(dataDir)).resolves.toBe(false)
-    await expect(getModelCacheVisualizationSettings(dataDir)).resolves.toEqual({
-      enabled: false,
-      updatedAt: null,
-    })
   })
 
   it('persists enabled state to shared config', async () => {

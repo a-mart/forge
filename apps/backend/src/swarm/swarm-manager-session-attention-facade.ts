@@ -1,8 +1,9 @@
-import type { HistorySessionsRequest, HistorySessionsResponse, HistoryItemsRequest, HistoryItemsResponse, HistoryWindowsRequest, HistoryWindowsResponse } from "@forge/protocol";
-import { SwarmManagerInitialModelInputFacade } from "./swarm-manager-initial-model-input-facade.js";
+import type { AgentInitialModelInputState, HistorySessionsRequest, HistorySessionsResponse, HistoryItemsRequest, HistoryItemsResponse, HistoryWindowsRequest, HistoryWindowsResponse } from "@forge/protocol";
+import { SwarmManagerDelegationFacade } from "./swarm-manager-delegation-facade.js";
+import { readInitialModelInputForViewer } from "./runtime/initial-model-input-viewer.js";
 
-/** Stable boot and session-attention surface layered into the manager facade. */
-export abstract class SwarmManagerSessionAttentionFacade extends SwarmManagerInitialModelInputFacade {
+/** Stable boot, session-attention, and initial model-input viewer surface layered into the manager facade. */
+export abstract class SwarmManagerSessionAttentionFacade extends SwarmManagerDelegationFacade {
   async boot(): Promise<void> {
     const services = this.getFacadeServices();
     await services.boot.boot();
@@ -37,5 +38,13 @@ export abstract class SwarmManagerSessionAttentionFacade extends SwarmManagerIni
 
   dismissSessionAttention(attentionIds: readonly string[]) {
     return this.getFacadeServices().sessionAttention.dismissAttentionIds(attentionIds);
+  }
+
+  getAgentInitialModelInputForRead(agentId: string): AgentInitialModelInputState {
+    const services = this.getFacadeServices();
+    return readInitialModelInputForViewer(
+      services.registry.directory.getAgent(agentId),
+      services.runtime.runtimes.get(agentId),
+    );
   }
 }

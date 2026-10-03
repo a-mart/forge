@@ -66,6 +66,15 @@ function createHarness() {
   const attentionPendingCounts: number[] = [];
   const attentionReleaseCounts: number[] = [];
   let nextTurn = 0;
+  const getActiveRootTurnId = (agentId: string): string | undefined => {
+    const direct = activeRoots.get(agentId);
+    if (direct) return direct.parentRootTurnId ?? direct.rootTurnId;
+    const descriptor = descriptors.get(agentId);
+    const managerRoot = descriptor?.role === "worker"
+      ? activeRoots.get(descriptor.managerId)
+      : undefined;
+    return managerRoot?.parentRootTurnId ?? managerRoot?.rootTurnId;
+  };
   const coordinator = new TurnContextCoordinator<TestGate, TestDelegation, TestRetry>({
     descriptors,
     attention: {
@@ -138,15 +147,7 @@ function createHarness() {
       clearRoot: (agentId) => {
         activeRoots.delete(agentId);
       },
-      getActiveRootTurnId: (agentId) => {
-        const direct = activeRoots.get(agentId);
-        if (direct) return direct.parentRootTurnId ?? direct.rootTurnId;
-        const descriptor = descriptors.get(agentId);
-        const managerRoot = descriptor?.role === "worker"
-          ? activeRoots.get(descriptor.managerId)
-          : undefined;
-        return managerRoot?.parentRootTurnId ?? managerRoot?.rootTurnId;
-      },
+      getActiveRootTurnId,
       recordRuntimeSessionEvent: () => {
         order.push("observability:event");
       },
@@ -158,6 +159,7 @@ function createHarness() {
 
   return {
     coordinator,
+    getActiveRootTurnId,
     descriptors,
     runtimeTokens,
     ledgerRecords,
@@ -621,8 +623,8 @@ describe("TurnContextCoordinator", () => {
       fromProfileId: "external-profile",
       fromProjectName: "External project",
     });
-    expect(harness.coordinator.getActiveObservabilityRootTurnId("manager-1")).toBe("parent-root");
-    expect(harness.coordinator.getActiveObservabilityRootTurnId("worker-1")).toBe("parent-root");
+    expect(harness.getActiveRootTurnId("manager-1")).toBe("parent-root");
+    expect(harness.getActiveRootTurnId("worker-1")).toBe("parent-root");
     expect(harness.outputActivations.at(-1)?.target).toEqual(webTarget);
     expect(harness.codexActivations.at(-1)).toEqual({
       gate,
@@ -651,7 +653,7 @@ describe("TurnContextCoordinator", () => {
 
     expect(harness.coordinator.getActiveTurnId("manager-1", 41)).toBe("turn-1");
     expect(harness.managerToolActivity).toEqual(["activate:manager-1:turn-1"]);
-    expect(harness.coordinator.getActiveObservabilityRootTurnId("manager-1")).toBeUndefined();
+    expect(harness.getActiveRootTurnId("manager-1")).toBeUndefined();
     expect(harness.outputActivations.at(-1)).toEqual({
       beginUserVisibleObligation: false,
       target: undefined,
@@ -812,7 +814,7 @@ describe("TurnContextCoordinator", () => {
 
     expect(harness.coordinator.getActiveTurnId("manager-1")).toBeUndefined();
     expect(harness.coordinator.getActiveExternalProjectAgentTurn("manager-1")).toBeUndefined();
-    expect(harness.coordinator.getActiveObservabilityRootTurnId("manager-1")).toBeUndefined();
+    expect(harness.getActiveRootTurnId("manager-1")).toBeUndefined();
     expect(harness.order).toEqual([
       "output:agent_end",
       "codex:agent_end",
@@ -849,12 +851,12 @@ describe("TurnContextCoordinator", () => {
     expect(harness.coordinator.getActiveExternalProjectAgentTurn("manager-1")).toMatchObject({
       fromAgentId: "project-agent-1",
     });
-    expect(harness.coordinator.getActiveObservabilityRootTurnId("manager-1")).toBe("parent-root");
+    expect(harness.getActiveRootTurnId("manager-1")).toBe("parent-root");
     expect(harness.order).toEqual(["output:reset", "codex:reset"]);
 
     harness.coordinator.afterRuntimeEventProjection("manager-1", 41, { type: "agent_end" });
     expect(harness.coordinator.getActiveExternalProjectAgentTurn("manager-1")).toBeUndefined();
-    expect(harness.coordinator.getActiveObservabilityRootTurnId("manager-1")).toBeUndefined();
+    expect(harness.getActiveRootTurnId("manager-1")).toBeUndefined();
   });
 
   it("fully clears retained external and observability state when an agent is permanently removed", async () => {
@@ -878,7 +880,7 @@ describe("TurnContextCoordinator", () => {
     harness.coordinator.clearAgentState("manager-1");
 
     expect(harness.coordinator.getActiveExternalProjectAgentTurn("manager-1")).toBeUndefined();
-    expect(harness.coordinator.getActiveObservabilityRootTurnId("manager-1")).toBeUndefined();
+    expect(harness.getActiveRootTurnId("manager-1")).toBeUndefined();
     expect(harness.coordinator.getActiveTurnId("manager-1")).toBeUndefined();
   });
 

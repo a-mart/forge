@@ -764,21 +764,6 @@ export class SecureValueGuard {
     return outputGuard;
   }
 
-  /**
-   * One-shot byte sanitization quarantines the whole value on a match. Safe
-   * bytes are copied exactly and are never decoded or trimmed.
-   */
-  sanitizeBytes(bytes: Uint8Array): Uint8Array {
-    this.assertUsable();
-    if (!(bytes instanceof Uint8Array)) {
-      return quarantineBytes();
-    }
-    if (containsRegisteredValue(this.matcher, bytes)) {
-      return quarantineBytes();
-    }
-    return Buffer.from(bytes);
-  }
-
   sanitizeString(value: string): string {
     this.assertUsable();
     return this.containsString(value) ? SECURE_OUTPUT_QUARANTINE : value;

@@ -1,7 +1,7 @@
 export type AgentStatus = "idle" | "streaming" | "terminated" | "stopped" | "error";
 export type AgentStatusInput = AgentStatus | "stopped_on_restart";
 
-export const AGENT_STATUS_TRANSITIONS: Readonly<Record<AgentStatusInput, readonly AgentStatusInput[]>> = {
+const AGENT_STATUS_TRANSITIONS: Readonly<Record<AgentStatusInput, readonly AgentStatusInput[]>> = {
   idle: ["streaming", "terminated", "stopped"],
   streaming: ["idle", "terminated", "error"],
   terminated: ["idle"],

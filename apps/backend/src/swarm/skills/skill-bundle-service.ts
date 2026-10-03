@@ -18,7 +18,6 @@ import { SkillBundleError } from "./skill-bundle-errors.js";
 import {
   assertValidSkillHandle,
   compareCodePoint,
-  errorToMessage,
   isPathWithinRoot,
   isSensitiveSkillEntryName,
   normalizeSkillBundleFilePath,
@@ -31,20 +30,8 @@ import {
   type SkillBundleValidationResult
 } from "./skill-bundle-validation.js";
 import { parseSkillFrontmatter } from "./skill-frontmatter.js";
+import { errorToMessage } from "../../utils/normalize.js";
 import type { SkillMetadata, SkillMetadataService } from "./skill-metadata-service.js";
-
-export {
-  DEFAULT_SKILL_BUNDLE_MAX_FILE_BYTES,
-  DEFAULT_SKILL_BUNDLE_MAX_FILES,
-  DEFAULT_SKILL_BUNDLE_MAX_TOTAL_BYTES,
-  SKILL_BUNDLE_FORMAT,
-  SKILL_BUNDLE_VERSION
-} from "./skill-bundle-constants.js";
-export { computeSkillBundleContentSha256 } from "./skill-bundle-canonical.js";
-export { SkillBundleError } from "./skill-bundle-errors.js";
-export { normalizeSkillBundleFilePath } from "./skill-bundle-paths.js";
-export { SkillBundleValidationError, validateSkillBundleManifest } from "./skill-bundle-validation.js";
-export type { SkillBundleValidationResult } from "./skill-bundle-validation.js";
 
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 

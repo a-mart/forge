@@ -299,6 +299,43 @@ export class KnowledgeService {
     return [...active.flat(), ...archived.flat()].sort(compareIndexPriority);
   }
 
+  async mergeEntries(sourceIds: string[]): Promise<KnowledgeEntry> {
+    const ids = sourceIds.map((id) => id.trim()).filter(Boolean);
+    if (ids.length < 2) {
+      throw new Error("merge requires at least two source ids");
+    }
+    const entries = await Promise.all(ids.map((id) => this.readEntry(id)));
+    const primary = entries[0];
+    const mergedSources = entries.flatMap((entry) => entry.frontmatter.sources);
+    const mergedSupersedes = Array.from(new Set(entries.flatMap((entry) => entry.frontmatter.supersedes)));
+    const sourceEntryIds = Array.from(new Set([...ids, ...entries.flatMap((entry) => entry.frontmatter.source_entry_ids)]));
+    const supportCount = entries.reduce((sum, entry) => sum + entry.frontmatter.support_count, 0);
+    const lastConfirmed = entries
+      .map((entry) => entry.frontmatter.last_confirmed)
+      .sort((left, right) => Date.parse(right) - Date.parse(left))[0];
+    const merged = await this.upsertEntry({
+      id: primary.frontmatter.id,
+      type: primary.frontmatter.type,
+      scope: primary.frontmatter.scope,
+      title: primary.frontmatter.title,
+      body: primary.body,
+      evidenceTier: primary.frontmatter.evidence_tier,
+      sources: mergedSources,
+      importance: primary.frontmatter.importance,
+      supersedes: mergedSupersedes,
+      sourceEntryIds,
+      supportCount,
+      lastConfirmed,
+      expectedVersion: primary.frontmatter.version,
+    });
+
+    for (const entry of entries.slice(1)) {
+      await this.supersedeEntry(entry.frontmatter.id, [merged.frontmatter.id]);
+    }
+
+    return merged;
+  }
+
   async archiveEntry(id: string): Promise<KnowledgeEntry> {
     return this.withWriteLock(async () => {
       const existing = await this.readEntry(id, { includeArchived: false });

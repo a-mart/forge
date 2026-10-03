@@ -801,14 +801,10 @@ describe("SecureSessionStore", () => {
       grantSource: "project_default",
       baseRevision: 1
     });
-    expect(store.listActiveProjectDefaultLeases("project-a")).toEqual([
-      expect.objectContaining({
-        leaseId: "automatic",
-        grantSource: "project_default"
-      })
-    ]);
-
-    expect(store.deleteProjectDefault("project-a", "secret")).toBe(true);
+    expect(store.replaceAutomaticGrantPolicy({
+      secretId: "secret",
+      policy: { kind: "none" }
+    })).toEqual({ kind: "none" });
     expect(store.getSnapshot("session").leases).toEqual([
       expect.objectContaining({ leaseId: "manual", state: "active" }),
       expect.objectContaining({
@@ -1380,10 +1376,12 @@ describe("SecureSessionStore", () => {
       });
     }
 
-    expect(store.listActiveProjectDefaultLeases("project").map((lease) => ({
-      leaseId: lease.leaseId,
-      sessionAgentId: lease.sessionAgentId
-    }))).toEqual([
+    expect(["manager", "worker-a", "worker-b"].flatMap((sessionAgentId) =>
+      store.getSnapshot(sessionAgentId).leases.map((lease) => ({
+        leaseId: lease.leaseId,
+        sessionAgentId: lease.sessionAgentId
+      }))
+    )).toEqual([
       { leaseId: "manager-default", sessionAgentId: "manager" },
       { leaseId: "worker-a-default", sessionAgentId: "worker-a" },
       { leaseId: "worker-b-default", sessionAgentId: "worker-b" }

@@ -569,8 +569,8 @@ Never use plain assistant text for user communication.`
     const choiceSpy = vi.spyOn(choiceService, 'requestUserChoice')
 
     await (manager as unknown as {
-      maybePromptForProjectExecutableTrust: (descriptor: AgentDescriptor & { role: 'manager' }) => Promise<void>
-    }).maybePromptForProjectExecutableTrust(session as AgentDescriptor & { role: 'manager' })
+      projectExecutableTrustCoordinator: { maybePrompt: (descriptor: AgentDescriptor & { role: 'manager' }) => Promise<void> }
+    }).projectExecutableTrustCoordinator.maybePrompt(session as AgentDescriptor & { role: 'manager' })
 
     expect(choiceSpy).not.toHaveBeenCalled()
   })
@@ -595,8 +595,8 @@ Never use plain assistant text for user communication.`
     })
 
     await (manager as unknown as {
-      maybePromptForProjectExecutableTrust: (descriptor: AgentDescriptor & { role: 'manager' }) => Promise<void>
-    }).maybePromptForProjectExecutableTrust(session as AgentDescriptor & { role: 'manager' })
+      projectExecutableTrustCoordinator: { maybePrompt: (descriptor: AgentDescriptor & { role: 'manager' }) => Promise<void> }
+    }).projectExecutableTrustCoordinator.maybePrompt(session as AgentDescriptor & { role: 'manager' })
 
     expect((await settingsStore.getTrust(trustKey))?.state).toBe('blocked')
   })
@@ -741,8 +741,8 @@ Never use plain assistant text for user communication.`
     ])
 
     await (manager as unknown as {
-      maybePromptForProjectExecutableTrust: (descriptor: AgentDescriptor & { role: 'manager' }) => Promise<void>
-    }).maybePromptForProjectExecutableTrust(sessionAgent as AgentDescriptor & { role: 'manager' })
+      projectExecutableTrustCoordinator: { maybePrompt: (descriptor: AgentDescriptor & { role: 'manager' }) => Promise<void> }
+    }).projectExecutableTrustCoordinator.maybePrompt(sessionAgent as AgentDescriptor & { role: 'manager' })
 
     expect(choiceService.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(sessionAgent.agentId)).toBe(true)
 
@@ -783,11 +783,11 @@ Never use plain assistant text for user communication.`
     ])
 
     await (manager as unknown as {
-      maybePromptForProjectExecutableTrust: (descriptor: AgentDescriptor & { role: 'manager' }) => Promise<void>
-    }).maybePromptForProjectExecutableTrust(managerA as AgentDescriptor & { role: 'manager' })
+      projectExecutableTrustCoordinator: { maybePrompt: (descriptor: AgentDescriptor & { role: 'manager' }) => Promise<void> }
+    }).projectExecutableTrustCoordinator.maybePrompt(managerA as AgentDescriptor & { role: 'manager' })
     await (manager as unknown as {
-      maybePromptForProjectExecutableTrust: (descriptor: AgentDescriptor & { role: 'manager' }) => Promise<void>
-    }).maybePromptForProjectExecutableTrust(managerB as AgentDescriptor & { role: 'manager' })
+      projectExecutableTrustCoordinator: { maybePrompt: (descriptor: AgentDescriptor & { role: 'manager' }) => Promise<void> }
+    }).projectExecutableTrustCoordinator.maybePrompt(managerB as AgentDescriptor & { role: 'manager' })
 
     expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(managerA.agentId)).toBe(true)
     expect(state.runtimeRecoveryState.hasPendingManagerRuntimeRecycle(managerB.agentId)).toBe(true)

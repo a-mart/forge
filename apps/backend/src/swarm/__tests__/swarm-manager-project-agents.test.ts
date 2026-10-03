@@ -658,7 +658,7 @@ describe('SwarmManager', () => {
       whenToUse: 'Updated repo docs blurb.',
       prompt: 'Repo docs prompt v2',
     })
-    await manager.validateProjectAgentSourceForRead(result.agentId)
+    await manager.resolveAgentSystemPromptForRead(result.agentId)
 
     expect(manager.getAgent(result.agentId)?.projectAgent?.whenToUse).toBe('Updated repo docs blurb.')
     expect(manager.notifiedProjectAgentProfileIds).toContain('manager')

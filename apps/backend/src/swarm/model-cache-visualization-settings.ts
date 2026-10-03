@@ -39,26 +39,3 @@ export async function setModelCacheVisualizationEnabled(
 
   return settings
 }
-
-export async function getModelCacheVisualizationSettings(
-  dataDir: string,
-): Promise<ModelCacheVisualizationSettings> {
-  const enabled = await getModelCacheVisualizationEnabled(dataDir)
-  const filePath = getModelCacheVisualizationSettingsPath(dataDir)
-  try {
-    const raw = await readFile(filePath, 'utf8')
-    const parsed = JSON.parse(raw) as { enabled?: unknown; updatedAt?: unknown }
-    return {
-      enabled,
-      updatedAt:
-        typeof parsed.updatedAt === 'string' && parsed.updatedAt.trim().length > 0
-          ? parsed.updatedAt
-          : null,
-    }
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return { enabled: DEFAULT_MODEL_CACHE_VISUALIZATION_ENABLED, updatedAt: null }
-    }
-    return { enabled: DEFAULT_MODEL_CACHE_VISUALIZATION_ENABLED, updatedAt: null }
-  }
-}

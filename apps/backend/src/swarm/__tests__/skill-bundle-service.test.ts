@@ -4,11 +4,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { SkillBundleManifestV1 } from "@forge/protocol";
 import { createTempConfig, type TempConfigHandle } from "../../test-support/temp-config.js";
 import { getProfilePiSkillsDir } from "../data-paths.js";
-import {
-  computeSkillBundleContentSha256,
-  SkillBundleService,
-  validateSkillBundleManifest
-} from "../skills/skill-bundle-service.js";
+import { computeSkillBundleContentSha256 } from "../skills/skill-bundle-canonical.js";
+import { SkillBundleService } from "../skills/skill-bundle-service.js";
+import { validateSkillBundleManifest } from "../skills/skill-bundle-validation.js";
 import { SkillMetadataService } from "../skills/skill-metadata-service.js";
 import type { SwarmConfig } from "../types.js";
 

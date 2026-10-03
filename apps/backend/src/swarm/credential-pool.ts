@@ -7,6 +7,7 @@ import { AuthStorage, type AuthCredential } from "@earendil-works/pi-coding-agen
 import type { CredentialPoolState, CredentialPoolStrategy, PooledCredentialInfo } from "@forge/protocol";
 import { isEnoentError } from "../utils/fs-errors.js";
 import { writeJsonFileAtomic } from "../utils/atomic-files.js";
+import { errorToMessage } from "../utils/normalize.js";
 
 // ── Storage types (persisted to credential-pool.json) ──
 
@@ -215,17 +216,6 @@ export class CredentialPoolService {
     }
 
     return null;
-  }
-
-  /**
-   * Returns the auth.json key for a specific credential.
-   */
-  async getCredentialAuthKey(provider: string, credentialId: string): Promise<string> {
-    this.assertSupportedProvider(provider);
-    await this.ensureLoaded();
-
-    const entry = this.findCredential(provider, credentialId);
-    return authStorageKey(provider, entry.id, entry.isPrimary);
   }
 
   /**
@@ -458,16 +448,6 @@ export class CredentialPoolService {
     await this.persist();
   }
 
-  async markHealthy(provider: string, credentialId: string): Promise<void> {
-    this.assertSupportedProvider(provider);
-    await this.ensureLoaded();
-
-    const entry = this.findCredential(provider, credentialId);
-    entry.health = "healthy";
-    entry.cooldownUntil = null;
-    await this.persist();
-  }
-
   /** Recover after successful authenticated validation without clearing a concurrent quota cooldown. */
   async recoverAuthError(provider: string, credentialId: string): Promise<void> {
     this.assertSupportedProvider(provider);
@@ -568,7 +548,7 @@ export class CredentialPoolService {
       throw new PooledCredentialAuthError(
         provider,
         credentialId,
-        `Failed to refresh pooled ${provider} credential ${credentialId}: ${toErrorMessage(error)}`
+        `Failed to refresh pooled ${provider} credential ${credentialId}: ${errorToMessage(error)}`
       );
     }
   }
@@ -829,10 +809,6 @@ function normalizeAuthToken(value: unknown): string | undefined {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function shouldMigrateCredential(provider: string, credential: AuthCredential | undefined): boolean {

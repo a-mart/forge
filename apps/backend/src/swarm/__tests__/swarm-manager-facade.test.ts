@@ -324,7 +324,6 @@ function createServices(): SwarmManagerFacadeServices {
     },
     collaboration: {},
     trust: {},
-    codexDirect: {},
     observability: {},
     extensions: { buildSettingsSnapshot: vi.fn(async () => ({})) },
     host: {

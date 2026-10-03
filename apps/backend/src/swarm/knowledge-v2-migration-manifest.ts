@@ -4,6 +4,7 @@ import type {
   KnowledgeEntryType,
   KnowledgeIndexResult,
 } from "./knowledge-service.js";
+import { isRecord } from "../utils/normalize.js";
 
 export const KNOWLEDGE_V2_MIGRATION_MANIFEST_VERSION = 2;
 export const KNOWLEDGE_V2_MIGRATION_CLASSIFIER = "offline-heuristic-v1";
@@ -134,9 +135,6 @@ function isEntryType(value: unknown): value is KnowledgeEntryType {
   return value === "preference" || value === "convention" || value === "gotcha" || value === "pointer";
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }

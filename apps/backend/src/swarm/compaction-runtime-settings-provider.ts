@@ -34,16 +34,12 @@ function snapshotFromCompactionSettings(
  */
 export class LiveCompactionRuntimeSettingsProvider implements CompactionRuntimeSettingsProvider {
   private settingsService: Pick<CompactionSettingsService, "getSettings"> | null = null;
-  private fallbackSnapshot: CompactionRuntimeSettingsSnapshot = snapshotFromCompactionSettings(
+  private readonly fallbackSnapshot: CompactionRuntimeSettingsSnapshot = snapshotFromCompactionSettings(
     createDefaultCompactionSettings(),
   );
 
   attachSettingsService(service: Pick<CompactionSettingsService, "getSettings">): void {
     this.settingsService = service;
-  }
-
-  setFallbackSnapshot(snapshot: CompactionRuntimeSettingsSnapshot): void {
-    this.fallbackSnapshot = snapshot;
   }
 
   getCompactionRuntimeSettings(): CompactionRuntimeSettingsSnapshot {

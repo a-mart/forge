@@ -110,7 +110,6 @@ import type { SwarmToolSideEffectEvent } from "./swarm-tool-host.js";
 import type {
   AppendConversationUserMessageOptions,
   AppendConversationUserMessageResult,
-  DispatchRuntimeUserMessageOptions,
   HandleUserMessageOptions,
 } from "./user-message-coordinator.js";
 import type {
@@ -527,10 +526,6 @@ export abstract class SwarmManagerFacade extends SwarmManagerSessionAttentionFac
     return this.services.userMessages.appendConversationUserMessage(text, options);
   }
 
-  dispatchRuntimeUserMessage(options: DispatchRuntimeUserMessageOptions): Promise<void> {
-    return this.services.userMessages.dispatchRuntimeUserMessage(options);
-  }
-
   handleUserMessage(text: string, options?: HandleUserMessageOptions): Promise<void> {
     return this.services.userMessages.handleUserMessage(text, options);
   }
@@ -651,12 +646,6 @@ export abstract class SwarmManagerFacade extends SwarmManagerSessionAttentionFac
     descriptor: AgentDescriptor & { role: "manager" },
   ): void {
     this.services.trust.schedulePrompt(descriptor);
-  }
-
-  maybePromptForProjectExecutableTrust(
-    descriptor: AgentDescriptor & { role: "manager" },
-  ): Promise<void> {
-    return this.services.trust.maybePrompt(descriptor);
   }
 
   applyProjectResourceTrustChange(trustKey: string): Promise<void> {
@@ -935,10 +924,6 @@ export abstract class SwarmManagerFacade extends SwarmManagerSessionAttentionFac
     return this.services.profileBookkeeping.reorderProfiles(profileIds);
   }
 
-  validateProjectAgentSourceForRead(agentId: string): Promise<void> {
-    return this.services.projectAgents.validateSourceForRead(agentId);
-  }
-
   resolveAgentSystemPromptForRead(agentId: string): Promise<string | null> {
     return this.services.projectAgents.resolveSystemPromptForRead(agentId);
   }
@@ -1123,10 +1108,6 @@ export abstract class SwarmManagerFacade extends SwarmManagerSessionAttentionFac
   }
 
   // Direct and scoped Codex API.
-
-  isExternalThreadSidecarDescriptor(descriptor: AgentDescriptor): boolean {
-    return this.services.codexDirect.isSidecarDescriptor(descriptor);
-  }
 
   retryCodexPluginWorker(
     managerAgentId: string,

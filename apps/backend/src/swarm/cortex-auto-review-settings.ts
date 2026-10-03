@@ -233,7 +233,7 @@ function createDisabledCortexAutoReviewSettings(): CortexAutoReviewSettings {
   }
 }
 
-export function cronExpressionForIntervalMinutes(intervalMinutes: number): string {
+function cronExpressionForIntervalMinutes(intervalMinutes: number): string {
   const normalized = normalizeIntervalMinutes(intervalMinutes)
 
   if (normalized === 1440) {

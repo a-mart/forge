@@ -400,17 +400,6 @@ export class ProjectAgentSharingService {
     return entries.sort((left, right) => left.displayName.localeCompare(right.displayName));
   }
 
-  async hasActiveExternalAccess(sourceAgentId: string, targetProfileId: string): Promise<boolean> {
-    await this.ensureLoaded();
-    const grant = this.findGrant(sourceAgentId, targetProfileId);
-    if (!grant) {
-      return false;
-    }
-
-    const profiles = new Map(this.deps.getProfiles().map((profile) => [profile.profileId, profile]));
-    return this.isGrantActive(grant, profiles);
-  }
-
   async authorizeExternalDelivery(options: {
     senderAgentId: string;
     senderProfileId: string;

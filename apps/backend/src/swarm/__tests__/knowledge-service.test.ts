@@ -8,7 +8,6 @@ import {
   type KnowledgeEntryScope,
   type KnowledgeEntrySource,
 } from "../knowledge-service.js";
-import { createKnowledgeConsolidatorApi } from "../knowledge-consolidator-api.js";
 import type { AgentDescriptor } from "../types.js";
 import type { SwarmToolHost } from "../swarm-tool-host.js";
 import type { VersioningMutation, VersioningMutationSink } from "../../versioning/versioning-types.js";
@@ -80,14 +79,12 @@ describe("KnowledgeService", () => {
     expect(index.demotedEntryIds).toContain("preference-normal-old");
   });
 
-  it("exposes a consolidator API without create and carries source ids on merge", async () => {
+  it("carries source ids on merge", async () => {
     const service = createService(await tempDir());
     const first = await service.upsertEntry(baseEntry("Merge A"));
     const second = await service.upsertEntry(baseEntry("Merge B", "s2"));
-    const api = createKnowledgeConsolidatorApi(service);
-    expect("create" in api).toBe(false);
 
-    const merged = await api.merge([first.frontmatter.id, second.frontmatter.id]);
+    const merged = await service.mergeEntries([first.frontmatter.id, second.frontmatter.id]);
     expect(merged.frontmatter.source_entry_ids).toEqual(
       expect.arrayContaining([first.frontmatter.id, second.frontmatter.id]),
     );
