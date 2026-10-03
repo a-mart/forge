@@ -9,7 +9,12 @@ export const MAX_WS_EVENT_BYTES = 1 * 1024 * 1024;
  * responses while allowing the two replaceable catalog snapshots additional room.
  */
 export const MAX_WS_CATALOG_SNAPSHOT_BYTES = 4 * 1024 * 1024;
-export const MAX_WS_BUFFERED_AMOUNT_BYTES = 1 * 1024 * 1024;
+/**
+ * Live events are dropped only once a socket's queue exceeds the largest frame
+ * Forge may legitimately send. A smaller cap made every reconnect drop live
+ * status and unread events while the catalog snapshot was still queued.
+ */
+export const MAX_WS_BUFFERED_AMOUNT_BYTES = MAX_WS_CATALOG_SNAPSHOT_BYTES;
 
 /**
  * Bootstrap-critical event types must never be dropped under transient backpressure: losing any of
