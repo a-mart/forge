@@ -25,23 +25,6 @@ export function formatAssistantOutputTargetMetadata(target: AssistantOutputTarge
   }
 }
 
-export function classifyAssistantOutputTarget(target: AssistantOutputTarget | undefined): AssistantOutputPolicyFacts {
-  if (!target) {
-    return factsForMode("internal_only");
-  }
-
-  switch (target.kind) {
-    case "session_transcript":
-      return factsForMode("web_transcript");
-    case "external_channel":
-    case "peer_agent":
-    case "explicit_tool_required":
-      return factsForMode("routed_required");
-    case "internal_only":
-      return factsForMode("internal_only");
-  }
-}
-
 export function runtimeInputAssistantOutputPolicyFacts(text: string): AssistantOutputPolicyFacts {
   const match = text.match(ASSISTANT_OUTPUT_TARGET_METADATA_PATTERN);
   if (!match) {
@@ -67,10 +50,6 @@ export function runtimeInputAssistantOutputPolicyFacts(text: string): AssistantO
   } catch {
     return factsForMode("internal_only");
   }
-}
-
-export function runtimeInputAllowsProjectedAssistantOutput(text: string): boolean {
-  return runtimeInputAssistantOutputPolicyFacts(text).allowsProjection;
 }
 
 function parsePolicyMode(value: unknown): AssistantOutputPolicyMode | undefined {
