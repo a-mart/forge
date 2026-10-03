@@ -15,11 +15,8 @@ import {
   resolveWorkspaceRoster,
   generateRosterBlock,
   getWorkerTemplate,
-  resolveTierConfigs,
-  saveTierConfigs,
   saveProfileSpecialist,
   saveSharedSpecialist,
-  invalidateSpecialistCache,
   type SaveSpecialistRequest,
 } from "../../../swarm/specialists/specialist-registry.js";
 import { modelCatalogService } from "../../../swarm/model-catalog-service.js";
@@ -39,7 +36,6 @@ import {
 import type { HttpRoute } from "../shared/http-route.js";
 
 const SPECIALISTS_ENDPOINT_PATH = "/api/settings/specialists";
-const SPECIALIST_TIERS_ENDPOINT_PATH = "/api/settings/specialists/tiers";
 const DELEGATION_ROSTERS_ENDPOINT_PATH = "/api/settings/delegation-rosters";
 const SETTINGS_MODELS_ENDPOINT_PATH = "/api/settings/models";
 const ROSTER_PROMPT_SUFFIX = "/roster-prompt";
@@ -66,13 +62,6 @@ export function createSpecialistRoutes(options: {
       matches: (pathname) => pathname === DELEGATION_ROSTERS_ENDPOINT_PATH,
       handle: async (request, response) => {
         await handleDelegationRostersRequest(swarmManager, request, response);
-      },
-    },
-    {
-      methods: ENABLED_METHODS,
-      matches: (pathname) => pathname === SPECIALIST_TIERS_ENDPOINT_PATH,
-      handle: async (request, response) => {
-        await handleSpecialistTiersRequest(swarmManager, broadcastEvent, request, response);
       },
     },
     {
@@ -190,52 +179,6 @@ function normalizeReasoningLevels(
   }
 
   return supportsReasoning ? ["none", "low", "medium", "high"] : ["none"];
-}
-
-async function handleSpecialistTiersRequest(
-  swarmManager: SwarmManager,
-  broadcastEvent: (event: ServerEvent) => void,
-  request: IncomingMessage,
-  response: ServerResponse,
-): Promise<void> {
-  if (request.method === "OPTIONS") {
-    applyCorsHeaders(request, response, ENABLED_METHODS);
-    response.statusCode = 204;
-    response.end();
-    return;
-  }
-
-  applyCorsHeaders(request, response, ENABLED_METHODS);
-
-  const dataDir = swarmManager.getConfig().paths.dataDir;
-
-  if (request.method === "GET") {
-    try {
-      sendJson(response, 200, { tiers: await resolveTierConfigs(dataDir) });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      sendJson(response, 500, { error: message });
-    }
-    return;
-  }
-
-  if (request.method === "PUT") {
-    try {
-      const body = await readJsonBody(request);
-      const tiers = parseTierConfigBody(body);
-      const saved = await saveTierConfigs(dataDir, tiers);
-      invalidateSpecialistCache();
-      await notifyGlobalSpecialistMutation({ swarmManager, broadcastEvent, dataDir });
-      sendJson(response, 200, { tiers: saved });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      sendJson(response, getErrorStatusCode(message), { error: message });
-    }
-    return;
-  }
-
-  response.setHeader("Allow", ENABLED_METHODS);
-  sendJson(response, 405, { error: "Method Not Allowed" });
 }
 
 async function handleSpecialistRequest(
@@ -603,36 +546,6 @@ function readOptionalEffortTierField(obj: Record<string, unknown>, key: string):
     throw new Error(`${key} must be one of light|fast|standard|deep|max`);
   }
   return value;
-}
-
-function parseTierConfigBody(value: unknown): TierConfig[] {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Request body must be a JSON object");
-  }
-
-  const tiers = (value as { tiers?: unknown }).tiers;
-  if (!Array.isArray(tiers)) {
-    throw new Error("tiers must be an array");
-  }
-
-  return tiers.map((entry, index) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new Error(`tiers[${index}] must be an object`);
-    }
-    const obj = entry as Record<string, unknown>;
-    return {
-      tier: readRequiredStringField(obj, "tier") as TierConfig["tier"],
-      displayName: readRequiredStringField(obj, "displayName"),
-      description: readRequiredStringField(obj, "description"),
-      color: readRequiredStringField(obj, "color"),
-      modelId: readRequiredStringField(obj, "modelId"),
-      provider: readRequiredStringField(obj, "provider"),
-      reasoningLevel: readOptionalStringField(obj, "reasoningLevel"),
-      fallbackModelId: readOptionalStringField(obj, "fallbackModelId"),
-      fallbackProvider: readOptionalStringField(obj, "fallbackProvider"),
-      fallbackReasoningLevel: readOptionalStringField(obj, "fallbackReasoningLevel"),
-    };
-  });
 }
 
 function readRequiredStringField(obj: Record<string, unknown>, key: string): string {

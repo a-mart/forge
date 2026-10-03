@@ -13,7 +13,6 @@ import type {
   GitPullResult,
   GitPushRequest,
   GitPushResult,
-  GitHostedProviderStatus,
   GitPullRequestDetail,
   GitPullRequestListResult,
   GitPullRequestMergeRequest,
@@ -79,10 +78,6 @@ export class GitSourceControlService {
   constructor(options: { hostedProvider?: GitHostedProviderService; hostedProviderOptions?: GitHostedProviderOptions } = {}) {
     this.hostedProvider =
       options.hostedProvider ?? new GitHostedProviderService(options.hostedProviderOptions);
-  }
-
-  async getProviderStatus(context: GitSourceControlContext): Promise<GitHostedProviderStatus> {
-    return this.hostedProvider.getProviderStatus(context);
   }
 
   async listPullRequests(

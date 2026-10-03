@@ -98,10 +98,6 @@ export interface CortexEntriesResponse {
   entries: CortexKnowledgeEntry[]
 }
 
-export interface CortexEntryResponse {
-  entry: CortexKnowledgeEntry
-}
-
 export interface CortexChangelogResponse {
   changelog: CortexChangelogEntry[]
 }

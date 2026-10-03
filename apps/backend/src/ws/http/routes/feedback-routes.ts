@@ -1,12 +1,11 @@
 import { FEEDBACK_REASON_CODES, type FeedbackEvent, type FeedbackSubmitValue } from "@forge/protocol";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
-import { FeedbackService, type FeedbackAcrossSessionsOptions, type FeedbackListOptions } from "../../../swarm/feedback-service.js";
+import { FeedbackService, type FeedbackListOptions } from "../../../swarm/feedback-service.js";
 import { applyCorsHeaders, decodePathSegment, matchPathPattern, readJsonBody, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";
 
 const SESSION_FEEDBACK_ENDPOINT_PATTERN = /^\/api\/v1\/profiles\/([^/]+)\/sessions\/([^/]+)\/feedback$/;
 const SESSION_FEEDBACK_STATE_ENDPOINT_PATTERN = /^\/api\/v1\/profiles\/([^/]+)\/sessions\/([^/]+)\/feedback\/state$/;
-const FEEDBACK_QUERY_ENDPOINT_PATH = "/api/v1/feedback";
 
 export function createFeedbackRoutes(options: { swarmManager: SwarmManager; feedbackService?: FeedbackService }): HttpRoute[] {
   const { swarmManager } = options;
@@ -126,39 +125,6 @@ export function createFeedbackRoutes(options: { swarmManager: SwarmManager; feed
           sendJson(response, 500, { error: message });
         }
       }
-    },
-    {
-      methods: "GET, OPTIONS",
-      matches: (pathname) => pathname === FEEDBACK_QUERY_ENDPOINT_PATH,
-      handle: async (request, response, requestUrl) => {
-        const methods = "GET, OPTIONS";
-
-        if (request.method === "OPTIONS") {
-          applyCorsHeaders(request, response, methods);
-          response.statusCode = 204;
-          response.end();
-          return;
-        }
-
-        if (request.method !== "GET") {
-          applyCorsHeaders(request, response, methods);
-          response.setHeader("Allow", methods);
-          sendJson(response, 405, { error: "Method Not Allowed" });
-          return;
-        }
-
-        applyCorsHeaders(request, response, methods);
-
-        try {
-          const filters = parseFeedbackAcrossSessionsFilterParams(requestUrl.searchParams);
-          const events = await feedbackService.queryFeedbackAcrossSessions(filters);
-          sendJson(response, 200, { feedback: events });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Unable to query feedback.";
-          const statusCode = isInvalidRequestError(message) ? 400 : 500;
-          sendJson(response, statusCode, { error: message });
-        }
-      }
     }
   ];
 }
@@ -262,21 +228,6 @@ function parseSubmitFeedbackBody(
 
 function parseFeedbackFilterParams(searchParams: URLSearchParams): FeedbackListOptions {
   return {
-    since: parseSinceValue(searchParams.get("since")),
-    scope: parseScopeValue(searchParams.get("scope"), "scope", true),
-    value: parseVoteValue(searchParams.get("value"), "value", true)
-  };
-}
-
-function parseFeedbackAcrossSessionsFilterParams(searchParams: URLSearchParams): FeedbackAcrossSessionsOptions {
-  const profileIdRaw = searchParams.get("profileId");
-  const profileId = profileIdRaw !== null ? profileIdRaw.trim() : undefined;
-  if (profileId !== undefined && profileId.length === 0) {
-    throw new Error("profileId must be a non-empty string.");
-  }
-
-  return {
-    profileId,
     since: parseSinceValue(searchParams.get("since")),
     scope: parseScopeValue(searchParams.get("scope"), "scope", true),
     value: parseVoteValue(searchParams.get("value"), "value", true)

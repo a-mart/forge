@@ -21,7 +21,6 @@ import {
   saveChannelSpecialist,
   saveProfileSpecialist,
   saveSharedSpecialist,
-  saveTierConfigs,
   seedBuiltins,
 } from "../specialist-registry.js";
 import { getBuiltinSpecialistsDir } from "../../agents/specialists/specialist-paths.js";
@@ -810,25 +809,7 @@ describe("specialist-registry", () => {
     expect(markdown).not.toContain("webSearch:");
   });
 
-  it("preserves omitted tier settings when saving a partial policy update", async () => {
-    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
-    const dataDir = join(root, "data");
-
-    await saveTierConfigs(dataDir, [
-      { ...DEFAULT_TIER_CONFIGS.light, modelId: "custom-light-model", reasoningLevel: "low" },
-      { ...DEFAULT_TIER_CONFIGS.max, modelId: "custom-max-model", reasoningLevel: "max" },
-    ]);
-    await saveTierConfigs(dataDir, [
-      { ...DEFAULT_TIER_CONFIGS.fast, modelId: "updated-support-model", reasoningLevel: "medium" },
-    ]);
-
-    const reloaded = await resolveTierConfigs(dataDir);
-    expect(reloaded.find((config) => config.tier === "light")?.modelId).toBe("custom-light-model");
-    expect(reloaded.find((config) => config.tier === "max")?.modelId).toBe("custom-max-model");
-    expect(reloaded.find((config) => config.tier === "fast")?.modelId).toBe("updated-support-model");
-  });
-
-  it("normalizes persisted Claude SDK tier models but rejects new SDK tier selections", async () => {
+  it("normalizes persisted Claude SDK tier models", async () => {
     const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
     const dataDir = join(root, "data");
     const sharedDir = join(dataDir, "shared", "specialists");
@@ -854,11 +835,6 @@ describe("specialist-registry", () => {
       fallbackModelId: "claude-opus-4-7",
       fallbackReasoningLevel: "high",
     });
-    await expect(saveTierConfigs(dataDir, [{
-      ...DEFAULT_TIER_CONFIGS.fast,
-      provider: "claude-sdk",
-      modelId: "claude-opus-4-7",
-    }])).rejects.toThrow("Claude SDK has been retired");
   });
 
   it("coerces webSearch to false when saving a non-Grok specialist", async () => {

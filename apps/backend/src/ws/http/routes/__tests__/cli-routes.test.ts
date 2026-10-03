@@ -28,19 +28,19 @@ afterEach(async () => {
 });
 
 describe("CLI routes and bearer auth", () => {
-  it("requires bearer auth for /api/cli/* and returns capabilities for a valid stored key", async () => {
+  it("requires bearer auth for /api/cli/* and returns status capabilities for a valid stored key", async () => {
     const { service } = await makeCliAccessService();
     const generated = await service.generateKey({ name: "Route test" });
     const server = await createCliRouteTestServer(service, createCliRouteState());
 
-    const missing = await fetch(`${server.baseUrl}/api/cli/capabilities`);
+    const missing = await fetch(`${server.baseUrl}/api/cli/status`);
     expect(missing.status).toBe(401);
     expect(missing.headers.get("www-authenticate")).toBe('Bearer realm="forge-cli"');
     await expect(missing.json()).resolves.toMatchObject({
       error: { code: "missing_authorization", status: 401 },
     });
 
-    const invalid = await fetch(`${server.baseUrl}/api/cli/capabilities`, {
+    const invalid = await fetch(`${server.baseUrl}/api/cli/status`, {
       headers: { authorization: "Bearer invalid" },
     });
     await expect(parseJsonResponse(invalid)).resolves.toMatchObject({
@@ -48,7 +48,7 @@ describe("CLI routes and bearer auth", () => {
       json: { error: { code: "invalid_token", status: 401 } },
     });
 
-    const valid = await fetch(`${server.baseUrl}/api/cli/capabilities`, {
+    const valid = await fetch(`${server.baseUrl}/api/cli/status`, {
       headers: { authorization: `Bearer ${generated.plaintextKey}` },
     });
     const payload = await parseJsonResponse(valid);
@@ -98,7 +98,7 @@ describe("CLI routes and bearer auth", () => {
     const { service } = await makeCliAccessService();
     const server = await createCliRouteTestServer(service, createCliRouteState());
 
-    const response = await fetch(`${server.baseUrl}/api/cli/capabilities`, {
+    const response = await fetch(`${server.baseUrl}/api/cli/status`, {
       method: "OPTIONS",
       headers: {
         origin: "http://127.0.0.1:47188",
@@ -427,7 +427,7 @@ describe("CLI routes and bearer auth", () => {
     activeSwarmServers.push(server);
     await server.start();
 
-    const response = await fetch(`http://${configHandle.config.host}:${configHandle.config.port}/api/cli/capabilities`, {
+    const response = await fetch(`http://${configHandle.config.host}:${configHandle.config.port}/api/cli/status`, {
       headers: { authorization: `Bearer ${generated.plaintextKey}` },
     });
 

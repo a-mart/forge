@@ -188,10 +188,6 @@ export class GitHostedProviderService {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
-  async getProviderStatus(context: GitSourceControlContext): Promise<GitHostedProviderStatus> {
-    return this.buildProviderStatus(context);
-  }
-
   async listPullRequests(
     context: GitSourceControlContext,
     options: { openLimit?: number; closedLimit?: number } = {}

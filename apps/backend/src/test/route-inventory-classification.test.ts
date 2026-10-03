@@ -124,7 +124,6 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   { sample: "/api/git/create-branch", expect: { POST: "member" }, killSwitched: true },
   { sample: "/api/git/pull-ff-only", expect: { POST: "member" }, killSwitched: true },
   { sample: "/api/git/push", expect: { POST: "member" }, killSwitched: true },
-  { sample: "/api/git/provider/status", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/pull-requests", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/pull-requests/42", expect: { GET: "member" }, killSwitched: true },
   { sample: "/api/git/pull-requests/42/merge", expect: { POST: "member" }, killSwitched: true },
@@ -140,14 +139,12 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
     expect: { GET: "member" },
     killSwitched: true,
   },
-  { sample: "/api/v1/feedback", expect: { GET: "admin" } },
 
   // --- cortex / onboarding (remote Cortex surfacing is deferred) ------------
   { sample: "/api/onboarding/state", expect: { GET: "admin" } },
   { sample: "/api/onboarding/preferences", expect: { POST: "admin" } },
   { sample: "/api/cortex/index", expect: { GET: "admin" } },
   { sample: "/api/cortex/entries", expect: { GET: "admin" } },
-  { sample: "/api/cortex/entry/entry-1", expect: { GET: "admin", POST: "admin" } },
   { sample: "/api/cortex/changelog", expect: { GET: "admin" } },
   { sample: "/api/cortex/consolidation", expect: { GET: "admin", POST: "admin" } },
 
@@ -169,7 +166,6 @@ const ROUTE_INVENTORY: RouteInventoryEntry[] = [
   { sample: "/api/settings/recommended-manager-defaults", expect: { POST: "admin" } },
   { sample: "/api/settings/delegation-rosters", expect: { GET: "member", PUT: "admin" }, killSwitched: true },
   { sample: "/api/settings/specialists", expect: { GET: "admin", PUT: "admin", DELETE: "admin" } },
-  { sample: "/api/settings/specialists/tiers", expect: { GET: "admin", PUT: "admin" } },
   { sample: "/api/settings/model-cache-visualization/enabled", expect: { GET: "admin", PUT: "admin" } },
   { sample: "/api/settings/model-overrides", expect: { GET: "member", PUT: "admin", DELETE: "admin" }, killSwitched: true },
   { sample: "/api/settings/openrouter/available-models", expect: { GET: "admin" } },

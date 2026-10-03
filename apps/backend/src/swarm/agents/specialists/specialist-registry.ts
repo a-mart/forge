@@ -2,7 +2,7 @@ import { access, copyFile, mkdir, readdir, readFile, unlink } from "node:fs/prom
 import { join } from "node:path";
 import type { Dirent } from "node:fs";
 import { isEnoentError, isNotDirLikeMissingError } from "../../../utils/fs-errors.js";
-import { writeFileAtomic, writeJsonFileAtomic } from "../../../utils/atomic-files.js";
+import { writeFileAtomic } from "../../../utils/atomic-files.js";
 import type { RuntimeTarget } from "../../../runtime-target.js";
 import {
   type EffortTier,
@@ -637,7 +637,7 @@ export async function resolveTierConfigs(dataDir: string): Promise<TierConfig[]>
         : [];
 
   for (const raw of rawConfigs) {
-    const config = parseTierConfig(raw, true);
+    const config = parseTierConfig(raw);
     if (config) {
       byTier.set(config.tier, config);
     }
@@ -653,24 +653,6 @@ export async function resolveTierConfig(dataDir: string, tier: EffortTier): Prom
     throw new Error(`Unknown tier: ${tier}`);
   }
   return { ...config };
-}
-
-export async function saveTierConfigs(dataDir: string, configs: readonly TierConfig[]): Promise<TierConfig[]> {
-  const existing = await resolveTierConfigs(dataDir);
-  const byTier = new Map(existing.map((config) => [config.tier, { ...config }]));
-  for (const raw of configs) {
-    const config = parseTierConfig(raw);
-    if (!config) {
-      throw new Error("Invalid tier config");
-    }
-    byTier.set(config.tier, config);
-  }
-
-  const normalized = EFFORT_TIER_ORDER.map((tier) => byTier.get(tier)!);
-  const dir = getSharedSpecialistsDir(dataDir);
-  await mkdir(dir, { recursive: true });
-  await writeJsonFileAtomic(join(dir, TIER_CONFIGS_FILENAME), { tiers: normalized });
-  return cloneTierConfigs(normalized);
 }
 
 export async function saveProfileSpecialist(
@@ -1206,7 +1188,7 @@ function cloneTierConfigs(configs: readonly TierConfig[]): TierConfig[] {
   return configs.map((config) => ({ ...config }));
 }
 
-function parseTierConfig(value: unknown, persisted = false): TierConfig | undefined {
+function parseTierConfig(value: unknown): TierConfig | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
@@ -1227,15 +1209,11 @@ function parseTierConfig(value: unknown, persisted = false): TierConfig | undefi
     return undefined;
   }
 
-  if (persisted) {
-    const normalizedModel = normalizePersistedSwarmModelDescriptor({ provider, modelId, thinkingLevel: reasoningLevel });
-    if (normalizedModel) {
-      if (reasoningLevel || normalizedModel.modelId !== modelId) reasoningLevel = normalizedModel.thinkingLevel;
-      provider = normalizedModel.provider;
-      modelId = normalizedModel.modelId;
-    }
-  } else {
-    assertClaudeSdkProviderNotSelected(provider, "tier config provider");
+  const normalizedModel = normalizePersistedSwarmModelDescriptor({ provider, modelId, thinkingLevel: reasoningLevel });
+  if (normalizedModel) {
+    if (reasoningLevel || normalizedModel.modelId !== modelId) reasoningLevel = normalizedModel.thinkingLevel;
+    provider = normalizedModel.provider;
+    modelId = normalizedModel.modelId;
   }
 
   let fallbackModelId = typeof raw.fallbackModelId === "string" && raw.fallbackModelId.trim().length > 0
@@ -1254,19 +1232,15 @@ function parseTierConfig(value: unknown, persisted = false): TierConfig | undefi
   }
 
   if (fallbackModelId && fallbackProvider) {
-    if (persisted) {
-      const normalizedFallback = normalizePersistedSwarmModelDescriptor({
-        provider: fallbackProvider,
-        modelId: fallbackModelId,
-        thinkingLevel: fallbackReasoningLevel,
-      });
-      if (normalizedFallback) {
-        if (fallbackReasoningLevel || normalizedFallback.modelId !== fallbackModelId) fallbackReasoningLevel = normalizedFallback.thinkingLevel;
-        fallbackProvider = normalizedFallback.provider;
-        fallbackModelId = normalizedFallback.modelId;
-      }
-    } else {
-      assertClaudeSdkProviderNotSelected(fallbackProvider, "tier config fallbackProvider");
+    const normalizedFallback = normalizePersistedSwarmModelDescriptor({
+      provider: fallbackProvider,
+      modelId: fallbackModelId,
+      thinkingLevel: fallbackReasoningLevel,
+    });
+    if (normalizedFallback) {
+      if (fallbackReasoningLevel || normalizedFallback.modelId !== fallbackModelId) fallbackReasoningLevel = normalizedFallback.thinkingLevel;
+      fallbackProvider = normalizedFallback.provider;
+      fallbackModelId = normalizedFallback.modelId;
     }
   }
 

@@ -66,7 +66,6 @@ const MEMBER_GIT_READ_PATHS = new Set([
   "/api/git/worktrees",
   "/api/git/branches",
   "/api/git/mutation-preflight",
-  "/api/git/provider/status",
   "/api/git/pull-requests",
 ]);
 const MEMBER_GIT_PULL_REQUEST_DETAIL_PATH = /^\/api\/git\/pull-requests\/\d+$/;

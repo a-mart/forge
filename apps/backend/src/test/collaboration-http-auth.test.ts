@@ -149,8 +149,6 @@ describe("collaboration HTTP auth middleware", () => {
 
     // Settings specialist routes — all require admin
     expect(classifyCollaborationHttpRequest("/api/settings/specialists", "GET")).toBe("admin");
-    expect(classifyCollaborationHttpRequest("/api/settings/specialists/tiers", "GET")).toBe("admin");
-    expect(classifyCollaborationHttpRequest("/api/settings/specialists/tiers", "PUT")).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/settings/specialists/template", "GET")).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/settings/specialists/backend", "PUT")).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/settings/specialists/backend", "DELETE")).toBe("admin");
@@ -182,7 +180,6 @@ describe("collaboration HTTP auth middleware", () => {
       ["/api/git/worktrees", "GET"],
       ["/api/git/branches", "GET"],
       ["/api/git/mutation-preflight", "GET"],
-      ["/api/git/provider/status", "GET"],
       ["/api/git/pull-requests", "GET"],
       ["/api/git/pull-requests/42", "GET"],
       ["/api/sessions/sess-1/audit", "GET"],
@@ -372,7 +369,7 @@ describe("collaboration HTTP auth middleware", () => {
       statusCode: 403,
       error: "Admin access required",
     });
-    expect(enforcePathAccess("/api/settings/specialists/tiers", "PUT", createAuthContext("admin"))).toEqual({
+    expect(enforcePathAccess("/api/settings/specialists/backend", "PUT", createAuthContext("admin"))).toEqual({
       ok: true,
     });
   });
