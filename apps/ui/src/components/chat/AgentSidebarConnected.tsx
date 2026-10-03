@@ -10,6 +10,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -107,6 +108,23 @@ const selectBuilderSidebarOrderRevision = (state: ManagerWsState): number | null
   state.builderSidebarOrderRevision
 )
 
+// Sidebar rows render only these live fields. Streaming context-usage ticks
+// replace the statuses map several times per second; ignoring them keeps every
+// project row from rerendering on each tick.
+function equalSidebarStatuses(left: StatusMap, right: StatusMap): boolean {
+  if (left === right) return true
+  const leftIds = Object.keys(left)
+  if (leftIds.length !== Object.keys(right).length) return false
+  return leftIds.every((agentId) => {
+    const previous = left[agentId]
+    const next = right[agentId]
+    return next !== undefined
+      && previous.status === next.status
+      && previous.pendingCount === next.pendingCount
+      && previous.contextRecoveryInProgress === next.contextRecoveryInProgress
+  })
+}
+
 function equalSidebarStructure(left: SidebarOriginStructure, right: SidebarOriginStructure): boolean {
   return left.connected === right.connected
     && left.profiles === right.profiles
@@ -140,11 +158,37 @@ const EMPTY_TREE_ROWS: ProfileTreeRow[] = []
 
 type ApiAvailability = 'unknown' | 'available' | 'unavailable'
 
+/**
+ * The workspace recreates its sidebar handlers whenever its store state changes.
+ * Every project and session row memoizes on handler identity, so pass stable
+ * wrappers that always call the latest handler instead.
+ */
+function useStableHandlers<T extends object>(props: T): T {
+  const latestRef = useRef(props)
+  useLayoutEffect(() => {
+    latestRef.current = props
+  })
+  const handlerKeys = Object.keys(props)
+    .filter((key) => typeof props[key as keyof T] === 'function')
+    .join('\n')
+  const handlers = useMemo(() => Object.fromEntries(
+    (handlerKeys ? handlerKeys.split('\n') : []).map((key) => [
+      key,
+      (...args: unknown[]) => {
+        const handler = latestRef.current[key as keyof T]
+        return typeof handler === 'function' ? handler(...args) : undefined
+      },
+    ]),
+  ), [handlerKeys])
+  return { ...props, ...handlers }
+}
+
 export const AgentSidebarConnected = memo(function AgentSidebarConnected({
   builderSidebarOrderApi,
   activityRailItems,
-  ...rest
+  ...props
 }: AgentSidebarConnectedProps) {
+  const rest = useStableHandlers(props)
   const sidebarLayout = useSidebarLayout()
   const roomsV2 = sidebarLayout === 'rooms-v2'
   const originStructures = useAllOrigins(selectSidebarStructure, {
@@ -157,7 +201,10 @@ export const AgentSidebarConnected = memo(function AgentSidebarConnected({
   // Local actions still receive live descriptors; the cross-origin tree model
   // below is held stable when only volatile worker status/count fields change.
   const agents = useOriginSlice(LOCAL_ORIGIN_ID, selectAgents, { selectorKey: 'sidebar.agents' })
-  const statuses = useOriginSlice(LOCAL_ORIGIN_ID, selectStatuses, { selectorKey: 'sidebar.statuses' })
+  const statuses = useOriginSlice(LOCAL_ORIGIN_ID, selectStatuses, {
+    selectorKey: 'sidebar.statuses',
+    equalityFn: equalSidebarStatuses,
+  })
   const unreadCounts = useOriginSlice(LOCAL_ORIGIN_ID, selectUnreadCounts, {
     selectorKey: 'sidebar.unreadCounts',
   })
