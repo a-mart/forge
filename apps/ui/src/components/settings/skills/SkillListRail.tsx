@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { SkillSourceBadge } from './SkillSourceBadge'
-import type { SkillInventoryEntry } from './skills-viewer-types'
+import type { SkillInventoryEntry } from '@forge/protocol'
 
 interface SkillListRailProps {
   skills: SkillInventoryEntry[]
