@@ -57,6 +57,7 @@ import { hasRequestId, sendWsEvent, sendWsEventWithBackpressure } from "./ws-sen
 import { WsSubscriptions } from "./ws-subscriptions.js";
 import type { RepositoryProjectCreationService } from "../swarm/repository-project-creation-service.js";
 import type { PresentedChatArtifactTicketStore } from "../swarm/session/presented-chat-artifact.js";
+import type { HtmlArtifactPreviewStore } from "../swarm/session/html-artifact-preview.js";
 
 const CONVERSATION_PAGE_RATE_WINDOW_MS = 5_000;
 const MAX_CONVERSATION_PAGE_REQUESTS_PER_WINDOW = 8;
@@ -96,6 +97,7 @@ export class WsHandler {
       projectId: string
     ) => Extract<ServerEvent, { type: "remote_update_awareness_project_changed" | "remote_update_awareness_project_cleared" }> | null;
     artifactTicketStore?: PresentedChatArtifactTicketStore;
+    htmlPreviewStore?: HtmlArtifactPreviewStore;
   }) {
     this.swarmManager = options.swarmManager;
     this.allowNonManagerSubscriptions = options.allowNonManagerSubscriptions;
@@ -133,6 +135,7 @@ export class WsHandler {
       terminalService,
       unreadTracker: this.unreadTracker,
       artifactTicketStore: options.artifactTicketStore,
+      htmlPreviewStore: options.htmlPreviewStore,
     });
 
     this.collabSubscriptionManager = new CollabSubscriptionManager(

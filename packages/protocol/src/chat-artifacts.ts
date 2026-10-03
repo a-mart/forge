@@ -66,3 +66,25 @@ export type ChatArtifactReadResponse =
   | ChatArtifactTextResponse
   | ChatArtifactLegacyImageResponse
   | ChatArtifactTicketImageResponse
+
+/** Issues a short-lived, folder-scoped preview link for an HTML artifact. */
+export const HTML_ARTIFACT_PREVIEW_ENDPOINT = '/api/artifact-previews'
+export const HTML_ARTIFACT_PREVIEW_PATH_PREFIX = '/api/artifact-previews/'
+
+/**
+ * Authorize by the caller's read access (`path` + optional `agentId`), or by
+ * transcript presentation (`transcriptAgentId` + `messageId` + `path`). Over the
+ * WS api_proxy the transcript owner is the subscribed session.
+ */
+export interface HtmlArtifactPreviewRequest {
+  path: string
+  agentId?: string
+  transcriptAgentId?: string
+  messageId?: string
+}
+
+export interface HtmlArtifactPreviewResponse {
+  /** Same-server path to the rendered HTML; relative assets resolve beside it. */
+  url: string
+  expiresAt: string
+}

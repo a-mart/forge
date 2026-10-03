@@ -1,3 +1,6 @@
+import { HTML_ARTIFACT_PREVIEW_ENDPOINT } from "@forge/protocol";
+import { HtmlArtifactPreviewStore } from "../swarm/session/html-artifact-preview.js";
+import { issueHtmlArtifactPreview } from "./http/services/html-artifact-preview-service.js";
 import { readFile } from "node:fs/promises";
 import type {
   ApiProxyCommand,
@@ -74,6 +77,7 @@ export class WsApiProxy {
   private readonly terminalService: TerminalService | null;
   private readonly unreadTracker: UnreadTracker | null;
   private readonly artifactTicketStore: PresentedChatArtifactTicketStore;
+  private readonly htmlPreviewStore: HtmlArtifactPreviewStore;
 
   constructor(options: {
     swarmManager: SwarmManager;
@@ -82,6 +86,7 @@ export class WsApiProxy {
     terminalService: TerminalService | null;
     unreadTracker: UnreadTracker | null;
     artifactTicketStore?: PresentedChatArtifactTicketStore;
+    htmlPreviewStore?: HtmlArtifactPreviewStore;
   }) {
     this.swarmManager = options.swarmManager;
     this.mobilePushService = options.mobilePushService;
@@ -89,6 +94,7 @@ export class WsApiProxy {
     this.terminalService = options.terminalService;
     this.unreadTracker = options.unreadTracker;
     this.artifactTicketStore = options.artifactTicketStore ?? new PresentedChatArtifactTicketStore();
+    this.htmlPreviewStore = options.htmlPreviewStore ?? new HtmlArtifactPreviewStore();
   }
 
   async routeApiProxyCommand(
@@ -148,6 +154,20 @@ export class WsApiProxy {
 
       if (pathname === API_PROXY_CHAT_ARTIFACT_READ_PATH) {
         return await this.handleApiProxyChatArtifactRead(command, payload, subscribedAgentId, artifactTicketAuthBinding);
+      }
+
+      if (pathname === HTML_ARTIFACT_PREVIEW_ENDPOINT) {
+        if (command.method !== "POST") return this.createApiProxyMethodNotAllowedResponse(command.requestId, "POST");
+        const result = await issueHtmlArtifactPreview({
+          source: this.swarmManager,
+          store: this.htmlPreviewStore,
+          payload,
+          subscribedAgentId,
+          ...(artifactTicketAuthBinding ? { authBinding: artifactTicketAuthBinding } : {}),
+          // Matches this surface's read-file rule (readApiProxyFile).
+          includeCwdAllowlistRootsForAgent: true,
+        });
+        return this.createApiProxyJsonResponse(command.requestId, result.status, result.body);
       }
 
       if (pathname === API_PROXY_FEEDBACK_PATH) {

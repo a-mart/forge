@@ -67,6 +67,7 @@ import { createNoopObservabilityFacade } from "../observability/noop-observabili
 import type { ObservabilityFacade } from "../observability/observability-types.js";
 import { FeedbackService } from "../swarm/feedback-service.js";
 import { PresentedChatArtifactTicketStore } from "../swarm/session/presented-chat-artifact.js";
+import { HtmlArtifactPreviewStore } from "../swarm/session/html-artifact-preview.js";
 import {
   validateSecureBuilderControlOrigin,
   validateSecureBuilderControlCapability,
@@ -82,6 +83,7 @@ import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./http/routes/agent-http-routes.js";
 import { createBuilderSidebarOrderRoutes } from "./http/routes/builder-sidebar-order-routes.js";
 import { createChatArtifactRoutes } from "./http/routes/chat-artifact-routes.js";
+import { createArtifactPreviewRoutes } from "./http/routes/artifact-preview-routes.js";
 import { createCodexCatalogRoutes } from "./http/routes/codex-catalog-routes.js";
 import { createCliAccessSettingsRoutes } from "./http/routes/cli-access-settings-routes.js";
 import { createCliRoutes } from "./http/routes/cli-routes.js";
@@ -678,6 +680,7 @@ export class SwarmWebSocketServer {
     this.shouldManageControlPid =
       !this.swarmManager.getConfig().isDesktop && readDaemonizedEnv() !== "1";
     const artifactTicketStore = new PresentedChatArtifactTicketStore();
+    const htmlPreviewStore = new HtmlArtifactPreviewStore();
 
     this.wsHandler = new WsHandler({
       swarmManager: this.swarmManager,
@@ -695,6 +698,7 @@ export class SwarmWebSocketServer {
       areRemoteTerminalsEnabled: () => this.remoteBuildSettingsService.areTerminalsEnabled(),
       browserAutomationService: options.browserAutomationService,
       artifactTicketStore,
+      htmlPreviewStore,
       getRemoteUpdateAwarenessBootstrapEvent: this.remoteUpdateAwarenessService
         ? (projectId) => {
             try {
@@ -827,6 +831,7 @@ export class SwarmWebSocketServer {
         broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
       }),
       ...createChatArtifactRoutes({ swarmManager: this.swarmManager, ticketStore: artifactTicketStore }),
+      ...createArtifactPreviewRoutes({ swarmManager: this.swarmManager, previewStore: htmlPreviewStore }),
       ...createFileBrowserRoutes({ swarmManager: this.swarmManager }),
       ...createGitDiffRoutes({ swarmManager: this.swarmManager }),
       ...createGitSourceControlRoutes({ swarmManager: this.swarmManager }),

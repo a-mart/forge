@@ -457,6 +457,26 @@ export async function findUniquePresentedConversationMessage(
   } finally { await openedHandle.close(); }
 }
 
+/**
+ * Authorize a transcript-presented path: the named user-visible assistant message
+ * must present exactly this path. Returns the canonical local target.
+ */
+export async function authorizePresentedChatArtifactTarget(
+  source: PresentedArtifactOwnerSource,
+  claim: { transcriptAgentId: string; messageId: string; path: string },
+  options?: {
+    targetResolution?: PresentedArtifactTargetResolutionHooks;
+    transcriptRead?: { afterOpen?: () => Promise<void> | void };
+  },
+): Promise<string> {
+  const target = canonicalizeChatArtifactPath(claim.path);
+  const descriptor = resolveActiveBuilderTranscriptDescriptor(source, claim.transcriptAgentId.trim());
+  const message = await findUniquePresentedConversationMessage(descriptor.sessionFile, claim.messageId.trim(), options?.transcriptRead);
+  if (!isUserVisibleAssistantConversationMessage(message)) fail("ineligible_message");
+  if (!extractPresentedArtifactPaths(message.text).some(p => samePath(p, target))) fail("path_not_presented");
+  return resolveCanonicalPresentedArtifactTarget(target, options?.targetResolution);
+}
+
 export async function readPresentedChatArtifact(
   source: PresentedArtifactOwnerSource,
   claim: { transcriptAgentId: unknown; messageId: unknown; path: unknown; previewBytes?: unknown; imageTransport?: unknown },
@@ -477,13 +497,12 @@ export async function readPresentedChatArtifact(
     (raw.imageTransport !== undefined && raw.imageTransport !== "http_ticket")
   ) fail("invalid_request");
   const previewBytes = validatePreviewBytes(raw.previewBytes);
-  const pathValue = raw.path as string; const transcriptAgentId = raw.transcriptAgentId as string; const messageId = raw.messageId as string;
-  const target = canonicalizeChatArtifactPath(pathValue); const descriptor = resolveActiveBuilderTranscriptDescriptor(source, transcriptAgentId.trim());
-  const sessionFile = descriptor.sessionFile;
-  const message = await findUniquePresentedConversationMessage(sessionFile, messageId.trim(), options?.transcriptRead);
-  if (!isUserVisibleAssistantConversationMessage(message)) fail("ineligible_message");
-  if (!extractPresentedArtifactPaths(message.text).some(p => samePath(p, target))) fail("path_not_presented");
-  const authorizedTarget = await resolveCanonicalPresentedArtifactTarget(target, options?.targetResolution);
+  const pathValue = raw.path as string;
+  const authorizedTarget = await authorizePresentedChatArtifactTarget(
+    source,
+    { transcriptAgentId: raw.transcriptAgentId as string, messageId: raw.messageId as string, path: pathValue },
+    options,
+  );
   if (raw.imageTransport === "http_ticket" && isTicketableBinaryContentType(resolveReadFileContentType(authorizedTarget))) {
     const ticketStore = options?.ticketStore;
     if (!ticketStore) throw new ChatArtifactError("invalid_request");
