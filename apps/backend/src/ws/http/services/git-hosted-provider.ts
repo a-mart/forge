@@ -626,12 +626,6 @@ export function aggregateCheckStatusFromRollup(
   return best;
 }
 
-export function parseCheckSummariesFromRollup(
-  rollup: RawGhPullRequest["statusCheckRollup"]
-): GitPullRequestCheckSummary[] {
-  return parseCheckSummaries(rollup);
-}
-
 export function matchesCurrentBranchPullRequest(
   entry: Pick<
     RawGhPullRequest,
@@ -846,7 +840,7 @@ function classifyCheckEntryStatus(entry: RawGhStatusCheckRollup): CheckStatus | 
   return null;
 }
 
-function parseCheckSummaries(
+export function parseCheckSummaries(
   rollup: RawGhPullRequest["statusCheckRollup"]
 ): GitPullRequestCheckSummary[] {
   return normalizeRollupEntries(rollup)

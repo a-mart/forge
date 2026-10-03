@@ -3,7 +3,6 @@ import {
   findMissingCollaborationSkillHandles,
   normalizeCollaborationOptionalSkillHandles,
   parseCollaborationSkillHandlesJson,
-  resolveCollaborationSkillSelectionMode,
   serializeCollaborationSkillHandles,
   serializeCollaborationSkillSelectionInput,
 } from "../collaboration/skill-selection.js";
@@ -13,9 +12,7 @@ import type { SkillMetadata } from "../swarm/skills/skill-metadata-service.js";
 describe("collaboration skill selection helpers", () => {
   it("preserves null as all mode and distinguishes custom empty", () => {
     expect(parseCollaborationSkillHandlesJson(null)).toBeNull();
-    expect(resolveCollaborationSkillSelectionMode(null)).toBe("all");
     expect(parseCollaborationSkillHandlesJson("[]")).toEqual([]);
-    expect(resolveCollaborationSkillSelectionMode("[]")).toBe("custom");
   });
 
   it("normalizes, dedupes, serializes, and reports missing handles without mutation", () => {

@@ -9,7 +9,7 @@ import {
 } from './exclusive-dir-rename.js'
 
 export const GIT_CLONE_TIMEOUT_MS = 15 * 60 * 1000
-const STAGING_PREFIX = 'forge-clone-'
+export const STAGING_PREFIX = 'forge-clone-'
 const MAX_FOLDER_LENGTH = 200
 const MAX_OUTPUT_BUFFER = 64 * 1024
 const KILL_GRACE_MS = 250
@@ -739,5 +739,3 @@ export async function terminateProcessTree(
 function delay(ms: number): Promise<void> {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms))
 }
-
-export const GIT_CLONE_STAGING_PREFIX = STAGING_PREFIX

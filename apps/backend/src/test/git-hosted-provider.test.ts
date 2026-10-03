@@ -12,7 +12,7 @@ import {
   evaluateMergePreflight,
   matchesCurrentBranchPullRequest,
   parseAllowedMergeMethods,
-  parseCheckSummariesFromRollup,
+  parseCheckSummaries,
   parseGitHubRepoFromRemoteUrl
 } from "../ws/http/services/git-hosted-provider.js";
 import type { GitSourceControlContext } from "../ws/http/shared/route-helpers.js";
@@ -209,7 +209,7 @@ describe("GitHostedProviderService", () => {
       ])
     ).toBe("success");
 
-    const summaries = parseCheckSummariesFromRollup([
+    const summaries = parseCheckSummaries([
       {
         name: "Backend tests",
         status: "COMPLETED",

@@ -9,7 +9,7 @@ import {
   publishCloneWithoutReplace,
   safeRemoveOwnedStaging,
   terminateProcessTree,
-  GIT_CLONE_STAGING_PREFIX,
+  STAGING_PREFIX,
 } from '../versioning/git-clone-runner.js'
 import { EventEmitter } from 'node:events'
 import type { ChildProcess } from 'node:child_process'
@@ -121,7 +121,7 @@ describe('git-clone-runner remediation', () => {
 
   it('only removes exactly one owned staging child', async () => {
     root = await mkdtemp(join(tmpdir(), 'forge-staging-clean-'))
-    const staging = join(root, `${GIT_CLONE_STAGING_PREFIX}abc`)
+    const staging = join(root, `${STAGING_PREFIX}abc`)
     await mkdir(join(staging, 'nested'), { recursive: true })
     const other = join(root, 'not-staging')
     await mkdir(other)
@@ -191,7 +191,7 @@ describe('git-clone-runner remediation', () => {
     let stagingSeenDuringTerminate: string | null = null
     const terminateImpl = vi.fn(async () => {
       const entries = await import('node:fs/promises').then((fs) => fs.readdir(root))
-      stagingSeenDuringTerminate = entries.find((e) => e.startsWith(GIT_CLONE_STAGING_PREFIX)) ?? null
+      stagingSeenDuringTerminate = entries.find((e) => e.startsWith(STAGING_PREFIX)) ?? null
       await terminateGate
     })
 
@@ -211,7 +211,7 @@ describe('git-clone-runner remediation', () => {
 
     await vi.waitFor(async () => {
       const entries = await import('node:fs/promises').then((fs) => fs.readdir(root))
-      expect(entries.some((e) => e.startsWith(GIT_CLONE_STAGING_PREFIX))).toBe(true)
+      expect(entries.some((e) => e.startsWith(STAGING_PREFIX))).toBe(true)
     })
     await vi.waitFor(() => expect(spawnImpl).toHaveBeenCalledTimes(1))
 
@@ -220,7 +220,7 @@ describe('git-clone-runner remediation', () => {
     await vi.waitFor(() => expect(stagingSeenDuringTerminate).toBeTruthy())
 
     const during = await import('node:fs/promises').then((fs) => fs.readdir(root))
-    expect(during.some((e) => e.startsWith(GIT_CLONE_STAGING_PREFIX))).toBe(true)
+    expect(during.some((e) => e.startsWith(STAGING_PREFIX))).toBe(true)
 
     const childClose = terminateImpl.mock.calls[0]?.[0] as ChildProcess & EventEmitter
     releaseTerminate()
@@ -228,7 +228,7 @@ describe('git-clone-runner remediation', () => {
 
     await expect(clonePromise).rejects.toMatchObject({ code: 'clone_cancelled' })
     const after = await import('node:fs/promises').then((fs) => fs.readdir(root))
-    expect(after.some((e) => e.startsWith(GIT_CLONE_STAGING_PREFIX))).toBe(false)
+    expect(after.some((e) => e.startsWith(STAGING_PREFIX))).toBe(false)
   })
 
   it('timeout waits on gated terminate before rejection', async () => {

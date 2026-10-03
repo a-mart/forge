@@ -40,7 +40,7 @@ it("merges native and Pi model usage, deduplicates fork copies, and survives cac
 
 it("recovers only linked native histories and reconciles them with newly persisted counters", async () => {
   const root = await mkdtemp(join(tmpdir(), "forge-native-history-"));
-  const { recoverNativeUsage } = await import("../stats/native-usage-history.js");
+  const { NativeUsageHistory } = await import("../stats/native-usage-history.js");
   const { getNativeCodexHome } = await import("../swarm/data-paths.js");
   const source = new StatsSourceCache(root);
   const claudeProjectsDir = join(root, "claude-projects");
@@ -57,10 +57,10 @@ it("recovers only linked native histories and reconciles them with newly persist
     await writeFile(join(dir, `${link.data.sessionId}.jsonl`), [row, row, { ...row, timestamp: "2026-09-20T10:00:01Z", message: { ...row.message, usage: { ...row.message.usage, output_tokens: 5 } } },
       { ...row, timestamp: "2026-09-21T09:30:00Z", message: { ...row.message, id: "new-instrumented-turn" } },
     ].map(r => JSON.stringify(r)).join("\n") + "\n");
-    const records = await recoverNativeUsage(root, [link, cumulative], "owner", { claudeProjectsDir });
+    const records = await new NativeUsageHistory(root, { claudeProjectsDir }).recover([link, cumulative], "owner");
     expect(records.at(-1)?.data.usage.total).toBe(37);
     expect(JSON.stringify(await source.read(join(dir, `${link.data.sessionId}.jsonl`)))).not.toContain("PRIVATE_CANARY");
-    expect(await recoverNativeUsage(root, [link], "fork", { claudeProjectsDir })).toEqual([]);
+    expect(await new NativeUsageHistory(root, { claudeProjectsDir }).recover([link], "fork")).toEqual([]);
     const nativeDir = join(getNativeCodexHome(root), "sessions/2026/09/20");
     await mkdir(nativeDir, { recursive: true });
     const codexId = "22222222-2222-2222-2222-222222222222";
@@ -69,7 +69,7 @@ it("recovers only linked native histories and reconciles them with newly persist
       { type: "turn_context", payload: { model: "gpt-6-sol", effort: "high" } },
       { type: "event_msg", timestamp, payload: { type: "token_count", info: { total_token_usage: { input_tokens: 100, cached_input_tokens: 80, output_tokens: 10 } } } },
     ].map(r => JSON.stringify(r)).join("\n") + "\n");
-    const codex = await recoverNativeUsage(root, [{ type: "custom", customType: "swarm_native_codex_state", data: { version: 1, ownerAgentId: "owner", threadId: codexId } }], "owner", { claudeProjectsDir });
+    const codex = await new NativeUsageHistory(root, { claudeProjectsDir }).recover([{ type: "custom", customType: "swarm_native_codex_state", data: { version: 1, ownerAgentId: "owner", threadId: codexId } }], "owner");
     expect(codex[0]?.data).toMatchObject({ modelId: "gpt-6-sol", usage: { input: 20, output: 10, cacheRead: 80, total: 110 } });
   } finally { await rm(root, { recursive: true, force: true }); }
 });

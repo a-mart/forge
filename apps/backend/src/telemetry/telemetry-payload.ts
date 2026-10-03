@@ -4,7 +4,6 @@ import type { SwarmConfig } from '../swarm/types.js'
 import { inferProviderFromModelId } from './provider-inference.js'
 
 const SCHEMA_VERSION = 1
-const UNKNOWN_APP_VERSION = 'unknown'
 
 const FRIENDLY_PLATFORM_NAMES: Record<string, string> = {
   darwin: 'macOS',
@@ -32,93 +31,6 @@ export interface FeatureAdoptionData {
   cortexAutoReviewEnabled: boolean
   mobileDevicesRegistered: number
   mobileDevicesEnabledCount: number
-}
-
-export function emptyFeatureAdoption(): FeatureAdoptionData {
-  return {
-    specialistsConfigured: 0,
-    specialistsPersistedCount: 0,
-    specialistsCustomCount: 0,
-    specialistsEnabledCount: 0,
-    terminalsActive: 0,
-    pinnedMessagesUsed: 0,
-    scheduledTasksCount: 0,
-    forkedSessionsCount: 0,
-    projectAgentsCount: 0,
-    projectAgentsPersistedCount: 0,
-    extensionsLoaded: 0,
-    extensionsDiscoveredCount: 0,
-    skillsConfigured: 0,
-    skillsDiscoveredCount: 0,
-    referenceDocsCount: 0,
-    slashCommandsCount: 0,
-    cortexAutoReviewEnabled: false,
-    mobileDevicesRegistered: 0,
-    mobileDevicesEnabledCount: 0,
-  }
-}
-
-export async function assembleSkeletonPayload(
-  installId: string,
-  reportId: string,
-  snapshotComputedAt: string,
-  config: SwarmConfig,
-): Promise<TelemetryPayload> {
-  const rawPlatform = process.platform
-
-  return {
-    install_id: installId,
-    report_id: reportId,
-    schema_version: SCHEMA_VERSION,
-    snapshot_computed_at: snapshotComputedAt,
-
-    app_version: process.env.FORGE_APP_VERSION?.trim() || UNKNOWN_APP_VERSION,
-    platform: toFriendlyPlatformName(rawPlatform),
-    platform_raw: rawPlatform,
-    arch: process.arch,
-    node_version: process.version,
-    electron_version: process.env.FORGE_ELECTRON_VERSION ?? null,
-    is_desktop: config.isDesktop,
-    locale: resolveLocale(),
-    total_profiles: 0,
-
-    total_sessions: 0,
-    total_messages_sent: 0,
-    total_workers_run: 0,
-    tokens_all_time: 0,
-    tokens_last_30_days: 0,
-    cache_hit_rate: 0,
-    active_days: 0,
-    longest_streak: 0,
-    commits: 0,
-    lines_added: 0,
-    average_tokens_per_run: 0,
-
-    specialists_configured: 0,
-    specialists_persisted_count: 0,
-    specialists_custom_count: 0,
-    specialists_enabled_count: 0,
-    terminals_active: 0,
-    pinned_messages_used: 0,
-    scheduled_tasks_count: 0,
-    telegram_configured: false,
-    forked_sessions_count: 0,
-    project_agents_count: 0,
-    project_agents_persisted_count: 0,
-    extensions_loaded: 0,
-    extensions_discovered_count: 0,
-    skills_configured: 0,
-    skills_discovered_count: 0,
-    reference_docs_count: 0,
-    slash_commands_count: 0,
-    cortex_auto_review_enabled: false,
-    mobile_devices_registered: 0,
-    mobile_devices_enabled_count: 0,
-
-    providers_used: '',
-    auth_providers: '',
-    top_model: '',
-  }
 }
 
 export function assembleFullPayload(

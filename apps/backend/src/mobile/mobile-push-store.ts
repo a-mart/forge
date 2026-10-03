@@ -16,7 +16,6 @@ const MAX_DEVICE_NAME_LENGTH = 120;
 const MAX_TOKEN_LENGTH = 4096;
 
 export type { MobilePushDevice };
-export type MobilePlatform = MobilePushPlatform;
 
 interface MobilePushDeviceRegistryFile {
   version: 1;
