@@ -442,45 +442,6 @@ export function buildUpdateProjectDelegationDefaultsCommand(
   }
 }
 
-export function buildUpdateManagerModelCommand(
-  managerId: string,
-  model: ManagerModelPreset | undefined,
-  reasoningLevel: ManagerReasoningLevel | undefined,
-  requestId: string,
-  modelSelection?: ManagerExactModelSelection,
-): ClientCommand {
-  const trimmed = requireTrimmedValue(managerId, 'Manager id is required.')
-
-  if (reasoningLevel && !MANAGER_REASONING_LEVELS.includes(reasoningLevel)) {
-    throw new Error('Invalid reasoning level.')
-  }
-
-  if (modelSelection) {
-    if (!modelSelection.provider.trim() || !modelSelection.modelId.trim()) {
-      throw new Error('Model selection requires both provider and modelId.')
-    }
-    return {
-      type: 'update_manager_model',
-      managerId: trimmed,
-      modelSelection,
-      reasoningLevel,
-      requestId,
-    }
-  }
-
-  if (!model || !MANAGER_MODEL_PRESETS.includes(model)) {
-    throw new Error('Invalid model preset.')
-  }
-
-  return {
-    type: 'update_manager_model',
-    managerId: trimmed,
-    model,
-    reasoningLevel,
-    requestId,
-  }
-}
-
 export function buildUpdateManagerCwdCommand(
   managerId: string,
   cwd: string,
@@ -839,14 +800,6 @@ export function buildSetProjectAgentSharingCommand(
 export function buildGetProjectAgentExternalDirectoryCommand(requestId: string): ClientCommand {
   return {
     type: 'get_project_agent_external_directory',
-    requestId,
-  }
-}
-
-export function buildMergeSessionMemoryCommand(agentId: string, requestId: string): ClientCommand {
-  return {
-    type: 'merge_session_memory',
-    agentId: requireTrimmedValue(agentId, 'Agent id is required.'),
     requestId,
   }
 }

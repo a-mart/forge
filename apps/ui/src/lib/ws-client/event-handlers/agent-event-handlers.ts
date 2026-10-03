@@ -72,9 +72,6 @@ export function handleAgentEvent(event: ServerEvent, context: ManagerWsAgentEven
       return true
 
     case 'manager_model_updated':
-      context.requestTracker.resolve('update_manager_model', event.requestId, {
-        managerId: event.managerId,
-      })
       return true
 
     case 'manager_cwd_updated':

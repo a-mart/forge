@@ -114,26 +114,8 @@ export function handleSessionEvent(
       return true
 
     case 'session_memory_merge_started':
-      return true
-
     case 'session_memory_merged':
-      context.requestTracker.resolve('merge_session_memory', event.requestId, {
-        agentId: event.agentId,
-        status: event.status,
-        strategy: event.strategy,
-        mergedAt: event.mergedAt,
-        auditPath: event.auditPath,
-      })
-      return true
-
     case 'session_memory_merge_failed':
-      if (event.requestId) {
-        context.requestTracker.reject(
-          'merge_session_memory',
-          event.requestId,
-          new Error(event.message || 'Session memory merge failed.'),
-        )
-      }
       return true
 
     default:

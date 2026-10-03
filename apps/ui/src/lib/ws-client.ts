@@ -47,7 +47,6 @@ import {
   buildListProjectAgentReferencesCommand,
   buildMarkAllReadCommand,
   buildMarkUnreadCommand,
-  buildMergeSessionMemoryCommand,
   buildPickDirectoryCommand,
   buildPinMessageCommand,
   buildProfileArchiveActionCommand,
@@ -65,7 +64,6 @@ import {
   buildStopAllAgentsCommand,
   buildSubscribeCommand,
   buildUpdateManagerCwdCommand,
-  buildUpdateManagerModelCommand,
   buildUpdateProfileDefaultModelCommand,
   buildUpdateProjectDelegationDefaultsCommand,
   buildUpdateSessionDelegationCommand,
@@ -192,7 +190,6 @@ import type {
   ServerEvent,
   SecureSessionSnapshot,
   SessionAttentionUpdateEvent,
-  SessionMemoryMergeResult,
 } from '@forge/protocol'
 
 export type { ManagerWsState } from './ws-state'
@@ -993,18 +990,6 @@ export class ManagerWsClient {
     )
   }
 
-  async updateManagerModel(
-    managerId: string,
-    model?: ManagerModelPreset,
-    reasoningLevel?: ManagerReasoningLevel,
-    modelSelection?: ManagerExactModelSelection,
-  ): Promise<{ managerId: string }> {
-    assertReconnectableSocket(this.socket)
-    return this.requestDispatcher.enqueueRequest('update_manager_model', (requestId) =>
-      buildUpdateManagerModelCommand(managerId, model, reasoningLevel, requestId, modelSelection),
-    )
-  }
-
   async updateManagerCwd(managerId: string, cwd: string): Promise<{ managerId: string; cwd: string }> {
     assertReconnectableSocket(this.socket)
     return this.requestDispatcher.enqueueRequest('update_manager_cwd', (requestId) =>
@@ -1294,13 +1279,6 @@ export class ManagerWsClient {
     assertReconnectableSocket(this.socket)
     return this.requestDispatcher.enqueueRequest('request_project_agent_recommendations', (requestId) =>
       buildRequestProjectAgentRecommendationsCommand(agentId, requestId),
-    )
-  }
-
-  async mergeSessionMemory(agentId: string): Promise<SessionMemoryMergeResult> {
-    assertReconnectableSocket(this.socket)
-    return this.requestDispatcher.enqueueRequest('merge_session_memory', (requestId) =>
-      buildMergeSessionMemoryCommand(agentId, requestId),
     )
   }
 
