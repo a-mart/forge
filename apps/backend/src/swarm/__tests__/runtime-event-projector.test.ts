@@ -1077,6 +1077,37 @@ describe("RuntimeEventProjector", () => {
     expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledTimes(2);
   });
 
+  it("projects a clean final once while an earlier tool call keeps running in the background", async () => {
+    const { projector, deps, descriptors } = createHarness();
+    const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
+    descriptors.set(manager.agentId, manager);
+    projector.activateManagerAssistantOutputTurn(manager.agentId, { kind: "session_transcript", channel: "web" });
+
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: { type: "tool_execution_start", toolName: "Bash", toolCallId: "bash-1", args: { command: "sleep 60" } },
+    });
+    await projector.projectEvent({
+      agentId: manager.agentId,
+      event: {
+        type: "tool_execution_update",
+        toolName: "Bash",
+        toolCallId: "bash-1",
+        executionState: "background",
+        partialResult: { status: "running_in_background", taskId: "task-1" },
+      },
+    });
+    const finalMessage = { role: "assistant", content: "I'll check again in a minute.", stopReason: "stop" };
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "message_update", message: finalMessage } });
+    await projector.projectEvent({ agentId: manager.agentId, event: { type: "message_end", message: finalMessage } });
+
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledTimes(1);
+    expect(deps.conversationProjector.emitConversationMessage).toHaveBeenCalledWith(expect.objectContaining({
+      source: "assistant_output",
+      text: "I'll check again in a minute.",
+    }));
+  });
+
   it("can project preserved manager assistant output when a present_choices card is opened", async () => {
     const { projector, deps, descriptors } = createHarness();
     const manager = baseDescriptor({ agentId: "manager-1", role: "manager", managerId: "manager-1" });
