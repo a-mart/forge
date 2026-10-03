@@ -4,7 +4,6 @@ import type {
   CortexConsolidationSnapshot,
   CortexConsolidationTrigger,
 } from "@forge/protocol";
-import { createKnowledgeConsolidatorApi } from "./knowledge-consolidator-api.js";
 import type { KnowledgeEntry, KnowledgeService } from "./knowledge-service.js";
 import type { KnowledgeV2SettingsService } from "./knowledge-v2-settings-service.js";
 import { normalizeArchetypeId } from "./prompt-registry.js";
@@ -69,7 +68,6 @@ export class SwarmCortexService {
     const runId = createCortexConsolidationRunId();
     const requestedAt = this.options.now();
     const changelog: CortexChangelogEntry[] = [];
-    const api = createKnowledgeConsolidatorApi(this.options.knowledgeService);
 
     try {
       const entries = await this.options.knowledgeService.listEntries({ includeArchived: false });
@@ -77,7 +75,7 @@ export class SwarmCortexService {
 
       const duplicateGroups = groupDuplicates(active);
       for (const group of duplicateGroups) {
-        const merged = await api.merge(group.map((entry) => entry.frontmatter.id));
+        const merged = await this.options.knowledgeService.mergeEntries(group.map((entry) => entry.frontmatter.id));
         changelog.push(await this.log(runId, "merged", merged.frontmatter.id, group.map((entry) => entry.frontmatter.id), "duplicate title/body similarity"));
       }
 
@@ -91,12 +89,16 @@ export class SwarmCortexService {
       const afterContradictions = await this.options.knowledgeService.listEntries({ includeArchived: false });
       for (const entry of afterContradictions.filter((candidate) => candidate.frontmatter.status === "active")) {
         if (shouldDecay(entry, requestedAt)) {
-          const archived = await api.archive(entry.frontmatter.id);
+          const archived = await this.options.knowledgeService.archiveEntry(entry.frontmatter.id);
           changelog.push(await this.log(runId, "archived", archived.frontmatter.id, undefined, "last_confirmed exceeded decay_after_days"));
         }
       }
 
-      await api.reindex();
+      const allScopes = new Set((await this.options.knowledgeService.listEntries({ scope: "all" })).map((entry) => entry.frontmatter.scope));
+      await this.options.knowledgeService.regenerateIndex("global");
+      for (const scope of allScopes) {
+        await this.options.knowledgeService.regenerateIndex(scope);
+      }
       const reindexedScopes = Array.from(new Set(afterContradictions.map((entry) => entry.frontmatter.scope)));
       for (const scope of reindexedScopes) {
         changelog.push(await this.log(runId, "reindexed", undefined, undefined, `regenerated ${scope} INDEX under cap`));
