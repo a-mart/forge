@@ -15,19 +15,9 @@ export class CodexOperationLock {
   }
 
   assertAvailable(requested: CodexOperationLease): void {
-    if (!this.activeLease) {
-      return;
-    }
-
-    if (
-      this.activeLease.kind === "sidecar_turn" &&
-      requested.kind === "sidecar_turn" &&
-      this.activeLease.ownerId === requested.ownerId
-    ) {
+    if (this.activeLease) {
       throw new CodexSidecarBusyError(this.activeLease.ownerId, requested.ownerId);
     }
-
-    throw new CodexSidecarBusyError(this.activeLease.ownerId, requested.ownerId);
   }
 
   acquire(lease: CodexOperationLease): void {
