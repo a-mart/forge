@@ -62,14 +62,6 @@ function isUserVisibleManagerTranscriptEntry(entry: ConversationEntry): boolean 
   )
 }
 
-export function isManagerSessionTranscriptEntry(entry: ConversationEntry): boolean {
-  return (
-    entry.type === 'conversation_message' ||
-    entry.type === 'choice_request' ||
-    entry.type === 'plan_summary'
-  )
-}
-
 export function inferManagerAliasIds(
   history: readonly ConversationEntry[],
   activeManagerId: string,

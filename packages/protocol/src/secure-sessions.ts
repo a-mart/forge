@@ -631,29 +631,6 @@ const SECURE_SESSIONS_MAX_SSH_HOST_LENGTH = 512
 const SECURE_SESSIONS_MAX_SSH_USERNAME_LENGTH = 256
 const SECURE_SESSIONS_MAX_SSH_KEY_LENGTH = 20_000
 
-function isOneOf<const Values extends readonly string[]>(
-  values: Values,
-  value: unknown,
-): value is Values[number] {
-  return typeof value === 'string' && (values as readonly string[]).includes(value)
-}
-
-export function isSecureSecretProviderKind(value: unknown): value is SecureSecretProviderKind {
-  return isOneOf(SECURE_SECRET_PROVIDER_KINDS, value)
-}
-
-export function isSecureSecretDeliveryKind(value: unknown): value is SecureSecretDeliveryKind {
-  return isOneOf(SECURE_SECRET_DELIVERY_KINDS, value)
-}
-
-export function isSecureSecretRetention(value: unknown): value is SecureSecretRetention {
-  return isOneOf(SECURE_SECRET_RETENTIONS, value)
-}
-
-export function isSecureSecretLeaseKind(value: unknown): value is SecureSecretLeaseKind {
-  return isOneOf(SECURE_SECRET_LEASE_KINDS, value)
-}
-
 function recordInput(value: unknown, field: string): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new SecureSessionsContractError(`${field} must be an object`)
@@ -749,15 +726,6 @@ export function parseSecureSecretScope(value: unknown): SecureSecretScope {
   )
 }
 
-export function isSecureSecretScope(value: unknown): value is SecureSecretScope {
-  try {
-    parseSecureSecretScope(value)
-    return true
-  } catch {
-    return false
-  }
-}
-
 export function parseSecureSecretBinding(value: unknown): SecureSecretBinding {
   const input = recordInput(value, 'binding')
   switch (input.deliveryKind) {
@@ -807,15 +775,6 @@ export function parseSecureSecretBinding(value: unknown): SecureSecretBinding {
   }
 }
 
-export function isSecureSecretBinding(value: unknown): value is SecureSecretBinding {
-  try {
-    parseSecureSecretBinding(value)
-    return true
-  } catch {
-    return false
-  }
-}
-
 export function parseSecureSecretLeaseSpec(value: unknown): SecureSecretLeaseSpec {
   const input = recordInput(value, 'lease')
   switch (input.leaseKind) {
@@ -840,15 +799,6 @@ export function parseSecureSecretLeaseSpec(value: unknown): SecureSecretLeaseSpe
       throw new SecureSessionsContractError(
         `lease.leaseKind must be one of ${SECURE_SECRET_LEASE_KINDS.join(', ')}`,
       )
-  }
-}
-
-export function isSecureSecretLeaseSpec(value: unknown): value is SecureSecretLeaseSpec {
-  try {
-    parseSecureSecretLeaseSpec(value)
-    return true
-  } catch {
-    return false
   }
 }
 
@@ -1024,30 +974,6 @@ export function parseRevokeSecureSecretLeaseRequest(
   return {
     baseRevision: nonNegativeInteger(input.baseRevision, 'request.baseRevision'),
     leaseId: boundedString(input.leaseId, 'request.leaseId', SECURE_SESSIONS_MAX_ID_LENGTH),
-  }
-}
-
-export function parseRequestSecureSecretAccessRequest(
-  value: unknown,
-): RequestSecureSecretAccessRequest {
-  const input = recordInput(value, 'request')
-  const lease = leaseSpecFromRequest(input)
-  knownKeys(
-    input,
-    lease.leaseKind === 'timed'
-      ? ['secretId', 'exposures', 'leaseKind', 'durationSeconds', 'purposeSummary']
-      : ['secretId', 'exposures', 'leaseKind', 'purposeSummary'],
-    'request',
-  )
-  return {
-    secretId: boundedString(input.secretId, 'request.secretId', SECURE_SESSIONS_MAX_ID_LENGTH),
-    exposures: parseExposures(input.exposures),
-    purposeSummary: boundedString(
-      input.purposeSummary,
-      'request.purposeSummary',
-      SECURE_SESSIONS_MAX_PURPOSE_LENGTH,
-    ),
-    ...lease,
   }
 }
 

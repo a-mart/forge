@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import {
   isAssistantProgressConversationMessage,
   isConversationMessageSource,
-  isExplicitRoutedAssistantConversationMessage,
   isTerminalAssistantConversationMessage,
   isUserVisibleAssistantConversationMessage,
   isUserVisibleConversationMessage,
@@ -42,9 +41,6 @@ describe('conversation source semantics', () => {
     expect(isAssistantProgressConversationMessage(oldPath)).toBe(false)
     expect(isAssistantProgressConversationMessage(projected)).toBe(false)
     expect(isAssistantProgressConversationMessage(progress)).toBe(true)
-    expect(isExplicitRoutedAssistantConversationMessage(oldPath)).toBe(true)
-    expect(isExplicitRoutedAssistantConversationMessage(projected)).toBe(false)
-    expect(isExplicitRoutedAssistantConversationMessage(progress)).toBe(false)
   })
 
   it('does not classify inbound, system, or runtime-log rows as assistant output', () => {

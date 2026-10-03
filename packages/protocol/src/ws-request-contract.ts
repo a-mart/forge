@@ -553,7 +553,3 @@ export function getWsRequestContract(commandType: WsRequestContractType): (typeo
   }
   return contract
 }
-
-export function getWsRequestErrorCodeFragments(commandType: WsRequestContractType): readonly string[] {
-  return getWsRequestContract(commandType).errorCodeFragments
-}
