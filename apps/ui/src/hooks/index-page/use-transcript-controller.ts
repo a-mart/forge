@@ -35,7 +35,6 @@ export interface UseTranscriptControllerOptions {
   activeAgentId: string | null
   activeAgentStatus: AgentStatus | null
   messageSourceView: MessageSourceView
-  effectiveDetailedAllView: boolean
   messageListRef: MutableRefObject<MessageListHandle | null>
 }
 
@@ -46,7 +45,6 @@ export function useTranscriptController({
   activeAgentId,
   activeAgentStatus,
   messageSourceView,
-  effectiveDetailedAllView,
   messageListRef,
 }: UseTranscriptControllerOptions) {
   const { contextWindowUsage } = useContextWindow({
@@ -86,7 +84,6 @@ export function useTranscriptController({
     agents: state.agents,
     activeAgent,
     channelView: messageSourceView,
-    detailedAllView: effectiveDetailedAllView,
   })
 
   const pinnedMessageIds = useMemo(() => {

@@ -265,18 +265,5 @@ describe('audit view replay characterization (Phase 0 → Phase 1)', () => {
 
       expect(result.visibleMessages).toEqual([])
     })
-
-    it('hides conversation_log in manager Detailed All view', () => {
-      const result = deriveVisibleMessages({
-        messages: [],
-        activityMessages: [managerRuntimeLog],
-        agents: [currentManager],
-        activeAgent: currentManager,
-        channelView: 'all',
-        detailedAllView: true,
-      })
-
-      expect(result.visibleMessages).toEqual([])
-    })
   })
 })

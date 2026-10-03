@@ -368,7 +368,6 @@ export function BuilderSurface({
   } = useOnboardingState(localWsUrl)
 
   const [messageSourceView, setMessageSourceView] = useState<MessageSourceView>('web')
-  const [detailedAllView, setDetailedAllView] = useState(false)
   const [planExpanded, setPlanExpanded] = useState(false)
   const [externalProjectAgentEntries, setExternalProjectAgentEntries] = useState<ProjectAgentExternalDirectoryEntry[]>([])
   const [secureCatalog, setSecureCatalog] = useState<SecureSecretsCatalog | null>(null)
@@ -409,14 +408,8 @@ export function BuilderSurface({
     }, 0)
   }, [state.unreadCounts, activeAgentId])
 
-  // Reset Detailed All when leaving All view
-  useEffect(() => {
-    if (messageSourceView !== 'all') setDetailedAllView(false)
-  }, [messageSourceView])
-
   // Reset local chat chrome when switching active agent/session
   useEffect(() => {
-    setDetailedAllView(false)
     setPlanExpanded(false)
     setMessageSourceView(defaultMessageSourceViewForAgentRole(activeAgent?.role))
   }, [activeAgentId, activeAgent?.role])
@@ -424,9 +417,6 @@ export function BuilderSurface({
   useEffect(() => {
     clientRef.current?.setConversationView(messageSourceView)
   }, [clientRef, messageSourceView])
-
-  // Derive effective detailed state for hook consumption
-  const effectiveDetailedAllView = isActiveManager && messageSourceView === 'all' && detailedAllView
 
   const planSnapshot = isActiveManager && activeAgentId && state.planSnapshotLoadingSessionId !== activeAgentId
     ? state.planSnapshots[activeAgentId] ?? null
@@ -988,7 +978,6 @@ export function BuilderSurface({
     activeAgentId,
     activeAgentStatus,
     messageSourceView,
-    effectiveDetailedAllView,
     messageListRef,
   })
   const { feedback } = transcript
@@ -2464,8 +2453,6 @@ export function BuilderSurface({
                   activeAgentUpdatedAt: activeAgent?.updatedAt ?? null,
                   channelView: messageSourceView,
                   onChannelViewChange: setMessageSourceView,
-                  detailedAllView: effectiveDetailedAllView,
-                  onDetailedAllViewChange: undefined,
                   contextWindowUsage: transcript.contextWindowUsage,
                   modelCacheHeaderSummary,
                   generationThroughputEligible:

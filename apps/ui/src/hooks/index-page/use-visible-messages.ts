@@ -71,8 +71,6 @@ export interface VisibleMessagesOptions {
   agents: AgentDescriptor[]
   activeAgent: AgentDescriptor | null
   channelView: MessageSourceView
-  /** Reserved for future manager-only metadata expansion; does not change visibility. */
-  detailedAllView?: boolean
 }
 
 export function deriveVisibleMessages({
@@ -104,7 +102,7 @@ export function useVisibleMessages(options: VisibleMessagesOptions): {
   allMessages: ConversationEntry[]
   visibleMessages: ConversationEntry[]
 } {
-  const { messages, activityMessages, agents, activeAgent, channelView, detailedAllView } = options
+  const { messages, activityMessages, agents, activeAgent, channelView } = options
 
   return useMemo(
     () =>
@@ -114,8 +112,7 @@ export function useVisibleMessages(options: VisibleMessagesOptions): {
         agents,
         activeAgent,
         channelView,
-        detailedAllView,
       }),
-    [activeAgent, activityMessages, agents, channelView, detailedAllView, messages],
+    [activeAgent, activityMessages, agents, channelView, messages],
   )
 }
