@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/context-menu'
 import type { CollaborationCategory, CollaborationChannel } from '@forge/protocol'
 import { ChannelRowItem } from './ChannelRowItem'
+import { formatUnreadCount } from '@/lib/format-utils'
 
 interface CategoryGroupProps {
   category: CollaborationCategory
@@ -32,13 +33,6 @@ interface CategoryGroupProps {
   onToggleMute: (channel: CollaborationChannel) => void
   onMarkAsRead: (channel: CollaborationChannel) => void
   onOpenChannelSettings: (channel: CollaborationChannel) => void
-}
-
-function formatUnreadCount(unreadCount: number): string {
-  if (unreadCount > 99) {
-    return '99+'
-  }
-  return String(unreadCount)
 }
 
 export function CategoryGroup({
