@@ -16,12 +16,6 @@ export type OriginId = string
 /** The reserved origin id for the local Builder backend. */
 export const LOCAL_ORIGIN_ID: OriginId = 'local'
 
-/** A domain id (agentId / profileId / sessionAgentId) scoped to an origin. */
-export interface CompositeId {
-  originId: OriginId
-  id: string
-}
-
 /**
  * Separator between origin and id in a flat composite key string.  Chosen to
  * not collide with agent/profile id characters (which are hex-ish handles).
@@ -34,18 +28,4 @@ const COMPOSITE_SEPARATOR = '::'
  */
 export function compositeKey(originId: OriginId, id: string): string {
   return `${originId}${COMPOSITE_SEPARATOR}${id}`
-}
-
-/**
- * Parse a flat composite key back into its `(originId, id)` parts.  Only the
- * first separator is significant, so ids that themselves contain `::` round
- * trip correctly.  Returns `null` for strings without a separator.
- */
-export function parseCompositeKey(key: string): CompositeId | null {
-  const index = key.indexOf(COMPOSITE_SEPARATOR)
-  if (index < 0) return null
-  return {
-    originId: key.slice(0, index),
-    id: key.slice(index + COMPOSITE_SEPARATOR.length),
-  }
 }

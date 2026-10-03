@@ -9,7 +9,6 @@ import {
   reportCollabConnected,
   reportBuilderPoll,
   reportCollabPoll,
-  markCollabInactive,
   _resetForTesting,
 } from '@/lib/connection-health-store'
 import { ModeSwitch } from './ModeSwitch'
@@ -142,11 +141,11 @@ describe('ModeSwitch', () => {
     expect(dots[1].className).toContain('bg-amber-500')
   })
 
-  it('markCollabInactive clears WS signal but poll keeps it green', () => {
+  it('collab WS disconnect clears WS signal but poll keeps it green', () => {
     flushSync(() => {
       reportCollabConnected(true)
       reportCollabPoll(true)
-      markCollabInactive()
+      reportCollabConnected(false)
     })
     render()
     const dots = getDots()

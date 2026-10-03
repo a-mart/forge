@@ -153,6 +153,15 @@ export function filterBuilderSurfaceAgents(agents: AgentDescriptor[]): AgentDesc
   })
 }
 
+export function isCortexDiffViewerSession(agent: AgentDescriptor | null | undefined): boolean {
+  return Boolean(
+    agent &&
+      (agent.profileId === 'cortex' ||
+        agent.archetypeId === 'cortex' ||
+        agent.sessionPurpose === 'cortex_review'),
+  )
+}
+
 export function isCortexProfile(row: ProfileTreeRow): boolean {
   // Check if the default session (or any session) has archetypeId === 'cortex'
   const defaultSession = row.sessions.find((s) => s.isDefault)
@@ -167,40 +176,6 @@ export function getPrimaryManagerId(agents: AgentDescriptor[]): string | null {
   if (managers.length === 0) return null
 
   return [...managers].sort(byCreatedAtThenId)[0]?.agentId ?? null
-}
-
-export interface ManagerTreeRow {
-  manager: AgentDescriptor
-  workers: AgentDescriptor[]
-}
-
-export function buildManagerTreeRows(agents: AgentDescriptor[]): {
-  managerRows: ManagerTreeRow[]
-  orphanWorkers: AgentDescriptor[]
-} {
-  const activeAgents = filterBuilderVisibleAgents(agents).filter(isActiveAgent)
-  const managers = activeAgents.filter((agent) => agent.role === 'manager').sort(byCreatedAtThenId)
-  const workers = activeAgents.filter((agent) => agent.role === 'worker').sort(byCreatedAtDescThenId)
-
-  const workersByManager = new Map<string, AgentDescriptor[]>()
-  for (const worker of workers) {
-    const entries = workersByManager.get(worker.managerId)
-    if (entries) {
-      entries.push(worker)
-    } else {
-      workersByManager.set(worker.managerId, [worker])
-    }
-  }
-
-  const managerRows = managers.map((manager) => ({
-    manager,
-    workers: workersByManager.get(manager.agentId) ?? [],
-  }))
-
-  const managerIds = new Set(managers.map((manager) => manager.agentId))
-  const orphanWorkers = workers.filter((worker) => !managerIds.has(worker.managerId))
-
-  return { managerRows, orphanWorkers }
 }
 
 // ── Profile-grouped tree (multi-session) ──

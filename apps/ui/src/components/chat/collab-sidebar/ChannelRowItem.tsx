@@ -11,6 +11,7 @@ import type { CollaborationChannel } from '@forge/protocol'
 import { Archive, BellOff, BellRing, CheckCheck, Pencil, Settings2 } from 'lucide-react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { formatUnreadCount } from '@/lib/format-utils'
 
 interface ChannelRowItemProps {
   channel: CollaborationChannel
@@ -24,13 +25,6 @@ interface ChannelRowItemProps {
   onToggleMute: (channel: CollaborationChannel) => void
   onMarkAsRead: (channel: CollaborationChannel) => void
   onOpenSettings: (channel: CollaborationChannel) => void
-}
-
-function formatUnreadCount(unreadCount: number): string {
-  if (unreadCount > 99) {
-    return '99+'
-  }
-  return String(unreadCount)
 }
 
 export function ChannelRowItem({

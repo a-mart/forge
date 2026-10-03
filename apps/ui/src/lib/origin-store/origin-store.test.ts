@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ServerEvent } from '@forge/protocol'
 import { OriginStore } from './origin-store'
 import { OriginRegistry } from './origin-registry'
-import { LOCAL_ORIGIN_ID, compositeKey, parseCompositeKey } from './origin-key'
+import { LOCAL_ORIGIN_ID, compositeKey } from './origin-key'
 import type { ManagerWsState } from '@/lib/ws-state'
 import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 import { ConversationSnapshotCache } from '@/lib/ws-client/conversation-snapshot-cache'
@@ -82,17 +82,6 @@ describe('conversation presentation cache lifecycle', () => {
     expect(cache.get({ originId: 'remote-b', agentId: 'manager', servedView: 'web' })).not.toBeNull()
     registry.destroyAll()
     expect(cache.size).toBe(0)
-  })
-})
-
-describe('composite (originId, id) identity', () => {
-  it('round trips ids that themselves contain the separator', () => {
-    const key = compositeKey('remote-a', 'ns::inner')
-    expect(parseCompositeKey(key)).toEqual({ originId: 'remote-a', id: 'ns::inner' })
-  })
-
-  it('returns null for a key with no separator', () => {
-    expect(parseCompositeKey('bare')).toBeNull()
   })
 })
 

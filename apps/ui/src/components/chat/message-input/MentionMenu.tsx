@@ -8,7 +8,6 @@ import {
   type MentionSuggestion,
 } from './mention-types'
 
-export type { MentionMenuStatus } from './mention-menu-a11y'
 
 interface MentionMenuProps {
   menuRef: RefObject<HTMLDivElement | null>

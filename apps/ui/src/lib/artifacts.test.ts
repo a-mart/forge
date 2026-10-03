@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   normalizeArtifactShortcodes,
   parseArtifactReference,
+  toEditorHref,
   toSwarmFileHref,
-  toVscodeInsidersHref,
 } from './artifacts'
 
 describe('artifacts helpers', () => {
@@ -92,8 +92,8 @@ describe('artifacts helpers', () => {
     expect(toSwarmFileHref('C:/Users/example/my notes.md')).toBe(
       'swarm-file:///C:/Users/example/my%20notes.md',
     )
-    expect(toVscodeInsidersHref('/tmp/my notes.md')).toBe('vscode-insiders://file/tmp/my%20notes.md')
-    expect(toVscodeInsidersHref('C:/Users/example/my notes.md')).toBe(
+    expect(toEditorHref('/tmp/my notes.md', 'vscode-insiders')).toBe('vscode-insiders://file/tmp/my%20notes.md')
+    expect(toEditorHref('C:/Users/example/my notes.md', 'vscode-insiders')).toBe(
       'vscode-insiders://file/C:/Users/example/my%20notes.md',
     )
   })

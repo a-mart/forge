@@ -402,23 +402,6 @@ describe('deriveVisibleMessages', () => {
     ])
   })
 
-  it('hides worker tool calls from manager all view when detailedAllView is explicitly false', () => {
-    const activityMessages: ConversationEntry[] = [
-      makeToolCall('manager', 'worker-1', 'call-1'),
-    ]
-
-    const result = deriveVisibleMessages({
-      messages: [],
-      activityMessages,
-      agents: [manager, worker],
-      activeAgent: manager,
-      channelView: 'all',
-      detailedAllView: false,
-    })
-
-    expect(result.visibleMessages).toEqual([])
-  })
-
   it('shows manager-owned tool calls in manager all view', () => {
     const messages: ConversationEntry[] = [
       {
@@ -449,37 +432,9 @@ describe('deriveVisibleMessages', () => {
     ])
   })
 
-  it('shows manager-owned tool calls in both default and detailed all view', () => {
+  it('shows manager-owned tool calls without companion messages in manager all view', () => {
     const activityMessages: ConversationEntry[] = [
       makeToolCall('manager', 'manager', 'call-mgr'),
-    ]
-
-    const defaultResult = deriveVisibleMessages({
-      messages: [],
-      activityMessages,
-      agents: [manager, worker],
-      activeAgent: manager,
-      channelView: 'all',
-      detailedAllView: false,
-    })
-
-    const detailedResult = deriveVisibleMessages({
-      messages: [],
-      activityMessages,
-      agents: [manager, worker],
-      activeAgent: manager,
-      channelView: 'all',
-      detailedAllView: true,
-    })
-
-    expect(defaultResult.visibleMessages).toHaveLength(1)
-    expect(detailedResult.visibleMessages).toHaveLength(1)
-    expect(defaultResult.visibleMessages[0]).toEqual(detailedResult.visibleMessages[0])
-  })
-
-  it('hides owned worker tool calls in detailed manager all view', () => {
-    const activityMessages: ConversationEntry[] = [
-      makeToolCall('manager', 'worker-1', 'owned-call'),
     ]
 
     const result = deriveVisibleMessages({
@@ -488,37 +443,25 @@ describe('deriveVisibleMessages', () => {
       agents: [manager, worker],
       activeAgent: manager,
       channelView: 'all',
-      detailedAllView: true,
     })
 
-    expect(result.visibleMessages).toEqual([])
+    expect(result.visibleMessages).toHaveLength(1)
   })
 
-  it('hides Codex sidecar tool activity in manager all view regardless of detailed toggle', () => {
+  it('hides Codex sidecar tool activity in manager all view', () => {
     const activityMessages: ConversationEntry[] = [
       makeToolCall('manager', 'manager--codex', 'codex-call'),
     ]
 
-    const defaultResult = deriveVisibleMessages({
+    const result = deriveVisibleMessages({
       messages: [],
       activityMessages,
       agents: [manager, codexSidecar],
       activeAgent: manager,
       channelView: 'all',
-      detailedAllView: false,
     })
 
-    const detailedResult = deriveVisibleMessages({
-      messages: [],
-      activityMessages,
-      agents: [manager, codexSidecar],
-      activeAgent: manager,
-      channelView: 'all',
-      detailedAllView: true,
-    })
-
-    expect(defaultResult.visibleMessages).toHaveLength(0)
-    expect(detailedResult.visibleMessages).toHaveLength(0)
+    expect(result.visibleMessages).toHaveLength(0)
   })
 
   it('shows Codex sidecar conversation_log rows in selected sidecar view', () => {
@@ -547,7 +490,7 @@ describe('deriveVisibleMessages', () => {
     expect(result.visibleMessages[0].type).toBe('conversation_log')
   })
 
-  it('hides foreign-entry tool rows even when actor is owned worker (detailed)', () => {
+  it('hides foreign-entry tool rows even when actor is owned worker', () => {
     // Malformed: entry.agentId = foreignManagerId, but actorAgentId = owned worker
     const activityMessages: ConversationEntry[] = [
       makeToolCall('foreign-manager', 'worker-1', 'sneaky-call'),
@@ -559,13 +502,12 @@ describe('deriveVisibleMessages', () => {
       agents: [manager, worker, foreignManager, foreignWorker],
       activeAgent: manager,
       channelView: 'all',
-      detailedAllView: true,
     })
 
     expect(result.visibleMessages).toHaveLength(0)
   })
 
-  it('hides foreign-actor tool rows even when entry is manager-scoped (detailed)', () => {
+  it('hides foreign-actor tool rows even when entry is manager-scoped', () => {
     // entry.agentId = managerId, but actorAgentId = foreign worker
     const activityMessages: ConversationEntry[] = [
       makeToolCall('manager', 'foreign-worker', 'foreign-actor-call'),
@@ -577,13 +519,12 @@ describe('deriveVisibleMessages', () => {
       agents: [manager, worker, foreignManager, foreignWorker],
       activeAgent: manager,
       channelView: 'all',
-      detailedAllView: true,
     })
 
     expect(result.visibleMessages).toHaveLength(0)
   })
 
-  it('does not reveal unknown worker actor ids in detailed manager all view (fail-closed)', () => {
+  it('does not reveal unknown worker actor ids in manager all view (fail-closed)', () => {
     // actorAgentId exists but no matching descriptor in agents
     const activityMessages: ConversationEntry[] = [
       makeToolCall('manager', 'unknown-worker', 'unknown-call'),
@@ -595,13 +536,12 @@ describe('deriveVisibleMessages', () => {
       agents: [manager, worker],
       activeAgent: manager,
       channelView: 'all',
-      detailedAllView: true,
     })
 
     expect(result.visibleMessages).toHaveLength(0)
   })
 
-  it('does not change worker all view behavior when detailedAllView is true', () => {
+  it('shows everything in worker all view', () => {
     const messages: ConversationEntry[] = [
       {
         type: 'conversation_message',
@@ -623,14 +563,12 @@ describe('deriveVisibleMessages', () => {
       agents: [manager, worker],
       activeAgent: worker,
       channelView: 'all',
-      detailedAllView: true,
     })
 
     expect(result.allMessages.map((entry) => entry.type)).toEqual([
       'agent_tool_call',
       'conversation_message',
     ])
-    // Worker all view shows everything — detailedAllView has no effect
     expect(result.visibleMessages).toEqual(result.allMessages)
   })
 
@@ -838,14 +776,13 @@ describe('deriveVisibleMessages', () => {
       agents: [manager, worker, siblingManager],
       activeAgent: manager,
       channelView: 'all',
-      detailedAllView: true,
     })
 
     // Sibling manager is NOT an owned actor (not role=worker with managerId=manager)
     expect(result.visibleMessages).toHaveLength(0)
   })
 
-  it('scoped agent messages remain visible in both default and detailed modes', () => {
+  it('scoped agent messages remain visible in manager all view', () => {
     const agentMessage: ConversationEntry = {
       type: 'agent_message',
       agentId: 'manager',
@@ -856,25 +793,14 @@ describe('deriveVisibleMessages', () => {
       text: 'worker report',
     }
 
-    const defaultResult = deriveVisibleMessages({
+    const result = deriveVisibleMessages({
       messages: [],
       activityMessages: [agentMessage],
       agents: [manager, worker],
       activeAgent: manager,
       channelView: 'all',
-      detailedAllView: false,
     })
 
-    const detailedResult = deriveVisibleMessages({
-      messages: [],
-      activityMessages: [agentMessage],
-      agents: [manager, worker],
-      activeAgent: manager,
-      channelView: 'all',
-      detailedAllView: true,
-    })
-
-    expect(defaultResult.visibleMessages).toHaveLength(1)
-    expect(detailedResult.visibleMessages).toHaveLength(1)
+    expect(result.visibleMessages).toHaveLength(1)
   })
 })

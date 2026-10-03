@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ClipboardList, Eye, FolderOpen, GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, Package, ScrollText, Sparkles, Square, SquareTerminal, Trash2 } from 'lucide-react'
+import { ClipboardList, FolderOpen, GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, Package, ScrollText, Sparkles, Square, SquareTerminal, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -46,10 +46,6 @@ interface ChatHeaderProps {
   activeAgentUpdatedAt?: string | null
   channelView: MessageSourceView
   onChannelViewChange: (view: MessageSourceView) => void
-  /** Whether legacy Detailed All mode is active for manager-scoped rows. */
-  detailedAllView?: boolean
-  /** Callback to toggle legacy Detailed All mode. Present only when the surface is enabled. */
-  onDetailedAllViewChange?: (value: boolean) => void
   showSessionAudit?: boolean
   onOpenSessionAudit?: () => void
   contextWindowUsage: { mode: 'known'; usedTokens: number; contextWindow: number } | { mode: 'updating'; contextWindow: number } | null
@@ -172,8 +168,6 @@ export function ChatHeader({
   activeAgentUpdatedAt,
   channelView,
   onChannelViewChange,
-  detailedAllView = false,
-  onDetailedAllViewChange,
   showSessionAudit = false,
   onOpenSessionAudit,
   contextWindowUsage,
@@ -431,34 +425,6 @@ export function ChatHeader({
             />
           </div>
 
-          {/* Detailed All toggle — currently only rendered when an owner explicitly enables the legacy surface. */}
-          {channelView === 'all' && activeAgentRole === 'manager' && onDetailedAllViewChange ? (
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    className={cn(
-                      'inline-flex h-6 items-center gap-1 rounded-md border px-1.5 text-[10px] font-medium transition-colors',
-                      detailedAllView
-                        ? 'border-primary/40 bg-primary/10 text-primary'
-                        : 'border-border/60 bg-muted/30 text-muted-foreground hover:text-foreground',
-                    )}
-                    onClick={() => onDetailedAllViewChange(!detailedAllView)}
-                    aria-pressed={detailedAllView}
-                    aria-label="Toggle detailed manager activity in All view"
-                  >
-                    <Eye className="size-3" aria-hidden="true" />
-                    <span>Detailed</span>
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" sideOffset={6}>
-                  Toggle detailed manager activity in All view
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          ) : null}
-
           {showSessionAudit && onOpenSessionAudit ? (
             <TooltipProvider delayDuration={200}>
               <Tooltip>
@@ -508,7 +474,7 @@ export function ChatHeader({
         ) : null}
 
         {/* ── Three-dots dropdown: secondary actions ── */}
-        {(showCompact || showSmartCompact || showNewChat || showStopAll || (showSessionAudit && onOpenSessionAudit) || (channelView === 'all' && activeAgentRole === 'manager' && onDetailedAllViewChange)) ? (
+        {(showCompact || showSmartCompact || showNewChat || showStopAll || (showSessionAudit && onOpenSessionAudit)) ? (
           <>
             <Separator orientation="vertical" className="hidden sm:block mx-0.5 h-4 bg-border/60" />
             <DropdownMenu>
@@ -530,17 +496,6 @@ export function ChatHeader({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" sideOffset={6} className="min-w-44">
-                {/* Detailed All toggle — overflow/mobile only when the legacy surface is enabled. */}
-                {channelView === 'all' && activeAgentRole === 'manager' && onDetailedAllViewChange ? (
-                  <DropdownMenuItem
-                    onClick={() => onDetailedAllViewChange(!detailedAllView)}
-                    className="gap-2 text-xs sm:hidden"
-                  >
-                    <Eye className="size-3.5" />
-                    {detailedAllView ? 'Hide detailed activity' : 'Show detailed activity'}
-                  </DropdownMenuItem>
-                ) : null}
-
                 {showSessionAudit && onOpenSessionAudit ? (
                   <DropdownMenuItem
                     onClick={onOpenSessionAudit}

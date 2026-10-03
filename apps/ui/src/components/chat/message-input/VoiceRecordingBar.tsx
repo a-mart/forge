@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { Square } from 'lucide-react'
+import { formatElapsed } from '@/lib/format-utils'
 import { ACTIVE_WAVEFORM_BAR_COUNT } from './types'
 
 interface VoiceRecordingBarProps {
@@ -7,13 +8,6 @@ interface VoiceRecordingBarProps {
   waveformBars: number[]
   onStop: () => void
   disabled: boolean
-}
-
-function formatDuration(durationMs: number): string {
-  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
 
 function stretchWaveformBars(source: number[], targetCount: number): number[] {
@@ -54,7 +48,7 @@ export function VoiceRecordingBar({ durationMs, waveformBars, onStop, disabled }
       </div>
 
       <span className="shrink-0 text-[11px] font-medium tabular-nums text-muted-foreground">
-        {formatDuration(durationMs)}
+        {formatElapsed(durationMs)}
       </span>
 
       <button

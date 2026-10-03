@@ -62,7 +62,7 @@ import {
 import { ProjectAgentSettingsSheet } from './project-agent/ProjectAgentSettingsSheet'
 import { ActivateRepoProjectAgentSheet } from './project-agent/ActivateRepoProjectAgentSheet'
 import { ProjectAgentSharingDialog } from './project-agent/ProjectAgentSharingDialog'
-import { filterTreeRows, findCliHideNavigationTarget, injectGlowPulseStyle } from './agent-sidebar'
+import { filterTreeRows, findCliHideNavigationTarget, injectGlowPulseStyle } from './agent-sidebar/utils'
 import { useProjectViews, useSidebarPrefs, useSidebarTreeState } from './agent-sidebar/hooks'
 import { useInactiveRepoProjectAgents, type RepoProjectAgentSidebarEntry } from '@/hooks/use-inactive-repo-project-agents'
 import { getInactiveRepoProjectAgentEntryKey, matchesRepoProjectAgentSearch } from '@/components/settings/repo-project-agent-ui-utils'

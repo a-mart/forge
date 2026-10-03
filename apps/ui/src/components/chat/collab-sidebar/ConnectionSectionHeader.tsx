@@ -1,5 +1,6 @@
 import { cn } from '@/lib/utils'
 import type { ConnectionHealth } from '@/lib/connection-health-store'
+import { formatUnreadCount } from '@/lib/format-utils'
 
 interface ConnectionSectionHeaderProps {
   label: string
@@ -18,10 +19,6 @@ const healthA11yLabel: Record<ConnectionHealth, string> = {
   connected: 'Connected',
   reconnecting: 'Reconnecting',
   disconnected: 'Disconnected',
-}
-
-function formatUnreadCount(count: number): string {
-  return count > 99 ? '99+' : String(count)
 }
 
 export function ConnectionSectionHeader({
