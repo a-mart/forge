@@ -1,8 +1,7 @@
 import { createHmac } from "node:crypto";
-import type { TerminalCloseReason, TerminalWsClientControlMessage, TerminalWsServerControlMessage } from "@forge/protocol";
+import type { TerminalWsClientControlMessage, TerminalWsServerControlMessage } from "@forge/protocol";
 import { cloneDescriptor, safeEqual } from "./terminal-service-helpers.js";
 import { TerminalServiceError, type AttachedClient, type TerminalRestoreData, type TerminalServiceContext } from "./terminal-service-types.js";
-import type { TerminalTransportInboundEvent } from "./terminal-transport.js";
 
 export class TerminalServiceClientController {
   constructor(private readonly context: TerminalServiceContext) {}
@@ -141,32 +140,6 @@ export class TerminalServiceClientController {
 
     if (input.message.type === "resize") {
       await this.context.resize(input.terminalId, input.sessionAgentId, input.message.cols, input.message.rows);
-    }
-  }
-
-  async handleTransportEvent(event: TerminalTransportInboundEvent): Promise<void> {
-    switch (event.type) {
-      case "input": {
-        const payload = event.payload as { terminalId: string; sessionAgentId: string; data: Buffer };
-        await this.context.handleInput(payload.terminalId, payload.data, payload.sessionAgentId);
-        return;
-      }
-      case "resize": {
-        const payload = event.payload as { terminalId: string; sessionAgentId: string; cols: number; rows: number };
-        await this.context.resize(payload.terminalId, payload.sessionAgentId, payload.cols, payload.rows);
-        return;
-      }
-      case "close": {
-        const payload = event.payload as {
-          terminalId: string;
-          sessionAgentId: string;
-          reason?: TerminalCloseReason;
-        };
-        await this.context.close(payload.terminalId, payload.sessionAgentId, payload.reason ?? "user_closed");
-        break;
-      }
-      default:
-        break;
     }
   }
 }

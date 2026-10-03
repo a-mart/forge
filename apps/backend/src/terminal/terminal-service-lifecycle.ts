@@ -32,14 +32,6 @@ export class TerminalServiceLifecycleController {
 
     this.context.setInitialized(true);
 
-    if (this.context.transport) {
-      this.context.setTransportUnsubscribe(
-        this.context.transport.subscribe((event) => {
-          void this.context.handleTransportEvent(event);
-        }),
-      );
-    }
-
     const result: TerminalServiceInitializeResult = {
       restoredRunning: 0,
       restoredExited: 0,
@@ -221,8 +213,6 @@ export class TerminalServiceLifecycleController {
     }
 
     this.context.setShuttingDown(true);
-    this.context.getTransportUnsubscribe()?.();
-    this.context.setTransportUnsubscribe(null);
 
     const runtimes = Array.from(this.context.terminals.values());
     for (const runtime of runtimes) {
@@ -264,8 +254,6 @@ export class TerminalServiceLifecycleController {
         });
       }),
     );
-
-    await this.context.transport?.shutdown();
   }
 
   async create(request: TerminalCreateRequest): Promise<TerminalCreateResponse> {
