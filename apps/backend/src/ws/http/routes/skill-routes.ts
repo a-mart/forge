@@ -9,7 +9,8 @@ import type {
   SkillInventoryResponse,
   SkillShareResponse,
 } from "@forge/protocol";
-import { SkillBundleError, SkillBundleValidationError } from "../../../swarm/skills/skill-bundle-service.js";
+import { SkillBundleError } from "../../../swarm/skills/skill-bundle-errors.js";
+import { SkillBundleValidationError } from "../../../swarm/skills/skill-bundle-validation.js";
 import { SkillSharingError, type ImportSkillOptions } from "../../../swarm/skills/skill-sharing-service.js";
 import { applyCorsHeaders, readJsonBody, sendJson } from "../../http-utils.js";
 import type { HttpRoute } from "../shared/http-route.js";

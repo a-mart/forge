@@ -1,10 +1,8 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { SkillBundleManifestV1 } from "@forge/protocol";
-import {
-  computeSkillBundleContentSha256,
-  validateSkillBundleManifest
-} from "../skills/skill-bundle-service.js";
+import { computeSkillBundleContentSha256 } from "../skills/skill-bundle-canonical.js";
+import { validateSkillBundleManifest } from "../skills/skill-bundle-validation.js";
 import { validateSkillBundleForStorage as validateWorkerSkillBundle } from "../../../../skill-share-worker/src/bundle-validation.js";
 
 const VALIDATION_LIMITS = {
