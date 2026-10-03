@@ -1,4 +1,5 @@
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
+import { readApiError } from './settings-api-client'
 
 export interface ShellOption {
   path: string
@@ -15,19 +16,6 @@ export interface TerminalShellSettings {
 export interface AvailableShellsResponse {
   shells: ShellOption[]
   settings: TerminalShellSettings
-}
-
-async function readApiError(response: Response): Promise<string> {
-  try {
-    const payload = (await response.json()) as { error?: unknown; message?: unknown }
-    if (typeof payload.error === 'string' && payload.error.trim()) return payload.error
-    if (typeof payload.message === 'string' && payload.message.trim()) return payload.message
-  } catch { /* ignore */ }
-  try {
-    const text = await response.text()
-    if (text.trim().length > 0) return text
-  } catch { /* ignore */ }
-  return `Request failed (${response.status})`
 }
 
 export async function fetchAvailableShells(

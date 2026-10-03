@@ -103,19 +103,6 @@ function normalizeSettingsAuthLoginProviderId(value: unknown): SettingsAuthLogin
   return undefined
 }
 
-async function readApiError(response: Response): Promise<string> {
-  try {
-    const payload = (await response.json()) as { error?: unknown; message?: unknown }
-    if (typeof payload.error === 'string' && payload.error.trim()) return payload.error
-    if (typeof payload.message === 'string' && payload.message.trim()) return payload.message
-  } catch { /* ignore */ }
-  try {
-    const text = await response.text()
-    if (text.trim().length > 0) return text
-  } catch { /* ignore */ }
-  return `Request failed (${response.status})`
-}
-
 /* ------------------------------------------------------------------ */
 /*  Type guards                                                       */
 /* ------------------------------------------------------------------ */
@@ -429,7 +416,7 @@ export async function startSettingsAuthOAuthLoginStream(
   signal: AbortSignal,
 ): Promise<void> {
   const response = await client.fetch(`/api/settings/auth/login/${encodeURIComponent(provider)}`, { method: 'POST', signal })
-  if (!response.ok) throw new Error(await readApiError(response))
+  if (!response.ok) throw new Error(await client.readApiError(response))
   await consumeSettingsAuthOAuthSseStream(response, handlers)
 }
 
@@ -523,7 +510,7 @@ export async function startPoolAddAccountOAuthStream(
   signal: AbortSignal,
 ): Promise<void> {
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/login`, { method: 'POST', signal })
-  if (!response.ok) throw new Error(await readApiError(response))
+  if (!response.ok) throw new Error(await client.readApiError(response))
   await consumeSettingsAuthOAuthSseStream(response, handlers)
 }
 
