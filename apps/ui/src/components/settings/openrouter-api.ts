@@ -1,6 +1,6 @@
 import type { AvailableOpenRouterModel, OpenRouterModelEntry } from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
-import { createBuilderSettingsApiClient } from './settings-api-client'
+import { resolveSettingsApiClient } from './settings-api-client'
 
 export type { AvailableOpenRouterModel }
 
@@ -10,9 +10,7 @@ export interface OpenRouterModelsResponse {
 }
 
 export async function fetchOpenRouterModels(clientOrWsUrl: SettingsApiClient | string | undefined): Promise<OpenRouterModelsResponse> {
-  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch('/api/settings/openrouter/models', { cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))
 
@@ -24,9 +22,7 @@ export async function fetchOpenRouterModels(clientOrWsUrl: SettingsApiClient | s
 }
 
 export async function fetchAvailableOpenRouterModels(clientOrWsUrl: SettingsApiClient | string | undefined): Promise<AvailableOpenRouterModel[]> {
-  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch('/api/settings/openrouter/available-models', { cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))
 
@@ -38,9 +34,7 @@ export async function addOpenRouterModel(
   clientOrWsUrl: SettingsApiClient | string | undefined,
   model: AvailableOpenRouterModel,
 ): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch(`/api/settings/openrouter/models/${encodeURIComponent(model.modelId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -50,9 +44,7 @@ export async function addOpenRouterModel(
 }
 
 export async function removeOpenRouterModel(clientOrWsUrl: SettingsApiClient | string | undefined, modelId: string): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch(`/api/settings/openrouter/models/${encodeURIComponent(modelId)}`, { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
 }

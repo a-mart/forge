@@ -8,20 +8,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { abbreviateNumber } from '../charts/chart-utils'
+import { abbreviateNumber, formatCost } from '../charts/chart-utils'
 import { fetchTokenWorkerEvents } from './token-analytics-api'
 import type {
   TokenAnalyticsWorkerEvent,
   TokenAnalyticsWorkerRunSummary,
 } from '@forge/protocol'
-
-function formatCost(value: number): string {
-  if (value >= 100) return `$${value.toFixed(0)}`
-  if (value >= 1) return `$${value.toFixed(2)}`
-  if (value >= 0.01) return `$${value.toFixed(3)}`
-  if (value > 0) return `$${value.toFixed(4)}`
-  return '—'
-}
 
 function formatTimestamp(iso: string): string {
   try {

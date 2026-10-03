@@ -13,15 +13,13 @@ import type {
   PromptSourceLayer,
 } from '@forge/protocol'
 import type { SettingsApiClient } from '../settings-api-client'
-import { createBuilderSettingsApiClient } from '../settings-api-client'
+import { resolveSettingsApiClient } from '../settings-api-client'
 
 export async function fetchPromptList(
   clientOrWsUrl: SettingsApiClient | string | undefined,
   profileId?: string,
 ): Promise<PromptListEntry[]> {
-  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const params = profileId ? `?profileId=${encodeURIComponent(profileId)}` : ''
   const response = await client.fetch(`/api/prompts${params}`)
   if (!response.ok) throw new Error(await client.readApiError(response))
@@ -37,9 +35,7 @@ export async function fetchPromptContent(
   profileId?: string,
   layer?: PromptSourceLayer,
 ): Promise<PromptContentResponse> {
-  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const params = new URLSearchParams()
   if (profileId) params.set('profileId', profileId)
   if (layer) params.set('layer', layer)
@@ -58,9 +54,7 @@ export async function savePromptOverride(
   content: string,
   profileId: string,
 ): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch(
     `/api/prompts/${encodeURIComponent(category)}/${encodeURIComponent(promptId)}`,
     {
@@ -79,9 +73,7 @@ export async function fetchPromptPreview(
   profileId: string,
   agentId?: string,
 ): Promise<PromptPreviewResponse> {
-  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const params = new URLSearchParams({ profileId })
   if (agentId) params.set('agentId', agentId)
   const response = await client.fetch(`/api/prompts/preview?${params}`)
@@ -110,9 +102,7 @@ export async function deletePromptOverride(
   promptId: string,
   profileId: string,
 ): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const params = new URLSearchParams({ profileId })
   const response = await client.fetch(
     `/api/prompts/${encodeURIComponent(category)}/${encodeURIComponent(promptId)}?${params}`,
@@ -125,9 +115,7 @@ export async function fetchCortexPromptSurfaceList(
   clientOrWsUrl: SettingsApiClient | string | undefined,
   profileId: string,
 ): Promise<CortexPromptSurfaceListResponse> {
-  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const params = new URLSearchParams({ profileId })
   const response = await client.fetch(`/api/prompts/cortex-surfaces?${params}`)
   if (!response.ok) throw new Error(await client.readApiError(response))
@@ -144,9 +132,7 @@ export async function fetchCortexPromptSurfaceContent(
   surfaceId: string,
   profileId: string,
 ): Promise<CortexPromptSurfaceContentResponse> {
-  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const params = new URLSearchParams({ profileId })
   const response = await client.fetch(
     `/api/prompts/cortex-surfaces/${encodeURIComponent(surfaceId)}?${params}`,
@@ -161,9 +147,7 @@ export async function saveCortexPromptSurface(
   content: string,
   profileId: string,
 ): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch(
     `/api/prompts/cortex-surfaces/${encodeURIComponent(surfaceId)}`,
     {
@@ -180,9 +164,7 @@ export async function resetCortexPromptSurface(
   surfaceId: string,
   profileId: string,
 ): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const params = new URLSearchParams({ profileId })
   const response = await client.fetch(
     `/api/prompts/cortex-surfaces/${encodeURIComponent(surfaceId)}/reset?${params}`,

@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils'
 import { FileIcon } from '@/components/file-browser/FileIcon'
 import { fetchSkillFiles, type SkillWorkspaceRequestContext } from './skills-viewer-api'
 import type { SettingsApiClient } from '../settings-api-client'
-import type { SkillFileEntry } from './skills-viewer-types'
+import type { SkillFileEntry } from '@forge/protocol'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */

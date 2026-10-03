@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   fetchServerVersion,
-  fetchSkillsList,
   pausePooledCredential,
   resumePooledCredential,
   removePooledCredential,
@@ -191,37 +190,6 @@ describe('settings-api auth changed events', () => {
     await removePooledCredential(client, 'openai-codex', 'cred-1')
 
     expect(listener).toHaveBeenCalledTimes(6)
-  })
-})
-
-describe('settings-api skills list', () => {
-  it('keeps skills whose description is omitted', async () => {
-    vi.stubGlobal('fetch', fetchMock)
-    fetchMock.mockResolvedValue(
-      mockJsonResponse({
-        skills: [
-          {
-            name: 'custom-skill',
-            envCount: 0,
-            hasRichConfig: false,
-          },
-        ],
-      }),
-    )
-
-    const skills = await fetchSkillsList(createBuilderSettingsApiClient('ws://127.0.0.1:47187'))
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:47187/api/settings/skills',
-      expect.objectContaining({ credentials: 'same-origin' }),
-    )
-    expect(skills).toEqual([
-      {
-        name: 'custom-skill',
-        envCount: 0,
-        hasRichConfig: false,
-      },
-    ])
   })
 })
 

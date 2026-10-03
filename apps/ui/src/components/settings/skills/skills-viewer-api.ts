@@ -14,13 +14,9 @@ import type {
   SkillShareResponse,
 } from '@forge/protocol'
 import type { SettingsApiClient } from '../settings-api-client'
-import { createBuilderSettingsApiClient } from '../settings-api-client'
+import { resolveSettingsApiClient } from '../settings-api-client'
 
 const SKILLS_FETCH_OPTIONS = { cache: 'no-store' } as const
-
-function resolveClient(clientOrWsUrl: SettingsApiClient | string): SettingsApiClient {
-  return typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
-}
 
 /* ------------------------------------------------------------------ */
 /*  Skill inventory                                                   */
@@ -44,7 +40,7 @@ export async function fetchSkillInventory(
   profileId?: string,
   sessionAgentId?: string,
 ): Promise<SkillInventoryEntry[]> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const path = appendSkillContext('/api/settings/skills', { profileId, sessionAgentId })
   const response = await client.fetch(path, SKILLS_FETCH_OPTIONS)
   if (!response.ok) throw new Error(await client.readApiError(response))
@@ -63,7 +59,7 @@ export async function fetchSkillFiles(
   relativePath = '',
   context?: SkillWorkspaceRequestContext,
 ): Promise<SkillFilesResponse> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const basePath = `/api/settings/skills/${encodeURIComponent(skillId)}/files`
   const path = appendSkillContext(
     relativePath ? `${basePath}?path=${encodeURIComponent(relativePath)}` : basePath,
@@ -84,7 +80,7 @@ export async function fetchSkillFileContent(
   relativePath: string,
   context?: SkillWorkspaceRequestContext,
 ): Promise<SkillFileContentResponse> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const basePath = `/api/settings/skills/${encodeURIComponent(skillId)}/content`
   const path = appendSkillContext(`${basePath}?path=${encodeURIComponent(relativePath)}`, context)
   const response = await client.fetch(path, SKILLS_FETCH_OPTIONS)
@@ -100,7 +96,7 @@ export async function shareSkill(
   clientOrWsUrl: SettingsApiClient | string,
   skillId: string,
 ): Promise<SkillShareResponse> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch(`/api/settings/skills/${encodeURIComponent(skillId)}/share`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -115,7 +111,7 @@ export async function previewSkillImportFromUrl(
   clientOrWsUrl: SettingsApiClient | string,
   request: SkillImportPreviewUrlRequest,
 ): Promise<SkillImportPreviewResponse> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch('/api/settings/skills/import/preview-url', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -130,7 +126,7 @@ export async function importSkill(
   clientOrWsUrl: SettingsApiClient | string,
   request: SkillImportRequest,
 ): Promise<SkillImportResultResponse> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch('/api/settings/skills/import', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

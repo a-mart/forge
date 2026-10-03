@@ -36,15 +36,3 @@ export interface SettingsAuthOAuthFlowState {
   codeValue: string
   isSubmittingCode: boolean
 }
-
-/* ------------------------------------------------------------------ */
-/*  Skill metadata                                                    */
-/* ------------------------------------------------------------------ */
-
-export interface SkillInfo {
-  name: string
-  description?: string
-  envCount: number
-  hasRichConfig: boolean
-}
-

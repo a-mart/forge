@@ -2,10 +2,7 @@
 /*  Shared API helpers for settings components                        */
 /* ------------------------------------------------------------------ */
 
-import type {
-  SettingsAuthOAuthFlowState,
-  SkillInfo,
-} from './settings-types'
+import type { SettingsAuthOAuthFlowState } from './settings-types'
 import type {
   SettingsAuthLoginAuthUrlEvent,
   SettingsAuthLoginCompleteEvent,
@@ -29,7 +26,6 @@ import type {
   UpdateOpenAIBrokerSettingsRequest,
   CredentialPoolState,
   CredentialPoolStrategy,
-  SkillInventoryResponse,
 } from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
 
@@ -105,19 +101,6 @@ function normalizeSettingsAuthProviderId(value: unknown): SettingsAuthProviderId
 function normalizeSettingsAuthLoginProviderId(value: unknown): SettingsAuthLoginProviderId | undefined {
   if (value === 'anthropic' || value === 'openai-codex' || value === 'xai') return value
   return undefined
-}
-
-async function readApiError(response: Response): Promise<string> {
-  try {
-    const payload = (await response.json()) as { error?: unknown; message?: unknown }
-    if (typeof payload.error === 'string' && payload.error.trim()) return payload.error
-    if (typeof payload.message === 'string' && payload.message.trim()) return payload.message
-  } catch { /* ignore */ }
-  try {
-    const text = await response.text()
-    if (text.trim().length > 0) return text
-  } catch { /* ignore */ }
-  return `Request failed (${response.status})`
 }
 
 /* ------------------------------------------------------------------ */
@@ -433,7 +416,7 @@ export async function startSettingsAuthOAuthLoginStream(
   signal: AbortSignal,
 ): Promise<void> {
   const response = await client.fetch(`/api/settings/auth/login/${encodeURIComponent(provider)}`, { method: 'POST', signal })
-  if (!response.ok) throw new Error(await readApiError(response))
+  if (!response.ok) throw new Error(await client.readApiError(response))
   await consumeSettingsAuthOAuthSseStream(response, handlers)
 }
 
@@ -444,32 +427,6 @@ export async function submitSettingsAuthOAuthPrompt(client: SettingsApiClient, p
     body: JSON.stringify({ value, ...(requestId ? { requestId } : {}) }),
   })
   if (!response.ok) throw new Error(await client.readApiError(response))
-}
-
-/* ------------------------------------------------------------------ */
-/*  Skills metadata API                                               */
-/* ------------------------------------------------------------------ */
-
-function isSkillInfo(value: unknown): value is SkillInfo {
-  if (!value || typeof value !== 'object') return false
-  const v = value as Partial<SkillInfo>
-  return (
-    typeof v.name === 'string' && v.name.trim().length > 0 &&
-    (v.description === undefined || typeof v.description === 'string') &&
-    typeof v.envCount === 'number' &&
-    typeof v.hasRichConfig === 'boolean'
-  )
-}
-
-export async function fetchSkillsList(client: SettingsApiClient, profileId?: string): Promise<SkillInfo[]> {
-  const path = profileId
-    ? `/api/settings/skills?profileId=${encodeURIComponent(profileId)}`
-    : '/api/settings/skills'
-  const response = await client.fetch(path)
-  if (!response.ok) throw new Error(await client.readApiError(response))
-  const payload = (await response.json()) as Partial<SkillInventoryResponse>
-  if (!payload || !Array.isArray(payload.skills)) return []
-  return payload.skills.filter(isSkillInfo)
 }
 
 /* ------------------------------------------------------------------ */
@@ -553,7 +510,7 @@ export async function startPoolAddAccountOAuthStream(
   signal: AbortSignal,
 ): Promise<void> {
   const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/login`, { method: 'POST', signal })
-  if (!response.ok) throw new Error(await readApiError(response))
+  if (!response.ok) throw new Error(await client.readApiError(response))
   await consumeSettingsAuthOAuthSseStream(response, handlers)
 }
 

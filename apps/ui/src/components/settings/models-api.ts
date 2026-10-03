@@ -1,6 +1,6 @@
 import type { ModelOverridesResponse } from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
-import { createBuilderSettingsApiClient } from './settings-api-client'
+import { resolveSettingsApiClient } from './settings-api-client'
 
 export type { ModelOverridesResponse }
 
@@ -15,9 +15,7 @@ export async function fetchModelOverrides(
   clientOrWsUrl: SettingsApiClient | string | undefined,
   init?: RequestInit,
 ): Promise<ModelOverridesResponse> {
-  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch('/api/settings/model-overrides', { ...init, cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))
 
@@ -43,9 +41,7 @@ export async function updateModelOverride(
   modelId: string,
   patch: ModelOverridePatch,
 ): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch(`/api/settings/model-overrides/${encodeURIComponent(modelId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -55,17 +51,13 @@ export async function updateModelOverride(
 }
 
 export async function deleteModelOverride(clientOrWsUrl: SettingsApiClient | string | undefined, modelId: string): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch(`/api/settings/model-overrides/${encodeURIComponent(modelId)}`, { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
 export async function resetAllModelOverrides(clientOrWsUrl: SettingsApiClient | string | undefined): Promise<void> {
-  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch('/api/settings/model-overrides', { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
 }

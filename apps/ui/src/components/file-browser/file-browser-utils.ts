@@ -27,18 +27,10 @@ export function isPdfFile(filePath: string): boolean {
   return PDF_EXTENSIONS.has(ext)
 }
 
-export function doesDeleteAffectOpenFile(
-  deletePath: string,
-  entryType: 'file' | 'directory',
-  openFilePath: string | null,
-): boolean {
-  if (!openFilePath) {
-    return false
-  }
-
-  if (entryType === 'file') {
-    return openFilePath === deletePath
-  }
-
-  return openFilePath === deletePath || openFilePath.startsWith(`${deletePath}/`)
+export function doesDeleteAffectFile(deletePath: string, entryType: 'file' | 'directory', filePath: string): boolean {
+  const normalizedDeletePath = deletePath.replace(/^\/+|\/+$/g, '')
+  const normalizedFilePath = filePath.replace(/^\/+|\/+$/g, '')
+  if (!normalizedDeletePath) return false
+  if (entryType === 'file') return normalizedFilePath === normalizedDeletePath
+  return normalizedFilePath === normalizedDeletePath || normalizedFilePath.startsWith(`${normalizedDeletePath}/`)
 }

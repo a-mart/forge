@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import type { ManagerSelectionCatalogResponse } from '@forge/protocol'
 import type { SettingsApiClient } from '@/components/settings/settings-api-client'
-import { createBuilderSettingsApiClient } from '@/components/settings/settings-api-client'
+import { resolveSettingsApiClient } from '@/components/settings/settings-api-client'
 import { fetchManagerSelectionCatalog } from '@/lib/manager-selection-catalog-api'
 
 interface CatalogCacheEntry {
@@ -33,10 +33,7 @@ function resolveClient(
   httpClientRef?: RefObject<SettingsApiClient | null>,
 ): SettingsApiClient | null {
   if (httpClientRef) return httpClientRef.current
-  if (typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined) {
-    return createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-  }
-  return clientOrWsUrl
+  return resolveSettingsApiClient(clientOrWsUrl)
 }
 
 function cachedCatalog(queryKey: string, cacheToken: string): ManagerSelectionCatalogResponse | null {

@@ -34,7 +34,7 @@ import {
 import { toEditorHref } from '@/lib/artifacts'
 import { fetchSkillFileContent, type SkillWorkspaceRequestContext } from './skills-viewer-api'
 import type { SettingsApiClient } from '../settings-api-client'
-import type { SkillFileContentResponse } from './skills-viewer-types'
+import type { SkillFileContentResponse } from '@forge/protocol'
 import '@/styles/syntax-highlight.css'
 import '@/styles/file-browser.css'
 

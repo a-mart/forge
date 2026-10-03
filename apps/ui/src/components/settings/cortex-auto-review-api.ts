@@ -3,21 +3,17 @@ import type {
   UpdateCortexAutoReviewSettingsRequest,
 } from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
-import { createBuilderSettingsApiClient } from './settings-api-client'
+import { resolveSettingsApiClient } from './settings-api-client'
 
 export interface CortexAutoReviewSettingsResponse {
   settings: CortexAutoReviewSettings
   cortexDisabled?: boolean
 }
 
-function resolveClient(clientOrWsUrl: SettingsApiClient | string): SettingsApiClient {
-  return typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
-}
-
 export async function fetchCortexAutoReviewSettings(
   clientOrWsUrl: SettingsApiClient | string,
 ): Promise<CortexAutoReviewSettingsResponse> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch('/api/settings/cortex-auto-review')
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as Partial<CortexAutoReviewSettingsResponse>
@@ -29,7 +25,7 @@ export async function updateCortexAutoReviewSettings(
   clientOrWsUrl: SettingsApiClient | string,
   patch: UpdateCortexAutoReviewSettingsRequest,
 ): Promise<CortexAutoReviewSettings> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch('/api/settings/cortex-auto-review', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },

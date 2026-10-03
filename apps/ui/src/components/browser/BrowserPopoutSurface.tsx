@@ -76,8 +76,6 @@ export function BrowserPopoutSurface() {
   return (
     <main className="flex h-dvh min-w-0 overflow-hidden bg-background text-foreground">
       <BrowserPanel
-        sessionAgentId={projection.sessionAgentId}
-        profileId={projection.profileId}
         snapshot={projection.snapshot}
         host={projection.host}
         commandPort={commandPort}

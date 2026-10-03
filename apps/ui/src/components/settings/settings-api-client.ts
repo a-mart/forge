@@ -66,18 +66,23 @@ class SettingsApiClientImpl implements SettingsApiClient {
     return (await response.json()) as T
   }
 
-  async readApiError(response: Response): Promise<string> {
-    try {
-      const payload = (await response.json()) as { error?: unknown; message?: unknown }
-      if (typeof payload.error === 'string' && payload.error.trim()) return payload.error
-      if (typeof payload.message === 'string' && payload.message.trim()) return payload.message
-    } catch { /* ignore */ }
-    try {
-      const text = await response.text()
-      if (text.trim().length > 0) return text
-    } catch { /* ignore */ }
-    return `Request failed (${response.status})`
+  readApiError(response: Response): Promise<string> {
+    return readApiError(response)
   }
+}
+
+/** Read an error message from a failed response. */
+export async function readApiError(response: Response): Promise<string> {
+  try {
+    const payload = (await response.json()) as { error?: unknown; message?: unknown }
+    if (typeof payload.error === 'string' && payload.error.trim()) return payload.error
+    if (typeof payload.message === 'string' && payload.message.trim()) return payload.message
+  } catch { /* ignore */ }
+  try {
+    const text = await response.text()
+    if (text.trim().length > 0) return text
+  } catch { /* ignore */ }
+  return `Request failed (${response.status})`
 }
 
 /* ------------------------------------------------------------------ */
@@ -111,4 +116,9 @@ export function createBuilderSettingsApiClient(wsUrl: string): SettingsApiClient
     // Registry unavailable (SSR/tests) — fall through to builder semantics.
   }
   return new SettingsApiClientImpl(createBuilderSettingsTarget(wsUrl))
+}
+
+/** Accept either a settings client or a legacy Builder wsUrl. */
+export function resolveSettingsApiClient(clientOrWsUrl?: SettingsApiClient | string): SettingsApiClient {
+  return typeof clientOrWsUrl === 'object' ? clientOrWsUrl : createBuilderSettingsApiClient(clientOrWsUrl ?? '')
 }

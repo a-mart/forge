@@ -4,7 +4,7 @@ import type {
   UpdateKnowledgeV2SettingsResponse,
 } from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
-import { createBuilderSettingsApiClient } from './settings-api-client'
+import { resolveSettingsApiClient } from './settings-api-client'
 
 const KNOWLEDGE_V2_SETTINGS_PATH = '/api/settings/knowledge-v2'
 
@@ -20,16 +20,10 @@ export type FetchKnowledgeV2SettingsResult =
   | { available: true; response: GetKnowledgeV2SettingsResponse }
   | { available: false }
 
-function resolveClient(clientOrWsUrl: SettingsApiClient | string | undefined): SettingsApiClient {
-  return typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
-}
-
 export async function fetchKnowledgeV2Settings(
   clientOrWsUrl: SettingsApiClient | string | undefined,
 ): Promise<FetchKnowledgeV2SettingsResult> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch(KNOWLEDGE_V2_SETTINGS_PATH, { cache: 'no-store' })
   // Builder-only endpoint: 404 means "not available here" — not an error.
   if (response.status === 404) return { available: false }
@@ -45,7 +39,7 @@ export async function updateKnowledgeV2Settings(
   clientOrWsUrl: SettingsApiClient | string | undefined,
   patch: UpdateKnowledgeV2SettingsRequest,
 ): Promise<UpdateKnowledgeV2SettingsResponse> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch(KNOWLEDGE_V2_SETTINGS_PATH, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },

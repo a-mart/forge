@@ -10,7 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { abbreviateNumber } from '../charts/chart-utils'
+import { abbreviateNumber, formatCost, formatDuration } from '../charts/chart-utils'
 import { cn } from '@/lib/utils'
 import { WorkerRunEventsPanel } from './WorkerRunEventsPanel'
 import type {
@@ -20,24 +20,6 @@ import type {
   TokenAnalyticsQuery,
 } from '@forge/protocol'
 import { fetchTokenWorkers } from './token-analytics-api'
-
-function formatCost(value: number): string {
-  if (value >= 100) return `$${value.toFixed(0)}`
-  if (value >= 1) return `$${value.toFixed(2)}`
-  if (value >= 0.01) return `$${value.toFixed(3)}`
-  if (value > 0) return `$${value.toFixed(4)}`
-  return '—'
-}
-
-function formatDuration(ms: number | null): string {
-  if (ms == null) return '—'
-  if (ms < 1000) return `${Math.round(ms)}ms`
-  const seconds = ms / 1000
-  if (seconds < 60) return `${seconds.toFixed(1)}s`
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = Math.round(seconds % 60)
-  return `${minutes}m ${remainingSeconds}s`
-}
 
 function formatTimestamp(iso: string): string {
   try {

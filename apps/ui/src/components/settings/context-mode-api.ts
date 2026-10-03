@@ -7,13 +7,7 @@ import {
   type UpdateSessionContextModeRequest,
 } from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
-import { createBuilderSettingsApiClient } from './settings-api-client'
-
-function resolveClient(clientOrWsUrl: SettingsApiClient | string | undefined): SettingsApiClient {
-  return typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
-}
+import { resolveSettingsApiClient } from './settings-api-client'
 
 function projectContextModePath(profileId: string): string {
   return `/api/profiles/${encodeURIComponent(profileId)}/context-mode`
@@ -96,7 +90,7 @@ export async function fetchProjectContextMode(
   clientOrWsUrl: SettingsApiClient | string | undefined,
   profileId: string,
 ): Promise<ProjectContextModeSnapshot> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch(projectContextModePath(profileId), { cache: 'no-store' })
   if (!response.ok) {
     throw new Error(await client.readApiError(response))
@@ -109,7 +103,7 @@ export async function updateProjectContextMode(
   profileId: string,
   mode: ContextMode,
 ): Promise<ProjectContextModeSnapshot> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const body: UpdateProjectContextModeRequest = { mode }
   const response = await client.fetch(projectContextModePath(profileId), {
     method: 'PUT',
@@ -126,7 +120,7 @@ export async function fetchSessionContextMode(
   clientOrWsUrl: SettingsApiClient | string | undefined,
   agentId: string,
 ): Promise<SessionContextModeSnapshot> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch(sessionContextModePath(agentId), { cache: 'no-store' })
   if (!response.ok) {
     throw new Error(await client.readApiError(response))
@@ -139,7 +133,7 @@ export async function updateSessionContextMode(
   agentId: string,
   mode: ContextMode | null,
 ): Promise<SessionContextModeSnapshot> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const body: UpdateSessionContextModeRequest = { mode }
   const response = await client.fetch(sessionContextModePath(agentId), {
     method: 'PUT',
