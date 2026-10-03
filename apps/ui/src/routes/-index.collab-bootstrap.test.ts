@@ -62,23 +62,6 @@ vi.mock('@/lib/backend-url', () => ({
 
 vi.mock('@/lib/collaboration-endpoints', () => ({
   resolveCollaborationWsUrl: () => 'ws://forge.test/ws',
-  getCollabServerUrl: () => collabServerUrlMock.value,
-  isCollabServerRemote: () => {
-    const url = collabServerUrlMock.value
-    if (!url) return false
-    try {
-      const normalize = (u: string): string => {
-        const httpUrl = u.replace(/^ws(s?):\/\//, 'http$1://')
-        const parsed = new URL(httpUrl)
-        if (parsed.hostname === 'localhost') parsed.hostname = '127.0.0.1'
-        return parsed.origin
-      }
-      // Backend is mocked at ws://forge.test/ws
-      return normalize(url) !== normalize('ws://forge.test/ws')
-    } catch {
-      return false
-    }
-  },
 }))
 
 vi.mock('@/lib/collaboration-connections', () => ({
