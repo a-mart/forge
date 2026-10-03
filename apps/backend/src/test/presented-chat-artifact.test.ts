@@ -13,7 +13,6 @@ import {
   chatArtifactStatus,
   canonicalizeChatArtifactPath,
   canonicalizeChatArtifactPathForPlatform,
-  canonicalizePresentedLinkHref,
   canonicalizePresentedLinkHrefForPlatform,
   extractPresentedArtifactPaths,
   extractPresentedArtifactPathsForPlatform,
@@ -99,8 +98,8 @@ describe("presented chat artifact authorization", () => {
     await writeFile(f.sessionFile, line(message("escaped", `\\[artifact:${target}]`)));
     expect(await errorCode(() => readPresentedChatArtifact(f.source, { transcriptAgentId: f.agentId, messageId: "escaped", path: target }))).toBe("path_not_presented");
     expect(extractPresentedArtifactPaths(`[x](file://${target})`)).toEqual([]);
-    expect(canonicalizePresentedLinkHref("swarm-file:///tmp/a%252Fz")).toBe(canonicalizeChatArtifactPath("/tmp/a%2Fz"));
-    expect(canonicalizePresentedLinkHref("swarm-file:///tmp/%")).toBeUndefined();
+    expect(canonicalizePresentedLinkHrefForPlatform("swarm-file:///tmp/a%252Fz")).toBe(canonicalizeChatArtifactPath("/tmp/a%2Fz"));
+    expect(canonicalizePresentedLinkHrefForPlatform("swarm-file:///tmp/%")).toBeUndefined();
     expect(() => canonicalizeChatArtifactPath("//host/share")).toThrow(ChatArtifactError);
   });
 

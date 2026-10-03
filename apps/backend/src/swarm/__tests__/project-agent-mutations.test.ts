@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   assertProjectAgentHandleMutationAllowed,
   buildProjectAgentInfoForMutation,
-  normalizeProjectAgentHandleForMutation,
   normalizeProjectAgentWhenToUseForMutation,
   planProjectAgentReferenceWriteMutation,
   planSetSessionProjectAgentMutation
@@ -33,11 +32,6 @@ function makeDescriptor(overrides: Partial<AgentDescriptor> & Pick<AgentDescript
 }
 
 describe("project-agent mutation helpers", () => {
-  it("normalizes handles for mutation planning", () => {
-    expect(normalizeProjectAgentHandleForMutation(" Docs Agent!! ")).toBe("docs-agent");
-    expect(normalizeProjectAgentHandleForMutation("---")).toBe("");
-  });
-
   it("rejects immutable handle updates", () => {
     expect(() =>
       assertProjectAgentHandleMutationAllowed({ handle: "docs", whenToUse: "Docs" }, "qa")

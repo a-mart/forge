@@ -10,12 +10,10 @@ import {
   inferSwarmModelPresetFromDescriptor,
   normalizePersistedSwarmModelDescriptor,
   normalizePersistedSwarmModelPresetValue,
-  normalizeSwarmModelDescriptor,
   normalizeThinkingLevelForModelDescriptor,
   parseSwarmModelPreset,
   resolveModelDescriptorFromPreset,
   resolvePersistedModelDescriptorFromPreset,
-  resolveRemovedSwarmModelPresetAlias,
 } from "../model-presets.js";
 import { modelCatalogService } from "../model-catalog-service.js";
 import { mapLegacyClaudeSdkModel } from "../catalog/legacy-claude-sdk-model.js";
@@ -63,23 +61,6 @@ describe("model-presets", () => {
         }),
       ).toBe("pi-grok");
     }
-  });
-
-  it("preserves a selected supported Grok variant instead of collapsing it to the family default", () => {
-    expect(
-      normalizeSwarmModelDescriptor(
-        {
-          provider: "xai",
-          modelId: "grok-4.5",
-          thinkingLevel: "medium",
-        },
-        "pi-codex",
-      ),
-    ).toEqual({
-      provider: "xai",
-      modelId: "grok-4.5",
-      thinkingLevel: "high",
-    });
   });
 
   it("includes webSearch capability metadata for the pi-grok preset", () => {
@@ -460,7 +441,6 @@ describe("model-presets", () => {
   });
 
   it("maps removed Cursor ACP descriptors and aliases to Cursor SDK Composer", () => {
-    expect(resolveRemovedSwarmModelPresetAlias("cursor-acp")).toBe("cursor-composer");
     expect(parseSwarmModelPreset("cursor-acp", "model")).toBe("cursor-composer");
     expect(parseSwarmModelPreset(" Cursor-ACP ", "model")).toBe("cursor-composer");
     expect(normalizePersistedSwarmModelDescriptor({

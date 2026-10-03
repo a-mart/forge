@@ -8,7 +8,6 @@ import {
   classifyModelCache,
   extractModelCacheTokenFacts,
   isModelCacheClassificationConsistent,
-  isSupportedModelCacheProvider,
   normalizeModelCacheProvider,
   resolveModelCacheObservationId,
 } from '../runtime/model-cache-observation.js'
@@ -32,7 +31,6 @@ describe('model-cache-observation', () => {
     expect(normalizeModelCacheProvider('openai')).toBe('openai')
     expect(normalizeModelCacheProvider('openai-codex')).toBe('openai-codex')
     expect(normalizeModelCacheProvider('anthropic')).toBeNull()
-    expect(isSupportedModelCacheProvider('openai')).toBe(true)
   })
 
   it('uses raw input total without double-counting cached tokens', () => {

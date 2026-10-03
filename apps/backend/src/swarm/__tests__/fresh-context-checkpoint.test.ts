@@ -9,7 +9,7 @@ import { SessionPlanStore } from "../planning/session-plan-store.js";
 import { PINNED_MESSAGES_FILE_NAME, savePins } from "../session/message-pins.js";
 import { getSessionDir } from "../storage/data-paths.js";
 import {
-  collectUnconsumedToolEvidenceIds,
+  collectUnconsumedToolEvidence,
   createFreshContextHandler,
   formatFreshContextCheckpoint,
   FRESH_CONTEXT_TOO_LARGE_ERROR,
@@ -123,7 +123,7 @@ describe("fresh context checkpoint helper", () => {
       messageEntry("result-2", { role: "toolResult", toolCallId: "call-2", content: "keep" }),
     ];
 
-    expect(collectUnconsumedToolEvidenceIds(entries)).toEqual(["result-2"]);
+    expect(collectUnconsumedToolEvidence(entries).map((entry) => entry.entryId)).toEqual(["result-2"]);
   });
 
   it("labels overflow as an active obligation and threshold/manual as historical constraints", () => {

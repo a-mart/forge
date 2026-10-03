@@ -4,7 +4,6 @@ import {
   isProfileArchived,
   isSessionDirectlyArchivable,
   isSessionDirectlyArchived,
-  isSessionEffectivelyArchived,
   resolveProfileRestoreOpenAgentId,
 } from "../archive/archive-resolver.js";
 
@@ -41,14 +40,11 @@ function session(overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
 }
 
 describe("archive resolver", () => {
-  it("resolves direct and effective archive state", () => {
+  it("resolves direct archive state", () => {
     expect(isProfileArchived(profile())).toBe(false);
     expect(isProfileArchived(profile({ archivedAt: now }))).toBe(true);
     expect(isSessionDirectlyArchived(session())).toBe(false);
     expect(isSessionDirectlyArchived(session({ archivedAt: now }))).toBe(true);
-    expect(isSessionEffectivelyArchived({ session: session(), profile: profile() })).toBe(false);
-    expect(isSessionEffectivelyArchived({ session: session({ archivedAt: now }), profile: profile() })).toBe(true);
-    expect(isSessionEffectivelyArchived({ session: session(), profile: profile({ archivedAt: now }) })).toBe(true);
   });
 
   it("blocks direct archive for a profile default session", () => {

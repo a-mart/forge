@@ -66,10 +66,6 @@ export function createEmptyProjectAgentMutationFlags(): ProjectAgentMutationFlag
   };
 }
 
-export function normalizeProjectAgentHandleForMutation(handle: string): string {
-  return normalizeProjectAgentHandle(handle);
-}
-
 export function assertProjectAgentHandleMutationAllowed(
   previousProjectAgent: AgentDescriptor["projectAgent"] | undefined,
   nextHandle: string | undefined

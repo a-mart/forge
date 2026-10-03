@@ -3,7 +3,6 @@ import {
   MODEL_CACHE_CLASSIFICATION_VERSION,
   MODEL_CACHE_ELIGIBILITY_THRESHOLD_TOKENS,
   MODEL_CACHE_HIT_RATIO_THRESHOLD,
-  MODEL_CACHE_PROVIDERS,
   type ModelCacheClassification,
   type ModelCacheObservationEvent,
   type ModelCacheProvider,
@@ -42,10 +41,6 @@ function readNestedCachedTokens(details: unknown): number | null {
     return null
   }
   return readNonNegativeInt(details.cached_tokens)
-}
-
-export function isSupportedModelCacheProvider(provider: string): provider is ModelCacheProvider {
-  return (MODEL_CACHE_PROVIDERS as readonly string[]).includes(provider)
 }
 
 export function normalizeModelCacheProvider(provider: string): ModelCacheProvider | null {

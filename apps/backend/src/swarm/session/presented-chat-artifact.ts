@@ -119,7 +119,6 @@ export function canonicalizePresentedLinkHrefForPlatform(href: string, platform:
   if (hasControl(raw)) return undefined;
   try { return canonicalizeChatArtifactPathForPlatform(raw, platform); } catch { return undefined; }
 }
-export function canonicalizePresentedLinkHref(href: string): string | undefined { return canonicalizePresentedLinkHrefForPlatform(href); }
 
 /** Authority is derived from rendered links and supported prose shortcodes, never code or images. */
 export function extractPresentedArtifactPathsForPlatform(markdownSource: string, platform: NodeJS.Platform = process.platform): string[] {

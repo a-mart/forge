@@ -560,11 +560,6 @@ export function resolveWorkGraphDispatch(node: WorkGraphNode): {
   }
 }
 
-export function isWorkGraphComplete(graph: WorkGraphSnapshot): boolean {
-  const relevant = graph.nodes.filter((node) => node.status !== 'cancelled')
-  return relevant.length > 0 && relevant.every((node) => node.status === 'completed')
-}
-
 function normalizeNode(
   value: unknown,
   index: number,
