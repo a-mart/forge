@@ -117,3 +117,8 @@ export function createBuilderSettingsApiClient(wsUrl: string): SettingsApiClient
   }
   return new SettingsApiClientImpl(createBuilderSettingsTarget(wsUrl))
 }
+
+/** Accept either a settings client or a legacy Builder wsUrl. */
+export function resolveSettingsApiClient(clientOrWsUrl?: SettingsApiClient | string): SettingsApiClient {
+  return typeof clientOrWsUrl === 'object' ? clientOrWsUrl : createBuilderSettingsApiClient(clientOrWsUrl ?? '')
+}

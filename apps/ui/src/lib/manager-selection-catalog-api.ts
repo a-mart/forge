@@ -3,7 +3,7 @@ import type {
   ManagerSelectionCatalogResponse,
 } from '@forge/protocol'
 import type { SettingsApiClient } from '@/components/settings/settings-api-client'
-import { createBuilderSettingsApiClient } from '@/components/settings/settings-api-client'
+import { resolveSettingsApiClient } from '@/components/settings/settings-api-client'
 import { fetchModelOverrides } from '@/components/settings/models-api'
 import { decodeManagerSelectionCatalog } from '@/lib/manager-selection-catalog'
 
@@ -21,12 +21,6 @@ export class ManagerSelectionCatalogRequestError extends Error {
   }
 }
 
-function resolveClient(clientOrWsUrl: SettingsApiClient | string | undefined): SettingsApiClient {
-  return typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
-}
-
 function isDefinitivelyUnsupportedCatalogStatus(status: number): boolean {
   return status === 404 || status === 405 || status === 501
 }
@@ -35,7 +29,7 @@ export async function fetchManagerSelectionCatalog(
   clientOrWsUrl: SettingsApiClient | string | undefined,
   init?: RequestInit,
 ): Promise<ManagerSelectionCatalogResponse> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   let response: Response
   try {
     response = await client.fetch(MANAGER_SELECTION_CATALOG_PATH, { ...init, cache: 'no-store' })
@@ -70,7 +64,7 @@ export async function fetchManagerSelectionCatalog(
 export async function applyRecommendedManagerDefaults(
   clientOrWsUrl: SettingsApiClient | string | undefined,
 ): Promise<ApplyRecommendedManagerDefaultsResponse> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   return client.fetchJson<ApplyRecommendedManagerDefaultsResponse>(
     RECOMMENDED_MANAGER_DEFAULTS_PATH,
     { method: 'POST' },

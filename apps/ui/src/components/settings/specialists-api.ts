@@ -8,7 +8,7 @@ import type {
   DelegationRosterSettings,
 } from '@forge/protocol'
 import type { SettingsApiClient } from './settings-api-client'
-import { createBuilderSettingsApiClient } from './settings-api-client'
+import { resolveSettingsApiClient } from './settings-api-client'
 
 export interface SaveSpecialistPayload {
   displayName: string
@@ -33,12 +33,6 @@ export interface ChannelSpecialistsResponse {
   specialists: ResolvedSpecialistDefinition[]
   selectedGlobalSpecialistHandles: string[]
   missingSelectedSpecialistHandles: string[]
-}
-
-function resolveClient(clientOrWsUrl: SettingsApiClient | string | undefined): SettingsApiClient {
-  return typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
-    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
-    : clientOrWsUrl
 }
 
 function inferTargetSpace(client: SettingsApiClient): SpecialistTargetSpace {
@@ -117,7 +111,7 @@ export async function fetchSpecialists(
   profileId: string,
   sessionAgentId?: string,
 ): Promise<ResolvedSpecialistDefinition[]> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const path = buildSpecialistPath(profileId, '', inferTargetSpace(client), sessionAgentId)
   const response = await client.fetch(path, { cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))
@@ -131,7 +125,7 @@ export async function saveSpecialist(
   handle: string,
   data: SaveSpecialistPayload,
 ): Promise<void> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const path = buildSpecialistPath(profileId, `/${encodeURIComponent(handle)}`, inferTargetSpace(client))
   const response = await client.fetch(path, {
     method: 'PUT',
@@ -146,7 +140,7 @@ export async function deleteSpecialist(
   profileId: string,
   handle: string,
 ): Promise<void> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const path = buildSpecialistPath(profileId, `/${encodeURIComponent(handle)}`, inferTargetSpace(client))
   const response = await client.fetch(path, { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
@@ -157,7 +151,7 @@ export async function fetchRosterPrompt(
   profileId: string,
   sessionAgentId?: string,
 ): Promise<string> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const path = buildSpecialistPath(profileId, '/roster-prompt', inferTargetSpace(client), sessionAgentId)
   const response = await client.fetch(path, { cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))
@@ -173,7 +167,7 @@ export async function fetchSharedSpecialists(
   clientOrWsUrl: SettingsApiClient | string | undefined,
   options: FetchSharedSpecialistsOptions = {},
 ): Promise<ResolvedSpecialistDefinition[]> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const effectiveTargetSpace = options.targetSpace ?? inferTargetSpace(client)
   const path = buildSpecialistPath(undefined, '', effectiveTargetSpace)
   const response = await client.fetch(path, { cache: 'no-store' })
@@ -187,7 +181,7 @@ export async function saveSharedSpecialist(
   handle: string,
   data: SaveSpecialistPayload,
 ): Promise<void> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const path = buildSpecialistPath(undefined, `/${encodeURIComponent(handle)}`, inferTargetSpace(client))
   const response = await client.fetch(path, {
     method: 'PUT',
@@ -201,7 +195,7 @@ export async function deleteSharedSpecialist(
   clientOrWsUrl: SettingsApiClient | string | undefined,
   handle: string,
 ): Promise<void> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const path = buildSpecialistPath(undefined, `/${encodeURIComponent(handle)}`, inferTargetSpace(client))
   const response = await client.fetch(path, { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
@@ -210,7 +204,7 @@ export async function deleteSharedSpecialist(
 export async function fetchDelegationRosterSettings(
   clientOrWsUrl: SettingsApiClient | string | undefined,
 ): Promise<DelegationRosterSettings> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   return client.fetchJson<DelegationRosterSettings>('/api/settings/delegation-rosters', {
     cache: 'no-store',
   })
@@ -220,7 +214,7 @@ export async function saveDelegationRosterSettingsApi(
   clientOrWsUrl: SettingsApiClient | string | undefined,
   settings: DelegationRosterSettings,
 ): Promise<DelegationRosterSettings> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   return client.fetchJson<DelegationRosterSettings>('/api/settings/delegation-rosters', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -229,7 +223,7 @@ export async function saveDelegationRosterSettingsApi(
 }
 
 export async function fetchWorkerTemplate(clientOrWsUrl: SettingsApiClient | string | undefined): Promise<string> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const path = buildSpecialistPath(undefined, '/template')
   const response = await client.fetch(path, { cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))
@@ -245,7 +239,7 @@ export async function fetchChannelSpecialists(
   clientOrWsUrl: SettingsApiClient | string | undefined,
   channelId: string,
 ): Promise<ChannelSpecialistsResponse> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const path = `/api/collaboration/channels/${encodeURIComponent(channelId)}/specialists`
   const response = await client.fetch(path, { cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))
@@ -268,7 +262,7 @@ export async function saveChannelSpecialist(
   handle: string,
   data: SaveSpecialistPayload,
 ): Promise<void> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const path = `/api/collaboration/channels/${encodeURIComponent(channelId)}/specialists/${encodeURIComponent(handle)}`
   const response = await client.fetch(path, {
     method: 'PUT',
@@ -283,7 +277,7 @@ export async function deleteChannelSpecialistApi(
   channelId: string,
   handle: string,
 ): Promise<void> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const path = `/api/collaboration/channels/${encodeURIComponent(channelId)}/specialists/${encodeURIComponent(handle)}`
   const response = await client.fetch(path, { method: 'DELETE' })
   if (!response.ok) throw new Error(await client.readApiError(response))
@@ -293,7 +287,7 @@ export async function fetchChannelRosterPrompt(
   clientOrWsUrl: SettingsApiClient | string | undefined,
   channelId: string,
 ): Promise<string> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const path = `/api/collaboration/channels/${encodeURIComponent(channelId)}/specialists/roster-prompt`
   const response = await client.fetch(path, { cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))
@@ -306,7 +300,7 @@ export async function updateChannelSpecialistSelection(
   channelId: string,
   handles: string[],
 ): Promise<void> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const path = `/api/collaboration/channels/${encodeURIComponent(channelId)}/specialists/selection`
   const response = await client.fetch(path, {
     method: 'PUT',
@@ -321,7 +315,7 @@ export async function updateCategoryDefaultSpecialists(
   categoryId: string,
   handles: string[],
 ): Promise<CollaborationCategory> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const path = `/api/collaboration/categories/${encodeURIComponent(categoryId)}`
   const response = await client.fetch(path, {
     method: 'PATCH',
@@ -341,7 +335,7 @@ export async function updateCategoryDefaultSpecialists(
 export async function fetchCollabCategories(
   clientOrWsUrl: SettingsApiClient | string | undefined,
 ): Promise<CollaborationCategory[]> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch('/api/collaboration/categories', { cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { categories?: unknown }
@@ -351,7 +345,7 @@ export async function fetchCollabCategories(
 export async function fetchCollabChannels(
   clientOrWsUrl: SettingsApiClient | string | undefined,
 ): Promise<CollaborationChannel[]> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch('/api/collaboration/channels', { cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { channels?: unknown }
@@ -367,7 +361,7 @@ export async function updateChannelSkillSelection(
   channelId: string,
   selection: CollaborationSkillSelectionInput,
 ): Promise<CollaborationChannel> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const path = `/api/collaboration/channels/${encodeURIComponent(channelId)}/skills/selection`
   const response = await client.fetch(path, {
     method: 'PUT',
@@ -385,7 +379,7 @@ export async function updateCategoryDefaultSkillSelection(
   categoryId: string,
   selection: CollaborationSkillSelectionInput,
 ): Promise<CollaborationCategory> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const path = `/api/collaboration/categories/${encodeURIComponent(categoryId)}`
   const response = await client.fetch(path, {
     method: 'PATCH',
@@ -405,7 +399,7 @@ export async function updateCategoryDefaultSkillSelection(
 export async function fetchCollabSkillInventory(
   clientOrWsUrl: SettingsApiClient | string | undefined,
 ): Promise<import('@forge/protocol').SkillInventoryEntry[]> {
-  const client = resolveClient(clientOrWsUrl)
+  const client = resolveSettingsApiClient(clientOrWsUrl)
   const response = await client.fetch('/api/settings/skills', { cache: 'no-store' })
   if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { skills?: unknown }
