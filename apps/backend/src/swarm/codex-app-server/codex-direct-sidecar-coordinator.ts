@@ -97,10 +97,6 @@ export class CodexDirectSidecarCoordinator {
       );
   }
 
-  isSidecarDescriptor(descriptor: AgentDescriptor): boolean {
-    return isExternalThreadDescriptor(descriptor);
-  }
-
   interruptTurn(agentId: string): Promise<void> {
     return this.appServerService.interruptTurn(agentId);
   }

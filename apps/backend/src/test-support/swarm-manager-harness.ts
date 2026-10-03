@@ -18,6 +18,7 @@ import type {
 } from '../swarm/turn-context-coordinator.js'
 import type { SessionGoalCoordinator } from '../swarm/goals/session-goal-coordinator.js'
 import type { RestartRecoveryCoordinator } from '../swarm/restart-recovery-coordinator.js'
+import type { DispatchRuntimeUserMessageOptions, UserMessageCoordinator } from '../swarm/user-message-coordinator.js'
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -214,6 +215,12 @@ export class TestSwarmManager extends SwarmManager {
     return (this as unknown as {
       facadeServices: { recovery: RestartRecoveryCoordinator }
     }).facadeServices.recovery
+  }
+
+  dispatchRuntimeUserMessage(options: DispatchRuntimeUserMessageOptions): Promise<void> {
+    return (this as unknown as {
+      facadeServices: { userMessages: UserMessageCoordinator }
+    }).facadeServices.userMessages.dispatchRuntimeUserMessage(options)
   }
 
   private get workerStallStateForTest(): Map<string, WorkerStallState> {

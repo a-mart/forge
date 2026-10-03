@@ -650,13 +650,6 @@ export class ProjectAgentCoordinator {
     ]);
   }
 
-  async validateSourceForRead(agentId: string): Promise<void> {
-    const descriptor = this.options.descriptors.get(agentId);
-    if (isRepoProjectAgentDescriptor(descriptor)) {
-      await this.preflightRuntime(descriptor);
-    }
-  }
-
   async resolveSystemPromptForRead(agentId: string): Promise<string | null> {
     const descriptor = this.options.descriptors.get(agentId);
     if (!descriptor || descriptor.role !== "manager") {

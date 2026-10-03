@@ -3,7 +3,6 @@ import type { AgentMessageDispatcher } from "./agent-message-dispatcher.js";
 import type { AgentDirectory } from "./agent-directory.js";
 import type { SessionAttentionCoordinator } from "./session/session-attention-coordinator.js";
 import type { AssistantOutputRouter } from "./assistant-output-router.js";
-import type { CodexDirectSidecarCoordinator } from "./codex-app-server/codex-direct-sidecar-coordinator.js";
 import type { CodexPluginDelegationCoordinator } from "./codex-app-server/codex-plugin-delegation-coordinator.js";
 import type { CollaborationStorageProvisioner } from "./collaboration-storage-provisioner.js";
 import type { ConversationProjector } from "./conversation-projector.js";
@@ -126,7 +125,6 @@ export interface SwarmManagerFacadeServices extends SwarmManagerSessionFacadeSer
   };
   collaboration: CollaborationStorageProvisioner;
   trust: ProjectExecutableTrustCoordinator;
-  codexDirect: Pick<CodexDirectSidecarCoordinator, "isSidecarDescriptor">;
   observability: SwarmObservabilityCoordinator;
   persistence: Pick<SwarmSessionMetaService, "flushPendingTurnSeqPersists">;
   extensions: Pick<
