@@ -37,28 +37,8 @@ export function isBrowserHostProtocolCompatible(protocolVersions: { minimum: num
 export const BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE_ERROR = 'BROWSER_HOST_REGISTER_PROTOCOL_INCOMPATIBLE'
 export const BROWSER_HOST_REGISTER_TRANSIENT_ERROR = 'BROWSER_HOST_REGISTER_TRANSIENT'
 
-export const EXTERNAL_CHROME_M0_SUPPORTED_OPERATIONS = [
-  'status',
-  'open',
-  'navigate',
-  'snapshot',
-  'click',
-  'type',
-  'press',
-  'scroll',
-  'evaluate',
-  'waitFor',
-] as const satisfies readonly BrowserAutomationOperation[]
-
-/** Operations qualified by the production M3 lease runtime. */
-export const EXTERNAL_CHROME_M3_SUPPORTED_OPERATIONS = [
-  'status',
-  'open',
-  'navigate',
-] as const satisfies readonly BrowserAutomationOperation[]
-
-/** Complete External Chrome M4 functional surface; physical viewport and recording stay disabled. */
-export const EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS = [
+/** Complete External Chrome functional surface; physical viewport and recording stay disabled. */
+export const EXTERNAL_CHROME_SUPPORTED_OPERATIONS = [
   'status',
   'open',
   'navigate',

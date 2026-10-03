@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   EXTERNAL_CHROME_DEBUGGER_ATTACH_CONFLICT_DETAILS,
-  EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS,
+  EXTERNAL_CHROME_SUPPORTED_OPERATIONS,
   EXTERNAL_CHROME_NAVIGATION_NOT_DISPATCHED_DETAILS,
   externalChromeControlCollisionDetails,
   type BrowserAutomationOperation,
@@ -55,7 +55,7 @@ describe('BrowserTargetAdapter routing', () => {
   it('routes every advertised External Chrome operation through the bounded v2 transport', async () => {
     const transport = new FakeExternalChromeTransport()
     const adapter = new ExternalChromeTargetAdapter(transport)
-    const inputs: Record<(typeof EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS)[number], Record<string, unknown>> = {
+    const inputs: Record<(typeof EXTERNAL_CHROME_SUPPORTED_OPERATIONS)[number], Record<string, unknown>> = {
       status: {}, open: { show: false, reuseExistingTab: false },
       navigate: { url: 'https://example.test/', readiness: 'load', timeoutMs: 1_000 },
       snapshot: {}, click: { x: 10, y: 20, timeoutMs: 1_000 },
@@ -64,12 +64,12 @@ describe('BrowserTargetAdapter routing', () => {
       waitFor: { text: 'External Chrome fake', timeoutMs: 1_000 },
     }
 
-    for (const operation of EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS) {
+    for (const operation of EXTERNAL_CHROME_SUPPORTED_OPERATIONS) {
       const response = await adapter.execute(request(operation, inputs[operation], operation === 'status' || operation === 'open' ? null : 'external-tab-1'))
       expect(response).toMatchObject({ ok: true, operation })
       expect(response.updatedTab).toMatchObject({ targetAffinity: 'external-chrome' })
     }
-    expect(transport.requests.map(({ operation }) => operation)).toEqual(EXTERNAL_CHROME_M4_SUPPORTED_OPERATIONS)
+    expect(transport.requests.map(({ operation }) => operation)).toEqual(EXTERNAL_CHROME_SUPPORTED_OPERATIONS)
   })
 
   it.each(['resize', 'recordingStart', 'recordingStop'] as const)('returns typed unsupported-operation for %s without touching transport', async (operation) => {
