@@ -218,17 +218,6 @@ export class CredentialPoolService {
   }
 
   /**
-   * Returns the auth.json key for a specific credential.
-   */
-  async getCredentialAuthKey(provider: string, credentialId: string): Promise<string> {
-    this.assertSupportedProvider(provider);
-    await this.ensureLoaded();
-
-    const entry = this.findCredential(provider, credentialId);
-    return authStorageKey(provider, entry.id, entry.isPrimary);
-  }
-
-  /**
    * Returns the number of enabled (routable) credentials in the pool for a provider.
    * Paused credentials are excluded so singleton bypasses don't route to them.
    */
@@ -454,16 +443,6 @@ export class CredentialPoolService {
 
     const entry = this.findCredential(provider, credentialId);
     entry.health = "auth_error";
-    entry.cooldownUntil = null;
-    await this.persist();
-  }
-
-  async markHealthy(provider: string, credentialId: string): Promise<void> {
-    this.assertSupportedProvider(provider);
-    await this.ensureLoaded();
-
-    const entry = this.findCredential(provider, credentialId);
-    entry.health = "healthy";
     entry.cooldownUntil = null;
     await this.persist();
   }

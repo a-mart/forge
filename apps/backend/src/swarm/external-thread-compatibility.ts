@@ -73,21 +73,10 @@ export function shouldIncludeDescriptorInBootInterruptedToolReconciliation(
   return descriptor.status === "streaming" && !isExternalThreadDescriptor(descriptor);
 }
 
-export function isActiveExternalThreadSidecar(
+export function shouldInterruptExternalThreadSidecar(
   descriptor: Pick<AgentDescriptor, "status" | "externalThread">
 ): boolean {
   return isExternalThreadDescriptor(descriptor) && descriptor.status === "streaming";
-}
-
-export function shouldInterruptExternalThreadSidecar(descriptor: AgentDescriptor): boolean {
-  return isActiveExternalThreadSidecar(descriptor);
-}
-
-export function shouldReportWorkerAsTerminatedOnSessionStop(
-  descriptor: AgentDescriptor,
-  deleteWorkers: boolean | undefined
-): boolean {
-  return !shouldPreserveExternalThreadWorkerOnSessionStop(descriptor, deleteWorkers);
 }
 
 export interface ReconcilePersistedExternalThreadSidecarsForBootOptions {

@@ -6,8 +6,6 @@ import {
   shouldIncludeDescriptorInBootInterruptedToolReconciliation,
   shouldPreserveExternalThreadWorkerOnSessionStop,
   shouldInterruptExternalThreadSidecar,
-  shouldReportWorkerAsTerminatedOnSessionStop,
-  isActiveExternalThreadSidecar,
 } from "../external-thread-compatibility.js";
 import { createCodexExternalThreadWorkerDescriptor, createWorkerDescriptor } from "../../test-support/fixtures.js";
 
@@ -56,10 +54,6 @@ describe("external-thread compatibility policy", () => {
     expect(shouldPreserveExternalThreadWorkerOnSessionStop(codex, false)).toBe(true);
     expect(shouldPreserveExternalThreadWorkerOnSessionStop(codex, undefined)).toBe(true);
     expect(shouldPreserveExternalThreadWorkerOnSessionStop(codex, true)).toBe(false);
-    expect(shouldReportWorkerAsTerminatedOnSessionStop(codex, false)).toBe(false);
-    expect(shouldReportWorkerAsTerminatedOnSessionStop(createWorkerDescriptor("/tmp", "mgr-1"), false)).toBe(
-      true,
-    );
   });
 
   it("excludes external-thread sidecars from boot interrupted-tool reconciliation inputs", () => {
@@ -77,13 +71,9 @@ describe("external-thread compatibility policy", () => {
     const terminated = createCodexExternalThreadWorkerDescriptor("/tmp", "mgr-1", { status: "terminated" });
     const forgeWorker = createWorkerDescriptor("/tmp", "mgr-1", { status: "streaming" });
 
-    expect(isActiveExternalThreadSidecar(streaming)).toBe(true);
     expect(shouldInterruptExternalThreadSidecar(streaming)).toBe(true);
-    expect(isActiveExternalThreadSidecar(idle)).toBe(false);
     expect(shouldInterruptExternalThreadSidecar(idle)).toBe(false);
-    expect(isActiveExternalThreadSidecar(terminated)).toBe(false);
     expect(shouldInterruptExternalThreadSidecar(terminated)).toBe(false);
-    expect(isActiveExternalThreadSidecar(forgeWorker)).toBe(false);
     expect(shouldInterruptExternalThreadSidecar(forgeWorker)).toBe(false);
   });
 });

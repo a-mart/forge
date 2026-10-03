@@ -611,21 +611,6 @@ describe("CredentialPoolService — health", () => {
     expect(updated.credentials[0].cooldownUntil).toBe(cooldownUntil);
   });
 
-  it("markHealthy clears cooldown", async () => {
-    await writeAuthFile({ "openai-codex": makeOAuthCredential() });
-
-    const service = new CredentialPoolService(deps);
-    const pool = await service.listPool("openai-codex");
-    const credId = pool.credentials[0].id;
-
-    await service.markExhausted("openai-codex", credId, { cooldownUntil: Date.now() + 60_000 });
-    await service.markHealthy("openai-codex", credId);
-
-    const updated = await service.listPool("openai-codex");
-    expect(updated.credentials[0].health).toBe("healthy");
-    expect(updated.credentials[0].cooldownUntil).toBeNull();
-  });
-
   it("resetCooldown only affects credentials in cooldown state", async () => {
     await writeAuthFile({ "openai-codex": makeOAuthCredential() });
 
@@ -792,36 +777,6 @@ describe("CredentialPoolService — persistence", () => {
     expect(found!.autoLabel).toBe("user@test.com");
   });
 });
-
-// ── getCredentialAuthKey ──
-
-describe("CredentialPoolService — getCredentialAuthKey", () => {
-  it("returns bare provider key for primary credential", async () => {
-    await writeAuthFile({ "openai-codex": makeOAuthCredential() });
-
-    const service = new CredentialPoolService(deps);
-    const pool = await service.listPool("openai-codex");
-    const credId = pool.credentials[0].id;
-
-    const key = await service.getCredentialAuthKey("openai-codex", credId);
-    expect(key).toBe("openai-codex");
-  });
-
-  it("returns suffixed key for non-primary credential", async () => {
-    await writeAuthFile({ "openai-codex": makeOAuthCredential() });
-
-    const service = new CredentialPoolService(deps);
-    await service.listPool("openai-codex");
-
-    const added = await service.addCredential("openai-codex", makeOAuthCredential("tok_2"), {
-      label: "Second",
-    });
-
-    const key = await service.getCredentialAuthKey("openai-codex", added.id);
-    expect(key).toBe(`openai-codex:${added.id}`);
-  });
-});
-
 
 describe("CredentialPoolService — validated auth recovery", () => {
   it("preserves a quota cooldown recorded before validation completes", async () => {
