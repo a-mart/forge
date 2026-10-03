@@ -6,7 +6,7 @@ import { MessageInput, type MessageInputHandle } from '@/components/chat/Message
 import { ManagerToolActivityIndicator } from '@/components/chat/ManagerToolActivityIndicator'
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList'
 import { PlanDockIndicator } from '@/components/chat/plan'
-import { GoalBar } from '@/components/chat/goal'
+import { GoalBar } from '@/components/chat/goal/GoalBar'
 import { SessionAuditDrawer } from '@/components/chat/SessionAuditDrawer'
 import { WorkerBackBar } from '@/components/chat/WorkerBackBar'
 import { WorkerPillBar } from '@/components/chat/WorkerPillBar'

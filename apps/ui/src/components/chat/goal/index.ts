@@ -1,1 +1,0 @@
-export { GoalBar } from './GoalBar'

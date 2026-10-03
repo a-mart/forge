@@ -4,7 +4,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { SpecialistBadge } from '../SpecialistBadge'
 import { cn } from '@/lib/utils'
-import { isCodexExternalThread } from '@/lib/external-threads'
+import { isCodexAppServerExternalThreadDescriptor } from '@forge/protocol'
 import { CodexExternalThreadIcon, HighlightedText } from './shared'
 import { WorkerHighlightOutline } from '../WorkGraphWorkerHighlight'
 import type { WorkerRowProps } from './types'
@@ -30,7 +30,7 @@ export const WorkerRow = React.memo(function WorkerRow({
   const isActive = statusValue === 'streaming'
   const isRunning = statusValue === 'streaming' || statusValue === 'idle'
   const isStopped = statusValue === 'terminated' || statusValue === 'stopped'
-  const isCodexWorker = isCodexExternalThread(agent)
+  const isCodexWorker = isCodexAppServerExternalThreadDescriptor(agent)
 
   const row = (
         <div
