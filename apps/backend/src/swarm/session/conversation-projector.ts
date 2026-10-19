@@ -360,7 +360,7 @@ export class ConversationProjector {
       if (existing.controlCommandId !== control.commandId || existing.controlInputHash !== control.contentHash) {
         throw Object.assign(new Error("Canonical input ID has conflicting content."), { code: "CONFLICT", retryable: false });
       }
-      const fd = openSync(descriptor.sessionFile, "r");
+      const fd = openSync(descriptor.sessionFile, "r+");
       try { fsyncSync(fd); } finally { closeSync(fd); }
       return existing;
     }
@@ -380,7 +380,7 @@ export class ConversationProjector {
     if (!persisted || persisted.controlInputHash !== control.contentHash) {
       throw new Error("Canonical writer did not persist the controlled input.");
     }
-    const fd = openSync(descriptor.sessionFile, "r");
+    const fd = openSync(descriptor.sessionFile, "r+");
     try { fsyncSync(fd); } finally { closeSync(fd); }
     const source = statSync(descriptor.sessionFile);
     control.onLocator?.({ fileGeneration: `${source.dev}:${source.ino}`, byteOffset: offset, entryId: persisted.timelineEntryId ?? persisted.id! });
